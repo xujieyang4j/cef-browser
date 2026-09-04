@@ -1,0 +1,81 @@
+# Trail Browser
+
+Trail Browser is a small native browser shell built with Qt 6 Widgets and the
+Chromium Embedded Framework (CEF). It embeds a windowed CEF browser in a Qt
+main window and integrates CEF's external message pump with Qt's event loop.
+
+Current features include navigation controls, URL/search normalization, page
+titles, pop-up redirection into the active tab, F12 DevTools, persistent CEF
+cache, and orderly asynchronous browser shutdown. Linux, Windows, and macOS
+build paths are represented in the project.
+
+## Prerequisites
+
+- CMake 3.24 or newer
+- A C++20 compiler
+- Qt 6.4 or newer with Core, Gui, and Widgets
+- Python 3.10 or newer (only for the helper scripts)
+- Linux: X11 development headers and Qt's xcb platform plugin
+- Windows: Visual Studio 2022 is recommended
+- macOS: Xcode 12 or newer; the CEF architecture must match Qt
+
+The CEF archive is large (typically 130–400 MiB) and is intentionally excluded
+from Git.
+
+## Build
+
+Download the latest stable minimal CEF distribution for the host platform:
+
+~~~sh
+python3 scripts/fetch_cef.py
+~~~
+
+The downloader reads the official CEF build index, verifies the published
+SHA-1, checks archive paths, and extracts to third_party/cef. Use --print-url
+to inspect the selected build without downloading. Exact builds can be selected
+with --version; cross-builds can use --platform, such as windows64,
+macosarm64, or linuxarm64.
+
+Configure and build:
+
+~~~sh
+python3 scripts/configure.py --generator Ninja
+cmake --build build --config Release
+~~~
+
+If CEF lives elsewhere, pass --cef-root /path/to/cef or set CEF_ROOT. Any
+unrecognized arguments given to configure.py are forwarded to CMake, so a Qt
+installation can be selected with -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x/....
+The direct CMake equivalent is:
+
+~~~sh
+cmake -S . -B build -DCEF_ROOT=/path/to/cef -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+~~~
+
+With a single-configuration generator, run build/trail-browser on Linux. With
+Visual Studio, Xcode, or another multi-configuration generator, binaries are
+usually under build/Release (including trail-browser.exe on Windows and Trail
+Browser.app on macOS). The first positional argument may be a startup URL.
+When a minimal CEF package does not include Debug runtime binaries, Debug
+application builds automatically use the Release CEF runtime.
+
+## Shortcuts
+
+- Ctrl+L: focus and select the address bar
+- F12: open CEF DevTools
+
+## Security and platform notes
+
+This project currently runs CEF with no_sandbox enabled and forces
+USE_SANDBOX=OFF at configure time. That keeps the starter project portable but
+is not appropriate for browsing untrusted content in production. Enabling the
+sandbox requires platform-specific packaging and startup changes, notably
+Windows bootstrap/sandbox setup and macOS helper entitlements.
+
+On Linux, windowed CEF requires X11. Trail Browser selects Qt's xcb backend
+when QT_QPA_PLATFORM is unset. On native Wayland-only systems, install XWayland
+and the Qt xcb plugin or migrate the view to off-screen rendering.
+
+Runtime data is stored under Qt's per-user application-data locations. The CEF
+log is named cef.log.

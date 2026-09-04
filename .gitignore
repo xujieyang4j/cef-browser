@@ -1,0 +1,11 @@
+/build/
+/out/
+/third_party/cef/
+/.git-data/
+__pycache__/
+*.pyc
+/.idea/
+/.vscode/
+*.user
+*.swp
+
