@@ -248,6 +248,8 @@ class MainWindow final : public QMainWindow {
   bool RenameBookmark(const QString& url, const QString& title);
   bool RemoveBookmark(const QString& url);
   bool RemoveHistory(const QString& url);
+  void ImportBookmarks();
+  void ExportBookmarks();
   void BeginClearBrowsingData(bool show_result_dialog,
                               const BrowsingDataSelection& selection);
 

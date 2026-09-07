@@ -13,6 +13,8 @@
 #include <QCompleter>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QInputDialog>
@@ -1905,6 +1907,11 @@ void MainWindow::CreateApplicationMenus() {
   add_action(bookmarks, QStringLiteral("Show Bookmarks"),
              PrimaryShortcut(QStringLiteral("Shift+B")),
              [this] { ShowBrowserUiSurface(BrowserUiSurface::Bookmarks); });
+  bookmarks->addSeparator();
+  add_action(bookmarks, QStringLiteral("Import Bookmarks…"), {},
+             [this] { ImportBookmarks(); });
+  add_action(bookmarks, QStringLiteral("Export Bookmarks…"), {},
+             [this] { ExportBookmarks(); });
 
   QMenu* settings = menuBar()->addMenu(QStringLiteral("Settings"));
   QMenu* search_engine =
@@ -2199,6 +2206,51 @@ bool MainWindow::RemoveHistory(const QString& url) {
   RefreshAddressSuggestions();
   statusBar()->showMessage(QStringLiteral("History entry removed"), 2000);
   return true;
+}
+
+void MainWindow::ImportBookmarks() {
+  const QString path = QFileDialog::getOpenFileName(
+      this, QStringLiteral("Import Bookmarks"), QString(),
+      QStringLiteral("Bookmark HTML (*.html *.htm);;All Files (*)"));
+  if (path.isEmpty()) return;
+
+  const BrowsingDataStore previous = *browsing_data_;
+  int imported = 0;
+  QString error;
+  if (!browsing_data_->ImportBookmarksHtml(path, &imported, &error)) {
+    statusBar()->showMessage(
+        QStringLiteral("Unable to import bookmarks: %1").arg(error), 8000);
+    return;
+  }
+  if (imported > 0 && !SaveBrowsingData()) {
+    *browsing_data_ = previous;
+    return;
+  }
+  RebuildBookmarksMenu();
+  RefreshAddressSuggestions();
+  UpdateChrome();
+  statusBar()->showMessage(
+      imported == 0
+          ? QStringLiteral("No new bookmarks found")
+          : QStringLiteral("Imported %1 bookmark(s)").arg(imported),
+      4000);
+}
+
+void MainWindow::ExportBookmarks() {
+  QString path = QFileDialog::getSaveFileName(
+      this, QStringLiteral("Export Bookmarks"),
+      QStringLiteral("trail-browser-bookmarks.html"),
+      QStringLiteral("Bookmark HTML (*.html)"));
+  if (path.isEmpty()) return;
+  if (QFileInfo(path).suffix().isEmpty()) path += QStringLiteral(".html");
+
+  QString error;
+  if (!browsing_data_->ExportBookmarksHtml(path, &error)) {
+    statusBar()->showMessage(
+        QStringLiteral("Unable to export bookmarks: %1").arg(error), 8000);
+    return;
+  }
+  statusBar()->showMessage(QStringLiteral("Bookmarks exported"), 4000);
 }
 
 void MainWindow::RebuildBookmarksMenu() {

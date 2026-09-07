@@ -8,7 +8,10 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSaveFile>
+#include <QSet>
+#include <QTextDocumentFragment>
 #include <QUrl>
 
 namespace {
@@ -17,6 +20,7 @@ constexpr int kDataVersion = 1;
 constexpr int kMaxBookmarks = 1000;
 constexpr int kMaxHistoryEntries = 1000;
 constexpr int kMaxDataBytes = 2 * 1024 * 1024;
+constexpr int kMaxBookmarkHtmlBytes = 5 * 1024 * 1024;
 
 void SetError(QString* error, const QString& value) {
   if (error) *error = value;
@@ -24,6 +28,18 @@ void SetError(QString* error, const QString& value) {
 
 QDateTime ParseDate(const QJsonValue& value) {
   return QDateTime::fromString(value.toString(), Qt::ISODateWithMs);
+}
+
+QString DecodeHtml(const QString& value) {
+  return QTextDocumentFragment::fromHtml(value).toPlainText();
+}
+
+bool IsSafeImportedUrl(const QString& value) {
+  const QUrl url(value);
+  const QString scheme = url.scheme().toLower();
+  return url.isValid() && !url.host().isEmpty() &&
+         (scheme == QStringLiteral("http") ||
+          scheme == QStringLiteral("https"));
 }
 
 }  // namespace
@@ -122,6 +138,96 @@ bool BrowsingDataStore::Save(QString* error) const {
     return false;
   }
   if (file.write(QJsonDocument(root).toJson(QJsonDocument::Compact)) < 0) {
+    SetError(error, file.errorString());
+    file.cancelWriting();
+    return false;
+  }
+  if (!file.commit()) {
+    SetError(error, file.errorString());
+    return false;
+  }
+  return true;
+}
+
+bool BrowsingDataStore::ImportBookmarksHtml(const QString& path,
+                                            int* imported_count,
+                                            QString* error) {
+  if (imported_count) *imported_count = 0;
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) {
+    SetError(error, file.errorString());
+    return false;
+  }
+  if (file.size() > kMaxBookmarkHtmlBytes) {
+    SetError(error, QStringLiteral("Bookmark file is unexpectedly large"));
+    return false;
+  }
+  const QString html = QString::fromUtf8(file.readAll());
+  const QRegularExpression anchor_pattern(
+      QStringLiteral(R"(<a\b([^>]*)>(.*?)</a\s*>)"),
+      QRegularExpression::CaseInsensitiveOption |
+          QRegularExpression::DotMatchesEverythingOption);
+  const QRegularExpression href_pattern(
+      QStringLiteral(
+          R"REGEX(\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))REGEX"),
+      QRegularExpression::CaseInsensitiveOption);
+
+  QSet<QString> seen;
+  for (const Bookmark& bookmark : bookmarks_) seen.insert(bookmark.url);
+  QList<Bookmark> imported;
+  QRegularExpressionMatchIterator matches = anchor_pattern.globalMatch(html);
+  while (matches.hasNext() &&
+         bookmarks_.size() + imported.size() < kMaxBookmarks) {
+    const QRegularExpressionMatch anchor = matches.next();
+    const QRegularExpressionMatch href =
+        href_pattern.match(anchor.captured(1));
+    if (!href.hasMatch()) continue;
+    QString encoded_url = href.captured(1);
+    if (encoded_url.isEmpty()) encoded_url = href.captured(2);
+    if (encoded_url.isEmpty()) encoded_url = href.captured(3);
+    const QString url = DecodeHtml(encoded_url).trimmed();
+    if (!IsSafeImportedUrl(url) || seen.contains(url)) continue;
+    seen.insert(url);
+    imported.append(Bookmark{url, DecodeHtml(anchor.captured(2)).trimmed(),
+                             QDateTime::currentDateTimeUtc()});
+  }
+  for (auto bookmark = imported.crbegin(); bookmark != imported.crend();
+       ++bookmark) {
+    bookmarks_.prepend(*bookmark);
+  }
+  if (imported_count) *imported_count = imported.size();
+  return true;
+}
+
+bool BrowsingDataStore::ExportBookmarksHtml(const QString& path,
+                                            QString* error) const {
+  if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
+    SetError(error, QStringLiteral("Unable to create export directory"));
+    return false;
+  }
+  QByteArray html("<!DOCTYPE NETSCAPE-Bookmark-file-1>\n"
+                  "<META HTTP-EQUIV=\"Content-Type\" "
+                  "CONTENT=\"text/html; charset=UTF-8\">\n"
+                  "<TITLE>Trail Browser Bookmarks</TITLE>\n"
+                  "<H1>Trail Browser Bookmarks</H1>\n<DL><p>\n");
+  for (const Bookmark& bookmark : bookmarks_) {
+    const QString title = bookmark.title.isEmpty() ? bookmark.url
+                                                    : bookmark.title;
+    html += QStringLiteral(
+                "    <DT><A HREF=\"%1\" ADD_DATE=\"%2\">%3</A>\n")
+                .arg(bookmark.url.toHtmlEscaped())
+                .arg(bookmark.created_at.toSecsSinceEpoch())
+                .arg(title.toHtmlEscaped())
+                .toUtf8();
+  }
+  html += "</DL><p>\n";
+
+  QSaveFile file(path);
+  if (!file.open(QIODevice::WriteOnly)) {
+    SetError(error, file.errorString());
+    return false;
+  }
+  if (file.write(html) != html.size()) {
     SetError(error, file.errorString());
     file.cancelWriting();
     return false;

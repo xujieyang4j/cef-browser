@@ -559,6 +559,44 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
   auto output = std::make_shared<QTextStream>(stdout);
   const QString first_url = QStringLiteral("https://example.test/first");
   const QString second_url = QStringLiteral("https://example.test/second");
+  const QString imported_url =
+      QStringLiteral("https://example.test/imported?a=1&b=2");
+  const QString import_path = data_path + QStringLiteral(".import.html");
+  QFile import_file(import_path);
+  const bool import_source_opened = import_file.open(QIODevice::WriteOnly);
+  const QByteArray import_html =
+      "<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<DL><p>\n"
+      "<DT><A HREF=\"https://example.test/first\">Duplicate</A>\n"
+      "<DT><A HREF=\"https://example.test/imported?a=1&amp;b=2\">"
+      "Imported &amp; &lt;Safe&gt;</A>\n"
+      "<DT><A HREF=\"javascript:alert(1)\">Unsafe</A>\n"
+      "</DL><p>\n";
+  const bool import_source_written =
+      import_source_opened && import_file.write(import_html) == import_html.size();
+  import_file.close();
+  BrowsingDataStore transfer(data_path + QStringLiteral(".transfer.json"));
+  const bool transfer_seeded = transfer.AddBookmark(
+      first_url, QStringLiteral("Existing & <First>"));
+  int imported_count = 0;
+  const bool imported =
+      transfer.ImportBookmarksHtml(import_path, &imported_count);
+  const bool import_ok =
+      import_source_written && transfer_seeded && imported &&
+      imported_count == 1 && transfer.bookmarks().size() == 2 &&
+      transfer.bookmarks().first().url == imported_url &&
+      transfer.bookmarks().first().title ==
+          QStringLiteral("Imported & <Safe>");
+  const QString export_path = data_path + QStringLiteral(".export.html");
+  const bool exported = transfer.ExportBookmarksHtml(export_path);
+  BrowsingDataStore round_trip(data_path + QStringLiteral(".roundtrip.json"));
+  int round_trip_count = 0;
+  const bool round_trip_ok =
+      exported &&
+      round_trip.ImportBookmarksHtml(export_path, &round_trip_count) &&
+      round_trip_count == 2 && round_trip.bookmarks().size() == 2 &&
+      round_trip.bookmarks().first().url == imported_url &&
+      round_trip.bookmarks().first().title ==
+          QStringLiteral("Imported & <Safe>");
   BrowsingDataStore data(data_path);
   const bool add_first = data.AddBookmark(first_url, QStringLiteral("First"));
   const bool reject_duplicate =
@@ -628,6 +666,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       after_single_remove.history().size() == 1 &&
       after_single_remove.history().first().url == first_url;
   const bool profile_ok = add_first && reject_duplicate && add_second && saved &&
+                          import_ok && round_trip_ok &&
                           bookmark_ok && history_ok && removed && suggestions_ok &&
                           !first_label.isEmpty() && renamed &&
                           rename_persisted && empty_name &&
@@ -635,6 +674,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
                           single_persisted;
   if (!profile_ok) {
     *output << "PROFILE_SMOKE_FAILED bookmark=" << bookmark_ok
+            << " import=" << import_ok << " roundtrip=" << round_trip_ok
             << " history=" << history_ok << " removed=" << removed
             << " suggestions=" << suggestions_ok
             << " titled=" << !first_label.isEmpty()
@@ -653,6 +693,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
     ++*attempts;
     if (window->current_url() == first_url) {
       *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2 "
+                 "html=roundtrip "
                  "rename=persisted empty=url single-remove=persisted "
                  "suggestions=titled-navigation"
               << Qt::endl;
@@ -1046,6 +1087,8 @@ void StartApplicationMenuSmokeTest(MainWindow* window) {
           view.contains(QStringLiteral("Developer Tools")) &&
           history.contains(QStringLiteral("Clear Browsing Data…")) &&
           bookmarks.contains(QStringLiteral("Show Bookmarks")) &&
+          bookmarks.contains(QStringLiteral("Import Bookmarks…")) &&
+          bookmarks.contains(QStringLiteral("Export Bookmarks…")) &&
           window_menu.contains(QStringLiteral("All Tabs"));
       const bool shortcuts_ok =
           !window->application_menu_shortcut_for_testing(

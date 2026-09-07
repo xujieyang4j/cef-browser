@@ -23,6 +23,10 @@ class BrowsingDataStore final {
 
   bool Load(QString* error = nullptr);
   bool Save(QString* error = nullptr) const;
+  bool ImportBookmarksHtml(const QString& path, int* imported_count = nullptr,
+                           QString* error = nullptr);
+  bool ExportBookmarksHtml(const QString& path,
+                           QString* error = nullptr) const;
   const QList<Bookmark>& bookmarks() const { return bookmarks_; }
   const QList<HistoryEntry>& history() const { return history_; }
   bool IsBookmarked(const QString& url) const;
