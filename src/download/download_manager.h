@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QTimer>
 
 #include "include/cef_download_handler.h"
 
@@ -68,6 +69,11 @@ class DownloadManager final : public QObject {
   // requiring an external HTTP server or writing a file to disk.
   bool UpdateForTesting(const Item& item);
   static int MaxActiveDownloadsForTesting();
+  static int MaxBufferedHistoryItemsForTesting();
+  bool history_save_retry_pending_for_testing() const {
+    return history_save_retry_timer_.isActive();
+  }
+  void RetryHistorySaveForTesting();
 
  signals:
   void DownloadChanged(quint32 id, bool is_new);
@@ -82,8 +88,11 @@ class DownloadManager final : public QObject {
   bool CanAcceptDownload(quint32 id = 0) const;
   bool UpdateDownload(const Item& item,
                       CefRefPtr<CefDownloadItemCallback> callback);
+  void PersistFinishedHistory();
+  void RetryHistorySave();
+  void ScheduleHistorySaveRetry();
   void ReportRejectedDownload(const QString& reason);
-  void TrimFinishedHistory();
+  void TrimFinishedHistory(int max_items);
   static bool IsActive(State state);
 
   CefRefPtr<CefDownloadHandler> handler_;
@@ -94,6 +103,9 @@ class DownloadManager final : public QObject {
   // current process may invoke operating-system file actions.
   QSet<quint32> runtime_local_path_ids_;
   QString history_path_;
+  QTimer history_save_retry_timer_;
+  int history_save_retry_attempts_ = 0;
+  bool history_save_pending_ = false;
 
   Q_DISABLE_COPY_MOVE(DownloadManager)
 };

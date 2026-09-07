@@ -71,6 +71,11 @@ download-history, browsing-data, and bookmark
 HTML input is read through strict byte budgets rather than trusting an earlier
 file-size check, so files that grow while being opened cannot bypass the
 limits or replace the corresponding in-memory state.
+Completed, cancelled, and interrupted downloads retry a failed history commit
+five times with exponential backoff. Count and byte-budget eviction is applied
+only after a successful atomic commit; while storage is unavailable, a bounded
+32-record reserve keeps recent terminal updates eligible for recovery without
+allowing the in-memory history to grow indefinitely.
 Bookmark HTML export is streamed through the same 5 MiB budget and committed
 atomically; an oversized export cannot consume a large assembly buffer or
 replace an existing destination file with partial output.

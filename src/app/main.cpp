@@ -670,6 +670,76 @@ void StartDownloadSmokeTest(MainWindow* window,
       failed_history_removals == 0 &&
       failed_history.items().size() == kBoundedDownloadCount;
 
+  const QString retry_history_path =
+      history_directory.filePath(QStringLiteral("retry-history-target"));
+  const bool retry_target_blocked = QDir().mkpath(retry_history_path);
+  DownloadManager retrying_history(retry_history_path);
+  int retry_history_errors = 0;
+  QObject::connect(&retrying_history, &DownloadManager::PersistenceError,
+                   [&retry_history_errors](const QString&) {
+                     ++retry_history_errors;
+                   });
+  DownloadManager::Item retry_item;
+  retry_item.id = 4400;
+  retry_item.file_name = QStringLiteral("retry.bin");
+  retry_item.url = QStringLiteral("https://example.test/retry.bin");
+  retry_item.received_bytes = 8;
+  retry_item.total_bytes = 8;
+  retry_item.percent = 100;
+  retry_item.state = DownloadManager::State::Complete;
+  const bool retry_update_accepted =
+      retrying_history.UpdateForTesting(retry_item);
+  const bool retry_scheduled =
+      retry_target_blocked && retry_update_accepted &&
+      retry_history_errors == 1 &&
+      retrying_history.history_save_retry_pending_for_testing() &&
+      retrying_history.items().size() == 1;
+  const bool retry_target_unblocked = QDir().rmdir(retry_history_path);
+  retrying_history.RetryHistorySaveForTesting();
+  DownloadManager retried_history(retry_history_path);
+  const bool retried_history_loaded = retried_history.LoadHistory();
+  const QList<DownloadManager::Item> retried_items = retried_history.items();
+  const bool failed_history_retried =
+      retry_scheduled && retry_target_unblocked &&
+      !retrying_history.history_save_retry_pending_for_testing() &&
+      retried_history_loaded && retried_items.size() == 1 &&
+      retried_items.first().url == retry_item.url &&
+      retried_items.first().state == DownloadManager::State::Complete;
+
+  const QString buffered_history_path =
+      history_directory.filePath(QStringLiteral("buffered-history-target"));
+  const bool buffered_target_blocked = QDir().mkpath(buffered_history_path);
+  DownloadManager buffered_history(buffered_history_path);
+  int buffered_history_removals = 0;
+  QObject::connect(&buffered_history, &DownloadManager::DownloadRemoved,
+                   [&buffered_history_removals](quint32) {
+                     ++buffered_history_removals;
+                   });
+  const int buffered_history_input =
+      DownloadManager::MaxBufferedHistoryItemsForTesting() + 8;
+  bool buffered_history_updates = true;
+  for (int index = 0; index < buffered_history_input; ++index) {
+    DownloadManager::Item buffered_item;
+    buffered_item.id = 7000 + index;
+    buffered_item.file_name = QStringLiteral("buffered.bin");
+    buffered_item.url =
+        QStringLiteral("https://example.test/buffered/%1").arg(index);
+    buffered_item.state = DownloadManager::State::Interrupted;
+    buffered_history_updates =
+        buffered_history_updates &&
+        buffered_history.UpdateForTesting(buffered_item);
+  }
+  const QList<DownloadManager::Item> buffered_items =
+      buffered_history.items();
+  const bool failed_history_bounded =
+      buffered_target_blocked && buffered_history_updates &&
+      buffered_history_removals == 8 &&
+      buffered_items.size() ==
+          DownloadManager::MaxBufferedHistoryItemsForTesting() &&
+      buffered_items.first().id ==
+          static_cast<quint32>(7000 + buffered_history_input - 1) &&
+      buffered_items.last().id == 7008;
+
   const QString oversized_history_path =
       download_history_path + QStringLiteral(".oversized.json");
   DownloadManager oversized_history(oversized_history_path);
@@ -763,11 +833,14 @@ void StartDownloadSmokeTest(MainWindow* window,
       restored_actions_blocked && live_actions_validated &&
       missing_file_blocked && incomplete_file_blocked &&
       relative_path_blocked && bounded_download_history &&
-      failed_history_preserved && oversized_history_rejected &&
+      failed_history_preserved && failed_history_retried &&
+      failed_history_bounded &&
+      oversized_history_rejected &&
       ingress_bounded && active_limit_enforced && runtime_metadata_bounded) {
     *output << "DOWNLOAD_SMOKE_OK paused=1 resumed=1 status=Complete "
                "persisted=1 removed=1 untrusted=blocked local_paths=validated "
-               "bounded=aligned failure=preserved read=bounded "
+               "bounded=aligned failure=preserved retry=recovered "
+               "retry_buffer=bounded read=bounded "
                "ingress=bounded active=limited"
             << Qt::endl;
     window->close();
@@ -785,6 +858,8 @@ void StartDownloadSmokeTest(MainWindow* window,
             << " relative=" << relative_path_blocked
             << " bounded=" << bounded_download_history
             << " failed_history=" << failed_history_preserved
+            << " retry_history=" << failed_history_retried
+            << " retry_buffer=" << failed_history_bounded
             << " oversized_history=" << oversized_history_rejected
             << " ingress=" << ingress_bounded
             << " active_limit=" << active_limit_enforced

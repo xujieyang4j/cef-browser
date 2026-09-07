@@ -23,12 +23,16 @@ namespace {
 constexpr int kHistoryVersion = 1;
 constexpr int kMaxHistoryItems = 200;
 constexpr int kMaxActiveDownloads = 32;
+constexpr int kMaxBufferedHistoryItems =
+    kMaxHistoryItems + kMaxActiveDownloads;
 constexpr int kMaxHistoryBytes = 2 * 1024 * 1024;
 constexpr int kMaxSourceUrlBytes = 64 * 1024;
 constexpr int kMaxLocalPathBytes = 32 * 1024;
 constexpr int kMaxFileNameCharacters = 512;
 constexpr int kMaxDetailCharacters = 1024;
 constexpr int kMaxRequestMethodCharacters = 16;
+constexpr int kHistorySaveRetryBaseDelayMs = 250;
+constexpr int kMaxHistorySaveRetryAttempts = 5;
 
 void SetError(QString* error, const QString& value) {
   if (error) *error = value;
@@ -276,6 +280,9 @@ class DownloadHandlerImpl final : public CefDownloadHandler {
 DownloadManager::DownloadManager(QString history_path, QObject* parent)
     : QObject(parent), history_path_(std::move(history_path)) {
   handler_ = new DownloadHandlerImpl(this);
+  history_save_retry_timer_.setSingleShot(true);
+  connect(&history_save_retry_timer_, &QTimer::timeout, this,
+          &DownloadManager::RetryHistorySave);
 }
 
 DownloadManager::~DownloadManager() {
@@ -379,7 +386,13 @@ bool DownloadManager::LoadHistory(QString* error) {
 }
 
 bool DownloadManager::SaveHistory(QString* error) {
-  if (history_path_.isEmpty()) return true;
+  if (history_path_.isEmpty()) {
+    TrimFinishedHistory(kMaxHistoryItems);
+    history_save_pending_ = false;
+    history_save_retry_attempts_ = 0;
+    history_save_retry_timer_.stop();
+    return true;
+  }
   if (!QDir().mkpath(QFileInfo(history_path_).absolutePath())) {
     SetError(error, QStringLiteral("Unable to create profile directory"));
     return false;
@@ -419,10 +432,9 @@ bool DownloadManager::SaveHistory(QString* error) {
         .toJson(QJsonDocument::Compact);
   };
   QByteArray bytes = serialize();
-  QList<quint32> trimmed_ids;
   while (bytes.size() > kMaxHistoryBytes && !downloads.isEmpty()) {
     downloads.removeLast();
-    trimmed_ids.prepend(persisted_ids.takeLast());
+    persisted_ids.removeLast();
     bytes = serialize();
   }
   QSaveFile file(history_path_);
@@ -441,18 +453,27 @@ bool DownloadManager::SaveHistory(QString* error) {
   }
 
   // Keep the live model consistent with the history that will be restored.
-  // Records are serialized newest-first, so the byte budget only evicts the
-  // oldest persistable finished records. Apply the eviction after the atomic
-  // commit so a write failure never discards visible state.
-  for (const quint32 id : trimmed_ids) {
+  // Records are serialized newest-first. Apply both the count and byte-budget
+  // eviction only after the atomic commit so a temporary write failure does
+  // not discard visible records that still exist in the previous file.
+  const QSet<quint32> persisted_id_set(persisted_ids.cbegin(),
+                                      persisted_ids.cend());
+  const QList<quint32> current_order = order_;
+  for (const quint32 id : current_order) {
     const auto found = items_.constFind(id);
-    if (found == items_.cend() || IsActive(found->state)) continue;
+    if (found == items_.cend() || IsActive(found->state) ||
+        persisted_id_set.contains(id)) {
+      continue;
+    }
     items_.remove(id);
     order_.removeAll(id);
     callbacks_.remove(id);
     runtime_local_path_ids_.remove(id);
     emit DownloadRemoved(id);
   }
+  history_save_pending_ = false;
+  history_save_retry_attempts_ = 0;
+  history_save_retry_timer_.stop();
   return true;
 }
 
@@ -645,6 +666,16 @@ int DownloadManager::MaxActiveDownloadsForTesting() {
   return kMaxActiveDownloads;
 }
 
+int DownloadManager::MaxBufferedHistoryItemsForTesting() {
+  return kMaxBufferedHistoryItems;
+}
+
+void DownloadManager::RetryHistorySaveForTesting() {
+  if (!history_save_pending_) return;
+  history_save_retry_timer_.stop();
+  RetryHistorySave();
+}
+
 bool DownloadManager::CanAcceptDownload(quint32 id) const {
   return (id != 0 && items_.contains(id)) ||
          active_count() < kMaxActiveDownloads;
@@ -691,7 +722,6 @@ bool DownloadManager::UpdateDownload(
     callbacks_.insert(item.id, std::move(callback));
   } else if (!IsActive(normalized.state)) {
     callbacks_.remove(item.id);
-    TrimFinishedHistory();
   }
 
   emit DownloadChanged(item.id, is_new);
@@ -700,22 +730,51 @@ bool DownloadManager::UpdateDownload(
     emit ActiveCountChanged(current_active_count);
   }
   if (!IsActive(normalized.state)) {
-    QString error;
-    if (!SaveHistory(&error)) emit PersistenceError(error);
+    PersistFinishedHistory();
   }
   return true;
+}
+
+void DownloadManager::PersistFinishedHistory() {
+  history_save_pending_ = true;
+  history_save_retry_attempts_ = 0;
+  RetryHistorySave();
+}
+
+void DownloadManager::RetryHistorySave() {
+  if (!history_save_pending_) return;
+  QString error;
+  if (SaveHistory(&error)) return;
+
+  emit PersistenceError(error);
+  // Preserve a bounded reserve while persistence is unavailable. This keeps
+  // the newest completion visible for a later retry without allowing a
+  // permanently unwritable profile to grow the model without limit.
+  TrimFinishedHistory(kMaxBufferedHistoryItems);
+  ScheduleHistorySaveRetry();
+}
+
+void DownloadManager::ScheduleHistorySaveRetry() {
+  if (!history_save_pending_ || history_path_.isEmpty() ||
+      history_save_retry_attempts_ >= kMaxHistorySaveRetryAttempts) {
+    return;
+  }
+  const int delay = kHistorySaveRetryBaseDelayMs
+                    << history_save_retry_attempts_;
+  ++history_save_retry_attempts_;
+  history_save_retry_timer_.start(delay);
 }
 
 void DownloadManager::ReportRejectedDownload(const QString& reason) {
   emit DownloadRejected(reason);
 }
 
-void DownloadManager::TrimFinishedHistory() {
+void DownloadManager::TrimFinishedHistory(int max_items) {
   int finished_count =
       std::count_if(items_.cbegin(), items_.cend(),
                     [](const Item& item) { return !IsActive(item.state); });
   for (int index = order_.size() - 1;
-       index >= 0 && finished_count > kMaxHistoryItems; --index) {
+       index >= 0 && finished_count > max_items; --index) {
     const quint32 id = order_.at(index);
     const auto found = items_.constFind(id);
     if (found == items_.cend() || IsActive(found->state)) continue;
