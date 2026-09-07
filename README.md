@@ -13,7 +13,10 @@ save dialog; they continue when the originating tab closes, and quitting with
 active or paused downloads requires explicit confirmation. Finished download
 records survive application restarts and can be cleared without deleting the
 downloaded files. Individual finished records can also be removed from the
-download panel. Main-frame load
+download panel. Restored history is treated as untrusted profile data: source
+URLs and local paths are revalidated, filenames are derived from valid paths,
+and only paths delivered directly by CEF in the current process may invoke an
+operating-system open or reveal action. Main-frame load
 failures and renderer crashes display a retry page while preserving the
 requested URL.
 Only one main process owns a browser profile at a time. Launching Trail Browser

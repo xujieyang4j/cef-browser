@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QSet>
 #include <QString>
 
 #include "include/cef_download_handler.h"
@@ -54,6 +55,8 @@ class DownloadManager final : public QObject {
   void ResumeDownload(quint32 id);
   bool RemoveDownload(quint32 id);
   bool ClearFinished();
+  bool CanOpenDownload(quint32 id) const;
+  bool CanShowDownloadInFolder(quint32 id) const;
   bool OpenDownload(quint32 id) const;
   bool ShowDownloadInFolder(quint32 id) const;
 
@@ -83,6 +86,9 @@ class DownloadManager final : public QObject {
   QHash<quint32, Item> items_;
   QList<quint32> order_;
   QHash<quint32, CefRefPtr<CefDownloadItemCallback>> callbacks_;
+  // History is editable profile data. Only paths delivered by CEF during the
+  // current process may invoke operating-system file actions.
+  QSet<quint32> runtime_local_path_ids_;
   QString history_path_;
 
   Q_DISABLE_COPY_MOVE(DownloadManager)

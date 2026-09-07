@@ -27,6 +27,43 @@ void SetError(QString* error, const QString& value) {
   if (error) *error = value;
 }
 
+std::optional<QString> NormalizeSourceUrl(QString value) {
+  value = value.trimmed();
+  QUrl url(value, QUrl::StrictMode);
+  const QString scheme = url.scheme().toLower();
+  if (!url.isValid() || url.host().isEmpty() ||
+      (scheme != QStringLiteral("http") &&
+       scheme != QStringLiteral("https"))) {
+    return std::nullopt;
+  }
+  url.setScheme(scheme);
+  return url.toString(QUrl::FullyEncoded);
+}
+
+std::optional<QString> NormalizeLocalPath(const QString& value) {
+  if (value.isEmpty() || value.contains(QChar::Null)) return std::nullopt;
+  const QString path = QDir::cleanPath(QDir::fromNativeSeparators(value));
+  if (!QDir::isAbsolutePath(path)) return std::nullopt;
+  return QFileInfo(path).absoluteFilePath();
+}
+
+QString NormalizeDisplayFileName(QString value) {
+  if (value.contains(QChar::Null)) return QString();
+  value = QFileInfo(QDir::fromNativeSeparators(value.trimmed())).fileName();
+  if (value == QStringLiteral(".") || value == QStringLiteral("..")) {
+    return QString();
+  }
+  return value;
+}
+
+QString FileNameForRecord(const QString& path, const QString& stored_name,
+                          const QString& url) {
+  if (!path.isEmpty()) return QFileInfo(path).fileName();
+  const QString sanitized = NormalizeDisplayFileName(stored_name);
+  if (!sanitized.isEmpty()) return sanitized;
+  return NormalizeDisplayFileName(QUrl(url).path());
+}
+
 QString StateId(DownloadManager::State state) {
   switch (state) {
     case DownloadManager::State::Complete:
@@ -192,18 +229,25 @@ bool DownloadManager::LoadHistory(QString* error) {
   quint32 restored_id = std::numeric_limits<quint32>::max();
   const QJsonArray downloads =
       root.value(QStringLiteral("downloads")).toArray();
-  for (int index = 0;
-       index < std::min(static_cast<int>(downloads.size()), kMaxHistoryItems);
+  for (int index = 0; index < downloads.size() &&
+                      loaded_order.size() < kMaxHistoryItems;
        ++index) {
     const QJsonObject object = downloads.at(index).toObject();
     const auto state =
         ParseState(object.value(QStringLiteral("state")).toString());
     if (!state) continue;
+    const auto url =
+        NormalizeSourceUrl(object.value(QStringLiteral("url")).toString());
+    if (!url) continue;
+    const auto full_path = NormalizeLocalPath(
+        object.value(QStringLiteral("fullPath")).toString());
     Item item;
     item.id = restored_id--;
-    item.file_name = object.value(QStringLiteral("fileName")).toString();
-    item.full_path = object.value(QStringLiteral("fullPath")).toString();
-    item.url = object.value(QStringLiteral("url")).toString();
+    item.full_path = full_path.value_or(QString());
+    item.url = *url;
+    item.file_name = FileNameForRecord(
+        item.full_path, object.value(QStringLiteral("fileName")).toString(),
+        item.url);
     item.detail = object.value(QStringLiteral("detail")).toString();
     item.received_bytes =
         std::max<qint64>(0, object.value(QStringLiteral("receivedBytes"))
@@ -217,10 +261,6 @@ bool DownloadManager::LoadHistory(QString* error) {
         std::clamp(object.value(QStringLiteral("percent")).toInt(-1), -1,
                    100);
     item.state = *state;
-    if (item.file_name.isEmpty() && item.full_path.isEmpty() &&
-        item.url.isEmpty()) {
-      continue;
-    }
     loaded_items.insert(item.id, item);
     loaded_order.append(item.id);
   }
@@ -228,6 +268,7 @@ bool DownloadManager::LoadHistory(QString* error) {
   items_ = std::move(loaded_items);
   order_ = std::move(loaded_order);
   callbacks_.clear();
+  runtime_local_path_ids_.clear();
   return true;
 }
 
@@ -244,10 +285,15 @@ bool DownloadManager::SaveHistory(QString* error) const {
     if (found == items_.cend()) continue;
     const QString state = StateId(found->state);
     if (state.isEmpty()) continue;
+    const auto url = NormalizeSourceUrl(found->url);
+    if (!url) continue;
+    const QString full_path =
+        NormalizeLocalPath(found->full_path).value_or(QString());
     downloads.append(QJsonObject{
-        {QStringLiteral("fileName"), found->file_name},
-        {QStringLiteral("fullPath"), found->full_path},
-        {QStringLiteral("url"), found->url},
+        {QStringLiteral("fileName"),
+         FileNameForRecord(full_path, found->file_name, *url)},
+        {QStringLiteral("fullPath"), full_path},
+        {QStringLiteral("url"), *url},
         {QStringLiteral("detail"), found->detail},
         {QStringLiteral("receivedBytes"), found->received_bytes},
         {QStringLiteral("totalBytes"), found->total_bytes},
@@ -315,10 +361,12 @@ bool DownloadManager::RemoveDownload(quint32 id) {
   items_.remove(id);
   order_.removeAll(id);
   callbacks_.remove(id);
+  const bool runtime_path = runtime_local_path_ids_.remove(id);
   QString error;
   if (!SaveHistory(&error)) {
     items_.insert(id, removed);
     order_.insert(std::max(0, order_index), id);
+    if (runtime_path) runtime_local_path_ids_.insert(id);
     emit PersistenceError(error);
     return false;
   }
@@ -329,6 +377,7 @@ bool DownloadManager::RemoveDownload(quint32 id) {
 bool DownloadManager::ClearFinished() {
   const QHash<quint32, Item> previous_items = items_;
   const QList<quint32> previous_order = order_;
+  const QSet<quint32> previous_runtime_paths = runtime_local_path_ids_;
   QList<quint32> removed_ids;
   const QList<quint32> ids = order_;
   for (const quint32 id : ids) {
@@ -337,6 +386,7 @@ bool DownloadManager::ClearFinished() {
       items_.remove(id);
       order_.removeAll(id);
       callbacks_.remove(id);
+      runtime_local_path_ids_.remove(id);
       removed_ids.append(id);
     }
   }
@@ -345,6 +395,7 @@ bool DownloadManager::ClearFinished() {
   if (!saved) {
     items_ = previous_items;
     order_ = previous_order;
+    runtime_local_path_ids_ = previous_runtime_paths;
     emit PersistenceError(error);
     return false;
   }
@@ -352,23 +403,53 @@ bool DownloadManager::ClearFinished() {
   return saved;
 }
 
-bool DownloadManager::OpenDownload(quint32 id) const {
+bool DownloadManager::CanOpenDownload(quint32 id) const {
   const auto found = item(id);
-  return found && !found->full_path.isEmpty() &&
-         QDesktopServices::openUrl(QUrl::fromLocalFile(found->full_path));
+  if (!found || found->state != State::Complete ||
+      !runtime_local_path_ids_.contains(id)) {
+    return false;
+  }
+  const auto path = NormalizeLocalPath(found->full_path);
+  if (!path) return false;
+  const QFileInfo file(*path);
+  return file.exists() && file.isFile() && !file.isSymLink();
+}
+
+bool DownloadManager::CanShowDownloadInFolder(quint32 id) const {
+  const auto found = item(id);
+  if (!found || IsActive(found->state) ||
+      !runtime_local_path_ids_.contains(id)) {
+    return false;
+  }
+  const auto path = NormalizeLocalPath(found->full_path);
+  return path && QDir(QFileInfo(*path).absolutePath()).exists();
+}
+
+bool DownloadManager::OpenDownload(quint32 id) const {
+  if (!CanOpenDownload(id)) return false;
+  const QFileInfo file(*NormalizeLocalPath(item(id)->full_path));
+  return QDesktopServices::openUrl(QUrl::fromLocalFile(file.absoluteFilePath()));
 }
 
 bool DownloadManager::ShowDownloadInFolder(quint32 id) const {
-  const auto found = item(id);
-  if (!found || found->full_path.isEmpty()) return false;
+  if (!CanShowDownloadInFolder(id)) return false;
 
-  const QFileInfo file(found->full_path);
+  const QFileInfo file(*NormalizeLocalPath(item(id)->full_path));
 #if defined(OS_WIN)
+  if (!file.exists()) {
+    return QProcess::startDetached(QStringLiteral("explorer.exe"),
+                                   {QDir::toNativeSeparators(
+                                       file.absolutePath())});
+  }
   return QProcess::startDetached(
       QStringLiteral("explorer.exe"),
       {QStringLiteral("/select,%1")
            .arg(QDir::toNativeSeparators(file.absoluteFilePath()))});
 #elif defined(OS_MAC)
+  if (!file.exists()) {
+    return QProcess::startDetached(QStringLiteral("open"),
+                                   {file.absolutePath()});
+  }
   return QProcess::startDetached(QStringLiteral("open"),
                                  {QStringLiteral("-R"), file.absoluteFilePath()});
 #else
@@ -433,11 +514,21 @@ void DownloadManager::UpdateDownload(
   const int previous_active_count = active_count();
   const bool is_new = !items_.contains(item.id);
   if (is_new) order_.prepend(item.id);
-  items_.insert(item.id, item);
+  Item normalized = item;
+  const auto local_path = NormalizeLocalPath(item.full_path);
+  normalized.full_path = local_path.value_or(QString());
+  if (local_path) {
+    normalized.file_name = QFileInfo(*local_path).fileName();
+    runtime_local_path_ids_.insert(item.id);
+  } else {
+    normalized.file_name = NormalizeDisplayFileName(item.file_name);
+    runtime_local_path_ids_.remove(item.id);
+  }
+  items_.insert(item.id, normalized);
 
-  if (IsActive(item.state) && callback) {
+  if (IsActive(normalized.state) && callback) {
     callbacks_.insert(item.id, std::move(callback));
-  } else if (!IsActive(item.state)) {
+  } else if (!IsActive(normalized.state)) {
     callbacks_.remove(item.id);
     TrimFinishedHistory();
   }
@@ -447,7 +538,7 @@ void DownloadManager::UpdateDownload(
   if (current_active_count != previous_active_count) {
     emit ActiveCountChanged(current_active_count);
   }
-  if (!IsActive(item.state)) {
+  if (!IsActive(normalized.state)) {
     QString error;
     if (!SaveHistory(&error)) emit PersistenceError(error);
   }
@@ -465,6 +556,7 @@ void DownloadManager::TrimFinishedHistory() {
     items_.remove(id);
     order_.removeAt(index);
     callbacks_.remove(id);
+    runtime_local_path_ids_.remove(id);
     emit DownloadRemoved(id);
     --finished_count;
   }

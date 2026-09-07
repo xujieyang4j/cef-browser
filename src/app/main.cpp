@@ -11,6 +11,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -288,16 +289,136 @@ void StartDownloadSmokeTest(MainWindow* window,
   const bool persisted =
       history_loaded && restored_items.size() == 1 &&
       restored_items.first().file_name == QStringLiteral("trail-test.bin") &&
-      restored_items.first().state == DownloadManager::State::Complete;
+      restored_items.first().state == DownloadManager::State::Complete &&
+      !restored.CanOpenDownload(restored_items.first().id) &&
+      !restored.CanShowDownloadInFolder(restored_items.first().id);
   const bool removed = window->RemoveDownloadForTesting(41);
   DownloadManager cleared_history(download_history_path);
   const bool empty_after_clear =
       removed && cleared_history.LoadHistory() &&
       cleared_history.items().isEmpty();
+
+  const QDir history_directory = QFileInfo(download_history_path).absoluteDir();
+  const QString existing_path =
+      history_directory.filePath(QStringLiteral("verified-download.bin"));
+  const QString missing_path =
+      history_directory.filePath(QStringLiteral("missing-download.bin"));
+  QFile existing_file(existing_path);
+  const bool existing_opened = existing_file.open(QIODevice::WriteOnly);
+  const bool existing_written =
+      existing_opened && existing_file.write("trail") == 5;
+  existing_file.close();
+
+  QFile tampered_history(download_history_path);
+  const bool tampered_opened = tampered_history.open(QIODevice::WriteOnly);
+  bool tampered_written = false;
+  if (tampered_opened) {
+    const auto record = [](const QString& url, const QString& path,
+                           const QString& name, const QString& state) {
+      return QJsonObject{
+          {QStringLiteral("fileName"), name},
+          {QStringLiteral("fullPath"), path},
+          {QStringLiteral("url"), url},
+          {QStringLiteral("receivedBytes"), 5},
+          {QStringLiteral("totalBytes"), 5},
+          {QStringLiteral("percent"), 100},
+          {QStringLiteral("state"), state},
+      };
+    };
+    const QJsonObject tampered_root{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("downloads"),
+         QJsonArray{
+             record(QStringLiteral("HTTPS://example.test/safe.bin"),
+                    existing_path, QStringLiteral("../spoofed.app"),
+                    QStringLiteral("complete")),
+             record(QStringLiteral("javascript:alert(1)"), existing_path,
+                    QStringLiteral("unsafe.app"),
+                    QStringLiteral("complete")),
+             record(QStringLiteral("https://example.test/relative.bin"),
+                    QStringLiteral("../relative.bin"),
+                    QStringLiteral("../display.bin"),
+                    QStringLiteral("complete")),
+             record(QStringLiteral("https://example.test/missing.bin"),
+                    missing_path, QStringLiteral("spoofed.bin"),
+                    QStringLiteral("complete")),
+             record(QStringLiteral("https://example.test/active.bin"),
+                    existing_path, QStringLiteral("active.bin"),
+                    QStringLiteral("in_progress"))}}};
+    const QByteArray bytes =
+        QJsonDocument(tampered_root).toJson(QJsonDocument::Compact);
+    tampered_written = tampered_history.write(bytes) == bytes.size();
+    tampered_history.close();
+  }
+
+  DownloadManager untrusted(download_history_path);
+  const bool untrusted_loaded = untrusted.LoadHistory();
+  const QList<DownloadManager::Item> untrusted_items = untrusted.items();
+  const bool tampered_filtered =
+      existing_written && tampered_written && untrusted_loaded &&
+      untrusted_items.size() == 3 &&
+      untrusted_items.at(0).url ==
+          QStringLiteral("https://example.test/safe.bin") &&
+      untrusted_items.at(0).full_path == existing_path &&
+      untrusted_items.at(0).file_name ==
+          QStringLiteral("verified-download.bin") &&
+      untrusted_items.at(1).full_path.isEmpty() &&
+      untrusted_items.at(1).file_name == QStringLiteral("display.bin") &&
+      untrusted_items.at(2).full_path == missing_path &&
+      untrusted_items.at(2).file_name ==
+          QStringLiteral("missing-download.bin");
+  bool restored_actions_blocked = tampered_filtered;
+  for (const DownloadManager::Item& item : untrusted_items) {
+    restored_actions_blocked =
+        restored_actions_blocked && !untrusted.CanOpenDownload(item.id) &&
+        !untrusted.CanShowDownloadInFolder(item.id) &&
+        !untrusted.OpenDownload(item.id) &&
+        !untrusted.ShowDownloadInFolder(item.id);
+  }
+
+  DownloadManager live_downloads;
+  DownloadManager::Item live_item;
+  live_item.id = 51;
+  live_item.file_name = QStringLiteral("spoofed.app");
+  live_item.full_path = existing_path;
+  live_item.url = QStringLiteral("https://example.test/live.bin");
+  live_item.state = DownloadManager::State::Complete;
+  live_downloads.UpdateForTesting(live_item);
+  const auto normalized_live_item = live_downloads.item(live_item.id);
+  const bool live_actions_validated =
+      normalized_live_item &&
+      normalized_live_item->file_name ==
+          QStringLiteral("verified-download.bin") &&
+      live_downloads.CanOpenDownload(live_item.id) &&
+      live_downloads.CanShowDownloadInFolder(live_item.id);
+  live_item.id = 52;
+  live_item.full_path = missing_path;
+  live_item.state = DownloadManager::State::Complete;
+  live_downloads.UpdateForTesting(live_item);
+  const bool missing_file_blocked =
+      !live_downloads.CanOpenDownload(live_item.id);
+  live_item.id = 53;
+  live_item.full_path = existing_path;
+  live_item.state = DownloadManager::State::Interrupted;
+  live_downloads.UpdateForTesting(live_item);
+  const bool incomplete_file_blocked =
+      !live_downloads.CanOpenDownload(live_item.id);
+  live_item.id = 54;
+  live_item.full_path = QStringLiteral("../relative.bin");
+  live_item.state = DownloadManager::State::Complete;
+  live_downloads.UpdateForTesting(live_item);
+  const bool relative_path_blocked =
+      live_downloads.item(live_item.id)->full_path.isEmpty() &&
+      !live_downloads.CanOpenDownload(live_item.id) &&
+      !live_downloads.CanShowDownloadInFolder(live_item.id);
+
   if (started && paused && resumed && completed && persisted &&
-      active_protected && empty_after_clear) {
+      active_protected && empty_after_clear && tampered_filtered &&
+      restored_actions_blocked && live_actions_validated &&
+      missing_file_blocked && incomplete_file_blocked &&
+      relative_path_blocked) {
     *output << "DOWNLOAD_SMOKE_OK paused=1 resumed=1 status=Complete "
-               "persisted=1 removed=1"
+               "persisted=1 removed=1 untrusted=blocked local_paths=validated"
             << Qt::endl;
     window->close();
   } else {
@@ -305,7 +426,13 @@ void StartDownloadSmokeTest(MainWindow* window,
             << " paused=" << paused << " resumed=" << resumed
             << " completed=" << completed << " persisted=" << persisted
             << " protected=" << active_protected
-            << " removed=" << empty_after_clear << Qt::endl;
+            << " removed=" << empty_after_clear
+            << " filtered=" << tampered_filtered
+            << " restored_actions=" << restored_actions_blocked
+            << " live_actions=" << live_actions_validated
+            << " missing=" << missing_file_blocked
+            << " incomplete=" << incomplete_file_blocked
+            << " relative=" << relative_path_blocked << Qt::endl;
     QCoreApplication::exit(3);
   }
 }

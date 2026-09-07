@@ -127,11 +127,10 @@ void DownloadPanel::RefreshDownload(quint32 id, bool is_new) {
     const bool active = download->state == DownloadManager::State::Starting ||
                         download->state == DownloadManager::State::InProgress ||
                         download->state == DownloadManager::State::Paused;
-    const bool complete = download->state == DownloadManager::State::Complete;
     actions->findChild<QPushButton*>(QStringLiteral("openDownload"))
-        ->setVisible(complete && !download->full_path.isEmpty());
+        ->setVisible(manager_->CanOpenDownload(id));
     actions->findChild<QPushButton*>(QStringLiteral("showDownload"))
-        ->setVisible(!active && !download->full_path.isEmpty());
+        ->setVisible(manager_->CanShowDownloadInFolder(id));
     actions->findChild<QPushButton*>(QStringLiteral("cancelDownload"))
         ->setVisible(active);
     actions->findChild<QPushButton*>(QStringLiteral("removeDownload"))
