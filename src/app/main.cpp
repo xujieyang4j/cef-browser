@@ -11,6 +11,7 @@
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
@@ -18,6 +19,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
+#include <QLocalSocket>
 #include <QPushButton>
 #include <QSet>
 #include <QStandardPaths>
@@ -1935,6 +1937,54 @@ void StartAuthSmokeTest(MainWindow* window) {
 void StartSingleInstanceSmokeTest(MainWindow* window,
                                   const QString& data_path) {
   auto output = std::make_shared<QTextStream>(stdout);
+  const QString bounded_data_path =
+      QDir(data_path).filePath(QStringLiteral("single-instance-bounds"));
+  const bool bounded_directory_created = QDir().mkpath(bounded_data_path);
+  SingleInstance bounded_primary(bounded_data_path);
+  const bool bounded_primary_started =
+      bounded_directory_created &&
+      bounded_primary.Start(QString()) == SingleInstance::StartResult::Primary;
+  constexpr int kPendingRequestAttempts = 40;
+  for (int index = 0; index < kPendingRequestAttempts; ++index) {
+    bounded_primary.QueueRequestForTesting(
+        QStringLiteral("request-%1").arg(index));
+  }
+  const int pending_request_count =
+      bounded_primary.pending_request_count_for_testing();
+  QStringList delivered_requests;
+  bounded_primary.SetActivationHandler(
+      [&delivered_requests](const QString& value) {
+        delivered_requests.append(value);
+      });
+  const bool pending_requests_bounded =
+      bounded_primary_started && pending_request_count > 0 &&
+      pending_request_count < kPendingRequestAttempts &&
+      delivered_requests.size() == pending_request_count &&
+      delivered_requests.first() == QStringLiteral("request-8") &&
+      delivered_requests.last() == QStringLiteral("request-39");
+
+  QList<QLocalSocket*> stalled_clients;
+  constexpr int kStalledConnectionAttempts = 24;
+  for (int index = 0; index < kStalledConnectionAttempts; ++index) {
+    auto* socket = new QLocalSocket;
+    socket->connectToServer(bounded_primary.server_name_for_testing());
+    socket->waitForConnected(100);
+    stalled_clients.append(socket);
+    QCoreApplication::processEvents();
+  }
+  QCoreApplication::processEvents();
+  const int accepted_stalled_requests =
+      bounded_primary.active_request_count_for_testing();
+  const bool active_requests_bounded =
+      accepted_stalled_requests > 0 &&
+      accepted_stalled_requests < kStalledConnectionAttempts;
+  QEventLoop idle_wait;
+  QTimer::singleShot(2200, &idle_wait, &QEventLoop::quit);
+  idle_wait.exec();
+  const bool idle_requests_reaped =
+      bounded_primary.active_request_count_for_testing() == 0;
+  qDeleteAll(stalled_clients);
+
   const QString forwarded_url =
       QStringLiteral("http://example.test/forwarded");
   auto forward = [data_path](const QString& value, QString* error) {
@@ -1945,8 +1995,12 @@ void StartSingleInstanceSmokeTest(MainWindow* window,
   QString error;
   const bool forwarded = forward(QStringLiteral("example.test/forwarded"),
                                  &error);
-  if (!forwarded) {
-    *output << "SINGLE_INSTANCE_SMOKE_FAILED forwarded=0 error=" << error
+  if (!forwarded || !pending_requests_bounded || !active_requests_bounded ||
+      !idle_requests_reaped) {
+    *output << "SINGLE_INSTANCE_SMOKE_FAILED forwarded=" << forwarded
+            << " pending=" << pending_requests_bounded
+            << " active=" << active_requests_bounded
+            << " idle=" << idle_requests_reaped << " error=" << error
             << Qt::endl;
     QCoreApplication::exit(21);
     return;
@@ -1976,7 +2030,8 @@ void StartSingleInstanceSmokeTest(MainWindow* window,
                    QStringLiteral(
                        "https://www.google.com/search?q=trail%20browser")) {
       *output << "SINGLE_INSTANCE_SMOKE_OK forwarded=domain,search "
-                 "activation=window unsafe=blocked tabs=3"
+                 "activation=window unsafe=blocked queues=bounded idle=reaped "
+                 "tabs=3"
               << Qt::endl;
       window->close();
       return;

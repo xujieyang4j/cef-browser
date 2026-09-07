@@ -24,6 +24,14 @@ class SingleInstance final : public QObject {
   StartResult Start(const QString& url, QString* error = nullptr);
   void SetActivationHandler(
       std::function<void(const QString&)> activation_handler);
+  QString server_name_for_testing() const { return server_name_; }
+  int active_request_count_for_testing() const {
+    return request_buffers_.size();
+  }
+  int pending_request_count_for_testing() const {
+    return pending_requests_.size();
+  }
+  void QueueRequestForTesting(const QString& url) { DispatchRequest(url); }
 
  private:
   void AcceptConnections();

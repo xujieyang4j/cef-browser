@@ -29,7 +29,9 @@ startup arguments, and forwarded open requests share the same normalization:
 search terms use the selected engine, host names gain an HTTP scheme, and only
 HTTP(S), local files, and `about:blank` are accepted as explicit navigation
 schemes. Unsupported explicit schemes are blocked rather than turned into a
-search.
+search. The same-user local activation channel bounds concurrent connections,
+queued startup requests, request bytes, and idle connection lifetime so a
+stalled secondary process cannot consume resources without limit.
 Window geometry, open tab URLs, and the active tab are saved atomically and
 restored on the next regular launch. A previous unclean exit is detected and
 reported after its tabs are recovered. An explicit startup URL takes priority

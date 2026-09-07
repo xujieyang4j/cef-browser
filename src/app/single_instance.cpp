@@ -9,11 +9,16 @@
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QThread>
+#include <QTimer>
 
 namespace {
 
 constexpr int kConnectTimeoutMs = 1500;
+constexpr int kRequestTimeoutMs = 2000;
 constexpr int kMaxRequestBytes = 64 * 1024;
+constexpr int kMaxForwardedUrlBytes = kMaxRequestBytes / 2;
+constexpr int kMaxActiveRequests = 16;
+constexpr int kMaxPendingRequests = 32;
 
 void SetError(QString* error, const QString& value) {
   if (error) *error = value;
@@ -36,6 +41,7 @@ SingleInstance::SingleInstance(QString data_path, QString identity_suffix,
       server_name_(ServerName(data_path, identity_suffix)),
       lock_(QDir(data_path).filePath(QStringLiteral("instance.lock"))) {
   server_.setSocketOptions(QLocalServer::UserAccessOption);
+  server_.setMaxPendingConnections(kMaxActiveRequests);
   connect(&server_, &QLocalServer::newConnection, this,
           &SingleInstance::AcceptConnections);
 }
@@ -74,12 +80,22 @@ void SingleInstance::SetActivationHandler(
 
 void SingleInstance::AcceptConnections() {
   while (QLocalSocket* socket = server_.nextPendingConnection()) {
+    if (request_buffers_.size() >= kMaxActiveRequests) {
+      socket->abort();
+      socket->deleteLater();
+      continue;
+    }
+    socket->setReadBufferSize(kMaxRequestBytes + 1);
     request_buffers_.insert(socket, {});
     connect(socket, &QLocalSocket::readyRead, this,
             [this, socket] { ReadRequest(socket); });
     connect(socket, &QLocalSocket::disconnected, this, [this, socket] {
       request_buffers_.remove(socket);
       socket->deleteLater();
+    });
+    QTimer::singleShot(kRequestTimeoutMs, socket, [this, socket] {
+      if (!request_buffers_.remove(socket)) return;
+      socket->abort();
     });
     ReadRequest(socket);
   }
@@ -107,19 +123,24 @@ void SingleInstance::ReadRequest(QLocalSocket* socket) {
   }
   const QJsonObject object = document.object();
   if (object.value(QStringLiteral("version")).toInt() != 1) return;
-  DispatchRequest(object.value(QStringLiteral("url")).toString());
+  const QString url = object.value(QStringLiteral("url")).toString();
+  if (url.toUtf8().size() > kMaxForwardedUrlBytes) return;
+  DispatchRequest(url);
 }
 
 void SingleInstance::DispatchRequest(const QString& url) {
   if (activation_handler_) {
     activation_handler_(url);
   } else {
+    if (pending_requests_.size() >= kMaxPendingRequests) {
+      pending_requests_.removeFirst();
+    }
     pending_requests_.append(url);
   }
 }
 
 bool SingleInstance::ForwardRequest(const QString& url, QString* error) {
-  if (url.toUtf8().size() > kMaxRequestBytes / 2) {
+  if (url.toUtf8().size() > kMaxForwardedUrlBytes) {
     SetError(error, QStringLiteral("Open request is too large"));
     return false;
   }
