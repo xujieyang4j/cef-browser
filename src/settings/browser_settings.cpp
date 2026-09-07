@@ -15,6 +15,9 @@ namespace {
 constexpr int kSettingsVersion = 1;
 constexpr int kMaxSettingsBytes = 64 * 1024;
 constexpr int kMaxHomePageBytes = 16 * 1024;
+constexpr int kMaxNavigationInputCharacters = 64 * 1024;
+constexpr int kMaxNavigationInputBytes = 64 * 1024;
+constexpr int kMaxNormalizedUrlBytes = 64 * 1024;
 
 void SetError(QString* error, const QString& value) {
   if (error) *error = value;
@@ -50,6 +53,19 @@ bool HasExplicitScheme(const QString& input) {
     return false;
   }
   return true;
+}
+
+bool IsNavigationInputWithinLimit(const QString& value) {
+  return value.size() <= kMaxNavigationInputCharacters &&
+         value.toUtf8().size() <= kMaxNavigationInputBytes;
+}
+
+std::optional<QString> CheckedNormalizedUrl(QString value) {
+  if (value.size() > kMaxNormalizedUrlBytes ||
+      value.toUtf8().size() > kMaxNormalizedUrlBytes) {
+    return std::nullopt;
+  }
+  return value;
 }
 
 }  // namespace
@@ -198,12 +214,14 @@ QString BrowserSettings::SearchUrl(SearchEngine engine, const QString& query) {
 
 std::optional<QString> BrowserSettings::NormalizeNavigationInput(
     SearchEngine engine, QString input) {
+  if (!IsNavigationInputWithinLimit(input)) return std::nullopt;
   input = input.trimmed();
   if (input.isEmpty()) return QStringLiteral("about:blank");
 
   const bool absolute_path = QDir::isAbsolutePath(input);
   if (absolute_path) {
-    return QUrl::fromLocalFile(input).toString(QUrl::FullyEncoded);
+    return CheckedNormalizedUrl(
+        QUrl::fromLocalFile(input).toString(QUrl::FullyEncoded));
   }
 
   const bool explicit_scheme = HasExplicitScheme(input);
@@ -237,14 +255,14 @@ std::optional<QString> BrowserSettings::NormalizeNavigationInput(
       return std::nullopt;
     }
     parsed.setScheme(scheme);
-    return parsed.toString(QUrl::FullyEncoded);
+    return CheckedNormalizedUrl(parsed.toString(QUrl::FullyEncoded));
   }
 
   const bool likely_address =
       input.contains(QLatin1Char('.')) || input.contains(QLatin1Char(':')) ||
       input.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0;
   if (input.contains(QLatin1Char(' ')) || !likely_address) {
-    return SearchUrl(engine, input);
+    return CheckedNormalizedUrl(SearchUrl(engine, input));
   }
 
   const QUrl parsed = QUrl::fromUserInput(input);
@@ -260,10 +278,11 @@ std::optional<QString> BrowserSettings::NormalizeNavigationInput(
       parsed.host().isEmpty()) {
     return std::nullopt;
   }
-  return parsed.toString(QUrl::FullyEncoded);
+  return CheckedNormalizedUrl(parsed.toString(QUrl::FullyEncoded));
 }
 
 std::optional<QString> BrowserSettings::NormalizeStoredUrl(QString url) {
+  if (!IsNavigationInputWithinLimit(url)) return std::nullopt;
   url = url.trimmed();
   if (url.compare(QStringLiteral("about:blank"), Qt::CaseInsensitive) == 0) {
     return QStringLiteral("about:blank");
@@ -287,7 +306,7 @@ std::optional<QString> BrowserSettings::NormalizeStoredUrl(QString url) {
     return std::nullopt;
   }
   parsed.setScheme(scheme);
-  return parsed.toString(QUrl::FullyEncoded);
+  return CheckedNormalizedUrl(parsed.toString(QUrl::FullyEncoded));
 }
 
 QString BrowserSettings::StartupBehaviorId(StartupBehavior behavior) {

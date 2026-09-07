@@ -35,8 +35,10 @@ new tab instead of starting a competing CEF instance. Address-bar text, first
 startup arguments, and forwarded open requests share the same normalization:
 search terms use the selected engine, host names gain an HTTP scheme, and only
 HTTP(S), local files, and `about:blank` are accepted as explicit navigation
-schemes. Unsupported explicit schemes are blocked rather than turned into a
-search. The same-user local activation channel bounds concurrent connections,
+schemes. Unsupported explicit schemes and navigation inputs whose raw or
+normalized UTF-8 representation exceeds 64 KiB are blocked rather than turned
+into a search. The address field enforces the same character ceiling. The
+same-user local activation channel bounds concurrent connections,
 queued startup requests, request bytes, and idle connection lifetime so a
 stalled secondary process cannot consume resources without limit.
 Window geometry, open tab URLs, and the active tab are saved atomically and
@@ -52,7 +54,10 @@ Bookmark and history recovery
 also removes duplicate URLs, bounds display text and visit counters, and
 repairs invalid timestamps before the data reaches browser menus. The browser
 also provides in-page search, per-tab page zoom, persistent bookmarks, and a
-bounded visit history. Download and browsing-data files share their read and
+bounded visit history. Find-in-page text is limited to 4,096 characters and
+8 KiB before reaching Chromium, and bookmark-name editing is limited to the
+same 512 characters retained by profile storage. Download and browsing-data
+files share their read and
 write byte limits, retain the newest records when trimming is required, and
 prioritize bookmarks over older visit history so every saved profile remains
 reloadable.
@@ -217,7 +222,8 @@ closing, reopening, and finally shutting down multiple CEF browser instances.
 CTest also runs deterministic download-state, download-exit protection,
 tab-action, pinned-tab persistence, failure-page, atomic session restore,
 page-search/zoom, titled address suggestions, bookmark/history persistence,
-browsing-data cleanup, download-ingress and active-count limits, favicon
+bounds for address, search, find, and bookmark-name input, browsing-data
+cleanup, download-ingress and active-count limits, favicon
 mapping, audio/mute state, security-policy, and authentication-dialog checks.
 JavaScript-dialog limits, concurrency suppression, navigation reset, and
 before-unload cancellation are checked as well.

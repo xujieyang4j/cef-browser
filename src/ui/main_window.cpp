@@ -57,6 +57,9 @@ namespace {
 constexpr int kMaxClosedTabs = 20;
 constexpr int kMaxOpenTabs = 100;
 constexpr int kMaxAddressSuggestions = 200;
+constexpr int kMaxAddressInputCharacters = 64 * 1024;
+constexpr int kMaxFindInputCharacters = 4 * 1024;
+constexpr int kMaxBookmarkNameCharacters = 512;
 
 class CompletionCallback final : public CefCompletionCallback {
  public:
@@ -197,6 +200,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   home_button_->setToolTip(QStringLiteral("Home"));
   address_bar_->setPlaceholderText(
       QStringLiteral("Search or enter an address"));
+  address_bar_->setMaxLength(kMaxAddressInputCharacters);
   address_bar_->setClearButtonEnabled(true);
   address_suggestions_ = new QStringListModel(this);
   address_completer_ = new QCompleter(address_suggestions_, this);
@@ -233,6 +237,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   auto* next_match = new QPushButton(QStringLiteral("↓"), find_bar_);
   auto* close_find = new QPushButton(QStringLiteral("×"), find_bar_);
   find_edit_->setPlaceholderText(QStringLiteral("Find in page"));
+  find_edit_->setMaxLength(kMaxFindInputCharacters);
   find_result_label_->setMinimumWidth(70);
   find_result_label_->setAlignment(Qt::AlignCenter);
   previous_match->setToolTip(QStringLiteral("Previous match (Shift+Enter)"));
@@ -871,6 +876,14 @@ QString MainWindow::find_result_for_testing() const {
   return find_result_label_->text();
 }
 
+int MainWindow::address_input_limit_for_testing() const {
+  return address_bar_->maxLength();
+}
+
+int MainWindow::find_input_limit_for_testing() const {
+  return find_edit_->maxLength();
+}
+
 void MainWindow::ZoomInForTesting() {
   if (BrowserView* browser = CurrentBrowser()) browser->ZoomIn();
 }
@@ -928,6 +941,10 @@ void MainWindow::AddHistoryForTesting(const QString& url,
 bool MainWindow::RenameBookmarkForTesting(const QString& url,
                                           const QString& title) {
   return RenameBookmark(url, title);
+}
+
+int MainWindow::bookmark_name_limit_for_testing() const {
+  return kMaxBookmarkNameCharacters;
 }
 
 QString MainWindow::bookmark_title_for_testing(const QString& url) const {
@@ -2421,11 +2438,17 @@ void MainWindow::ShowBookmarkContextMenu(const QPoint& position) {
         break;
       }
     }
-    bool accepted = false;
-    const QString title = QInputDialog::getText(
-        this, QStringLiteral("Edit bookmark"), QStringLiteral("Name:"),
-        QLineEdit::Normal, current_title, &accepted);
-    if (accepted) RenameBookmark(url, title);
+    QInputDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Edit bookmark"));
+    dialog.setLabelText(QStringLiteral("Name:"));
+    dialog.setTextEchoMode(QLineEdit::Normal);
+    dialog.setTextValue(current_title);
+    if (QLineEdit* editor = dialog.findChild<QLineEdit*>()) {
+      editor->setMaxLength(kMaxBookmarkNameCharacters);
+    }
+    if (dialog.exec() == QDialog::Accepted) {
+      RenameBookmark(url, dialog.textValue());
+    }
   } else if (selected == remove) {
     RemoveBookmark(url);
   }

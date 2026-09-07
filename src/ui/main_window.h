@@ -122,6 +122,8 @@ class MainWindow final : public QMainWindow {
   void HideFindBarForTesting();
   void FindForTesting(const QString& text);
   QString find_result_for_testing() const;
+  int address_input_limit_for_testing() const;
+  int find_input_limit_for_testing() const;
   void ZoomInForTesting();
   void ResetZoomForTesting();
   int zoom_percent_for_testing() const;
@@ -134,6 +136,7 @@ class MainWindow final : public QMainWindow {
   void NavigateAddressSuggestionForTesting(const QString& label);
   void AddHistoryForTesting(const QString& url, const QString& title);
   bool RenameBookmarkForTesting(const QString& url, const QString& title);
+  int bookmark_name_limit_for_testing() const;
   QString bookmark_title_for_testing(const QString& url) const;
   QString bookmark_label_for_testing(const QString& url);
   bool RemoveBookmarkForTesting(const QString& url);

@@ -50,6 +50,8 @@ constexpr int kMaxPromptTextCharacters = 512;
 constexpr int kMaxCredentialCharacters = 1024;
 constexpr int kMaxJavaScriptMessageCharacters = 4 * 1024;
 constexpr int kMaxJavaScriptPromptCharacters = 1024;
+constexpr int kMaxFindTextCharacters = 4 * 1024;
+constexpr int kMaxFindTextBytes = 8 * 1024;
 
 QString NormalizeUiText(QString value, int max_characters) {
   for (qsizetype index = 0; index < value.size(); ++index) {
@@ -70,6 +72,11 @@ QString NormalizeUiText(QString value, int max_characters) {
 bool IsNavigationUrlWithinLimit(const QString& value) {
   return !value.isEmpty() && value.size() <= kMaxActionUrlBytes &&
          value.toUtf8().size() <= kMaxActionUrlBytes;
+}
+
+bool IsFindTextWithinLimit(const QString& value) {
+  return value.size() <= kMaxFindTextCharacters &&
+         value.toUtf8().size() <= kMaxFindTextBytes;
 }
 
 QString BoundedInput(QString value, int max_characters) {
@@ -319,7 +326,7 @@ void BrowserView::ShowDevTools() {
 }
 
 void BrowserView::Find(const QString& text, bool forward, bool find_next) {
-  if (!browser_) return;
+  if (!browser_ || !IsFindTextWithinLimit(text)) return;
   const QByteArray encoded = text.toUtf8();
   browser_->GetHost()->Find(
       std::string(encoded.constData(), encoded.size()), forward, false,
@@ -512,6 +519,10 @@ QString BrowserView::NormalizePromptTextForTesting(QString text) {
 
 bool BrowserView::IsNavigationUrlWithinLimitForTesting(const QString& url) {
   return IsNavigationUrlWithinLimit(url);
+}
+
+bool BrowserView::IsFindTextWithinLimitForTesting(const QString& text) {
+  return IsFindTextWithinLimit(text);
 }
 
 bool BrowserView::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {

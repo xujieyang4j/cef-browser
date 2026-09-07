@@ -111,6 +111,7 @@ class BrowserView final : public QWidget {
       QString origin);
   static QString NormalizePromptTextForTesting(QString text);
   static bool IsNavigationUrlWithinLimitForTesting(const QString& url);
+  static bool IsFindTextWithinLimitForTesting(const QString& text);
   void ShowFailureForTesting(bool render_process_failed);
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
   bool ShowMediaPermissionForTesting(

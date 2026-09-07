@@ -1045,6 +1045,21 @@ void StartPageToolsSmokeTest(MainWindow* window) {
     ++*attempts;
     if (*stage == 0 &&
         window->current_title() == QStringLiteral("Page Tools")) {
+      const bool input_limits =
+          window->address_input_limit_for_testing() == 64 * 1024 &&
+          window->find_input_limit_for_testing() == 4 * 1024 &&
+          window->bookmark_name_limit_for_testing() == 512 &&
+          BrowserView::IsFindTextWithinLimitForTesting(
+              QString(4 * 1024, QLatin1Char('f'))) &&
+          !BrowserView::IsFindTextWithinLimitForTesting(
+              QString(3 * 1024, QChar(0x754C))) &&
+          !BrowserView::IsFindTextWithinLimitForTesting(
+              QString(4 * 1024 + 1, QLatin1Char('f')));
+      if (!input_limits) {
+        *output << "PAGE_TOOLS_SMOKE_FAILED input_limits=0" << Qt::endl;
+        QCoreApplication::exit(6);
+        return;
+      }
       window->FindForTesting(QStringLiteral("trail"));
       window->ZoomInForTesting();
       *stage = 1;
@@ -1893,6 +1908,15 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
           QStringLiteral("unknown-scheme:payload")) &&
       !window->NormalizeUrlForTesting(QStringLiteral("unknown-scheme:123")) &&
       !window->NormalizeUrlForTesting(QStringLiteral("about:settings"));
+  const bool oversized_navigation_rejected =
+      !window->NormalizeUrlForTesting(
+          QStringLiteral("https://example.test/?q=") +
+          QString(64 * 1024, QLatin1Char('a'))) &&
+      !window->NormalizeUrlForTesting(QString(64 * 1024 + 1,
+                                             QLatin1Char('q'))) &&
+      !window->NormalizeUrlForTesting(QString(24 * 1024, QChar(0x754C))) &&
+      !window->NormalizeUrlForTesting(
+          QString(8 * 1024, QChar(0x754C)) + QLatin1Char(' '));
   const bool menu_ok = window->application_menu_actions_for_testing(
                                   QStringLiteral("Settings")) ==
                               QStringList{
@@ -1972,7 +1996,8 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
                                 startup_normalization;
   const bool preliminary_ok = default_ok && selected && persisted && encoded &&
                               address_ok && safe_schemes &&
-                              unsafe_navigation_rejected && menu_ok &&
+                              unsafe_navigation_rejected &&
+                              oversized_navigation_rejected && menu_ok &&
                               home_saved && home_persisted && unsafe_rejected &&
                               oversized_home_rejected &&
                               new_tab_setting && new_tab_persisted &&
@@ -1987,6 +2012,7 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
             << " file=" << normalized_file.value_or(QStringLiteral("null"))
             << " blank=" << normalized_blank.value_or(QStringLiteral("null"))
             << " unsafe_navigation=" << unsafe_navigation_rejected
+            << " oversized_navigation=" << oversized_navigation_rejected
             << " menu=" << menu_ok << " home=" << home_persisted
             << " unsafe=" << unsafe_rejected
             << " oversized=" << oversized_home_rejected
