@@ -306,7 +306,30 @@ void DownloadManager::ResumeDownload(quint32 id) {
   if (callback) callback->Resume();
 }
 
+bool DownloadManager::RemoveDownload(quint32 id) {
+  const auto found = items_.constFind(id);
+  if (found == items_.cend() || IsActive(found->state)) return false;
+
+  const Item removed = found.value();
+  const int order_index = order_.indexOf(id);
+  items_.remove(id);
+  order_.removeAll(id);
+  callbacks_.remove(id);
+  QString error;
+  if (!SaveHistory(&error)) {
+    items_.insert(id, removed);
+    order_.insert(std::max(0, order_index), id);
+    emit PersistenceError(error);
+    return false;
+  }
+  emit DownloadRemoved(id);
+  return true;
+}
+
 bool DownloadManager::ClearFinished() {
+  const QHash<quint32, Item> previous_items = items_;
+  const QList<quint32> previous_order = order_;
+  QList<quint32> removed_ids;
   const QList<quint32> ids = order_;
   for (const quint32 id : ids) {
     const auto found = items_.constFind(id);
@@ -314,12 +337,18 @@ bool DownloadManager::ClearFinished() {
       items_.remove(id);
       order_.removeAll(id);
       callbacks_.remove(id);
-      emit DownloadRemoved(id);
+      removed_ids.append(id);
     }
   }
   QString error;
   const bool saved = SaveHistory(&error);
-  if (!saved) emit PersistenceError(error);
+  if (!saved) {
+    items_ = previous_items;
+    order_ = previous_order;
+    emit PersistenceError(error);
+    return false;
+  }
+  for (const quint32 id : removed_ids) emit DownloadRemoved(id);
   return saved;
 }
 

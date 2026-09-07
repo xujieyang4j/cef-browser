@@ -12,7 +12,8 @@ progress, speed, pause/resume, cancellation, completion actions, and a platform
 save dialog; they continue when the originating tab closes, and quitting with
 active or paused downloads requires explicit confirmation. Finished download
 records survive application restarts and can be cleared without deleting the
-downloaded files. Main-frame load
+downloaded files. Individual finished records can also be removed from the
+download panel. Main-frame load
 failures and renderer crashes display a retry page while preserving the
 requested URL.
 Window geometry, open tab URLs, and the active tab are saved atomically and
@@ -49,6 +50,8 @@ recently closed tabs, download history, or site data including HTTP cache,
 cookies, HTTP credentials, and certificate exceptions
 while preserving bookmarks; the updated session is persisted immediately, and
 completion is reported only after every asynchronous CEF operation finishes.
+Individual bookmark and history entries can be removed from their menus with a
+right click, and every removal is persisted atomically.
 Tabs also have a context menu for opening a new tab, duplicating the selected
 tab, copying its address, closing it, closing other tabs, or closing tabs to
 its right. Multi-tab closes wait for each CEF browser to finish shutting down

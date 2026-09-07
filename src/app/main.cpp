@@ -261,6 +261,7 @@ void StartDownloadSmokeTest(MainWindow* window,
                        window->active_download_count_for_testing() == 1 &&
                        window->download_status_for_testing(41).startsWith(
                            QStringLiteral("25%"));
+  const bool active_protected = !window->RemoveDownloadForTesting(41);
   window->PauseDownloadForTesting(41);
   const bool paused = window->active_download_count_for_testing() == 1 &&
                       window->download_status_for_testing(41).startsWith(
@@ -281,22 +282,23 @@ void StartDownloadSmokeTest(MainWindow* window,
       history_loaded && restored_items.size() == 1 &&
       restored_items.first().file_name == QStringLiteral("trail-test.bin") &&
       restored_items.first().state == DownloadManager::State::Complete;
-  const bool cleared = window->ClearFinishedDownloadsForTesting();
+  const bool removed = window->RemoveDownloadForTesting(41);
   DownloadManager cleared_history(download_history_path);
   const bool empty_after_clear =
-      cleared && cleared_history.LoadHistory() &&
+      removed && cleared_history.LoadHistory() &&
       cleared_history.items().isEmpty();
   if (started && paused && resumed && completed && persisted &&
-      empty_after_clear) {
+      active_protected && empty_after_clear) {
     *output << "DOWNLOAD_SMOKE_OK paused=1 resumed=1 status=Complete "
-               "persisted=1 cleared=1"
+               "persisted=1 removed=1"
             << Qt::endl;
     window->close();
   } else {
     *output << "DOWNLOAD_SMOKE_FAILED started=" << started
             << " paused=" << paused << " resumed=" << resumed
             << " completed=" << completed << " persisted=" << persisted
-            << " cleared=" << empty_after_clear << Qt::endl;
+            << " protected=" << active_protected
+            << " removed=" << empty_after_clear << Qt::endl;
     QCoreApplication::exit(3);
   }
 }
@@ -597,15 +599,25 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       break;
     }
   }
-  window->ToggleBookmarkForTesting();
+  const bool single_removed =
+      window->RemoveBookmarkForTesting(bookmarked_url) &&
+      window->RemoveHistoryForTesting(bookmarked_url);
+  BrowsingDataStore after_single_remove(data_path);
+  const bool single_persisted =
+      after_single_remove.Load() &&
+      !after_single_remove.IsBookmarked(bookmarked_url) &&
+      after_single_remove.history().size() == 1 &&
+      after_single_remove.history().first().url == first_url;
   const bool profile_ok = add_first && reject_duplicate && add_second && saved &&
                           bookmark_ok && history_ok && removed && suggestions_ok &&
-                          !first_label.isEmpty();
+                          !first_label.isEmpty() && single_removed &&
+                          single_persisted;
   if (!profile_ok) {
     *output << "PROFILE_SMOKE_FAILED bookmark=" << bookmark_ok
             << " history=" << history_ok << " removed=" << removed
             << " suggestions=" << suggestions_ok
             << " titled=" << !first_label.isEmpty()
+            << " single=" << single_persisted
             << Qt::endl;
     QCoreApplication::exit(7);
     return;
@@ -618,7 +630,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
     ++*attempts;
     if (window->current_url() == first_url) {
       *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2 "
-                 "suggestions=titled-navigation"
+                 "single-remove=persisted suggestions=titled-navigation"
               << Qt::endl;
       window->close();
       return;

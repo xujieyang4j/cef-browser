@@ -178,6 +178,15 @@ void BrowsingDataStore::RecordVisit(const QString& url, const QString& title,
   while (history_.size() > kMaxHistoryEntries) history_.removeLast();
 }
 
+bool BrowsingDataStore::RemoveHistory(const QString& url) {
+  const auto found = std::find_if(
+      history_.begin(), history_.end(),
+      [&url](const HistoryEntry& entry) { return entry.url == url; });
+  if (found == history_.end()) return false;
+  history_.erase(found);
+  return true;
+}
+
 void BrowsingDataStore::ClearHistory() {
   history_.clear();
 }

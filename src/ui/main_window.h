@@ -62,6 +62,7 @@ class MainWindow final : public QMainWindow {
   int download_count_for_testing() const;
   int active_download_count_for_testing() const;
   QString download_status_for_testing(quint32 id) const;
+  bool RemoveDownloadForTesting(quint32 id);
   bool ClearFinishedDownloadsForTesting();
   void SetCurrentFaviconForTesting();
   bool current_tab_has_favicon_for_testing() const;
@@ -127,6 +128,8 @@ class MainWindow final : public QMainWindow {
   QStringList address_suggestion_labels_for_testing() const;
   void NavigateAddressSuggestionForTesting(const QString& label);
   void AddHistoryForTesting(const QString& url, const QString& title);
+  bool RemoveBookmarkForTesting(const QString& url);
+  bool RemoveHistoryForTesting(const QString& url);
   void ClearBrowsingDataForTesting();
   void ClearBrowsingDataForTesting(bool history, bool recently_closed,
                                    bool downloads, bool site_data);
@@ -168,6 +171,8 @@ class MainWindow final : public QMainWindow {
   void ToggleCurrentBookmark();
   void RebuildBookmarksMenu();
   void RebuildHistoryMenu();
+  void ShowBookmarkContextMenu(const QPoint& position);
+  void ShowHistoryContextMenu(const QPoint& position);
   void RebuildAllTabsMenu();
   void ShowClearBrowsingDataPrompt();
   void CompleteBrowsingDataClearTask(const QString& task, bool success);
@@ -237,6 +242,8 @@ class MainWindow final : public QMainWindow {
   void GoHome();
   bool SetOpenHomeOnNewTab(bool enabled);
   bool SetStartupBehavior(int behavior_value);
+  bool RemoveBookmark(const QString& url);
+  bool RemoveHistory(const QString& url);
   void BeginClearBrowsingData(bool show_result_dialog,
                               const BrowsingDataSelection& selection);
 

@@ -184,6 +184,8 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   bookmarks_button_->setMenu(bookmarks_menu_);
   history_button_->setMenu(history_menu_);
   all_tabs_button_->setMenu(all_tabs_menu_);
+  bookmarks_menu_->setContextMenuPolicy(Qt::CustomContextMenu);
+  history_menu_->setContextMenuPolicy(Qt::CustomContextMenu);
 
   back_button_->setToolTip(QStringLiteral("Back"));
   forward_button_->setToolTip(QStringLiteral("Forward"));
@@ -323,6 +325,10 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
           &MainWindow::RebuildBookmarksMenu);
   connect(history_menu_, &QMenu::aboutToShow, this,
           &MainWindow::RebuildHistoryMenu);
+  connect(bookmarks_menu_, &QMenu::customContextMenuRequested, this,
+          &MainWindow::ShowBookmarkContextMenu);
+  connect(history_menu_, &QMenu::customContextMenuRequested, this,
+          &MainWindow::ShowHistoryContextMenu);
   connect(all_tabs_menu_, &QMenu::aboutToShow, this,
           &MainWindow::RebuildAllTabsMenu);
   connect(download_manager_, &DownloadManager::ActiveCountChanged, this,
@@ -518,6 +524,10 @@ int MainWindow::active_download_count_for_testing() const {
 QString MainWindow::download_status_for_testing(quint32 id) const {
   const auto item = download_manager_->item(id);
   return item ? DownloadManager::StatusText(*item) : QString();
+}
+
+bool MainWindow::RemoveDownloadForTesting(quint32 id) {
+  return download_manager_->RemoveDownload(id);
 }
 
 bool MainWindow::ClearFinishedDownloadsForTesting() {
@@ -874,6 +884,14 @@ void MainWindow::AddHistoryForTesting(const QString& url,
   browsing_data_->RecordVisit(url, title);
   SaveBrowsingData();
   RefreshAddressSuggestions();
+}
+
+bool MainWindow::RemoveBookmarkForTesting(const QString& url) {
+  return RemoveBookmark(url);
+}
+
+bool MainWindow::RemoveHistoryForTesting(const QString& url) {
+  return RemoveHistory(url);
 }
 
 void MainWindow::ClearBrowsingDataForTesting() {
@@ -2101,17 +2119,46 @@ void MainWindow::ToggleCurrentBookmark() {
   if (!browser) return;
   const QString url = browser->current_url();
   if (browsing_data_->IsBookmarked(url)) {
-    browsing_data_->RemoveBookmark(url);
-    statusBar()->showMessage(QStringLiteral("Bookmark removed"), 2000);
-  } else if (browsing_data_->AddBookmark(url, browser->page_title())) {
-    statusBar()->showMessage(QStringLiteral("Bookmark added"), 2000);
-  } else {
+    RemoveBookmark(url);
     return;
   }
-  SaveBrowsingData();
+  const BrowsingDataStore previous = *browsing_data_;
+  if (!browsing_data_->AddBookmark(url, browser->page_title())) return;
+  if (!SaveBrowsingData()) {
+    *browsing_data_ = previous;
+    return;
+  }
+  statusBar()->showMessage(QStringLiteral("Bookmark added"), 2000);
   RebuildBookmarksMenu();
   RefreshAddressSuggestions();
   UpdateChrome();
+}
+
+bool MainWindow::RemoveBookmark(const QString& url) {
+  const BrowsingDataStore previous = *browsing_data_;
+  if (!browsing_data_->RemoveBookmark(url)) return false;
+  if (!SaveBrowsingData()) {
+    *browsing_data_ = previous;
+    return false;
+  }
+  RebuildBookmarksMenu();
+  RefreshAddressSuggestions();
+  UpdateChrome();
+  statusBar()->showMessage(QStringLiteral("Bookmark removed"), 2000);
+  return true;
+}
+
+bool MainWindow::RemoveHistory(const QString& url) {
+  const BrowsingDataStore previous = *browsing_data_;
+  if (!browsing_data_->RemoveHistory(url)) return false;
+  if (!SaveBrowsingData()) {
+    *browsing_data_ = previous;
+    return false;
+  }
+  RebuildHistoryMenu();
+  RefreshAddressSuggestions();
+  statusBar()->showMessage(QStringLiteral("History entry removed"), 2000);
+  return true;
 }
 
 void MainWindow::RebuildBookmarksMenu() {
@@ -2127,6 +2174,7 @@ void MainWindow::RebuildBookmarksMenu() {
                                                     : bookmark.title;
     QAction* action = bookmarks_menu_->addAction(label);
     action->setToolTip(bookmark.url);
+    action->setProperty("bookmarkUrl", bookmark.url);
     connect(action, &QAction::triggered, this,
             [this, url = bookmark.url] { AddTab(url, true); });
   }
@@ -2138,6 +2186,18 @@ void MainWindow::RebuildBookmarksMenu() {
                      browsing_data_->IsBookmarked(browser->current_url()));
   connect(remove, &QAction::triggered, this,
           &MainWindow::ToggleCurrentBookmark);
+}
+
+void MainWindow::ShowBookmarkContextMenu(const QPoint& position) {
+  QAction* bookmark = bookmarks_menu_->actionAt(position);
+  const QString url =
+      bookmark ? bookmark->property("bookmarkUrl").toString() : QString();
+  if (url.isEmpty()) return;
+  QMenu context(bookmarks_menu_);
+  QAction* remove = context.addAction(QStringLiteral("Remove bookmark"));
+  if (context.exec(bookmarks_menu_->mapToGlobal(position)) == remove) {
+    RemoveBookmark(url);
+  }
 }
 
 void MainWindow::RebuildHistoryMenu() {
@@ -2155,6 +2215,7 @@ void MainWindow::RebuildHistoryMenu() {
       const QString label = entry.title.isEmpty() ? entry.url : entry.title;
       QAction* action = history_menu_->addAction(label);
       action->setToolTip(entry.url);
+      action->setProperty("historyUrl", entry.url);
       connect(action, &QAction::triggered, this,
               [this, url = entry.url] { AddTab(url, true); });
     }
@@ -2165,6 +2226,19 @@ void MainWindow::RebuildHistoryMenu() {
   clear->setEnabled(!browsing_data_clear_in_progress_);
   connect(clear, &QAction::triggered, this,
           &MainWindow::ShowClearBrowsingDataPrompt);
+}
+
+void MainWindow::ShowHistoryContextMenu(const QPoint& position) {
+  QAction* history = history_menu_->actionAt(position);
+  const QString url =
+      history ? history->property("historyUrl").toString() : QString();
+  if (url.isEmpty()) return;
+  QMenu context(history_menu_);
+  QAction* remove =
+      context.addAction(QStringLiteral("Remove from history"));
+  if (context.exec(history_menu_->mapToGlobal(position)) == remove) {
+    RemoveHistory(url);
+  }
 }
 
 void MainWindow::RebuildAllTabsMenu() {

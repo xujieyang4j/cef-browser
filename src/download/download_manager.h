@@ -52,6 +52,7 @@ class DownloadManager final : public QObject {
   void CancelAllActive();
   void PauseDownload(quint32 id);
   void ResumeDownload(quint32 id);
+  bool RemoveDownload(quint32 id);
   bool ClearFinished();
   bool OpenDownload(quint32 id) const;
   bool ShowDownloadInFolder(quint32 id) const;

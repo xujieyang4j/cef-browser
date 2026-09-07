@@ -81,14 +81,17 @@ void DownloadPanel::RefreshDownload(quint32 id, bool is_new) {
     auto* folder_button = new QPushButton(QStringLiteral("Folder"), actions);
     auto* cancel_button = new QPushButton(QStringLiteral("Cancel"), actions);
     auto* pause_button = new QPushButton(QStringLiteral("Pause"), actions);
+    auto* remove_button = new QPushButton(QStringLiteral("Remove"), actions);
     open_button->setObjectName(QStringLiteral("openDownload"));
     folder_button->setObjectName(QStringLiteral("showDownload"));
     cancel_button->setObjectName(QStringLiteral("cancelDownload"));
     pause_button->setObjectName(QStringLiteral("pauseDownload"));
+    remove_button->setObjectName(QStringLiteral("removeDownload"));
     action_layout->addWidget(open_button);
     action_layout->addWidget(folder_button);
     action_layout->addWidget(pause_button);
     action_layout->addWidget(cancel_button);
+    action_layout->addWidget(remove_button);
     list_->setItemWidget(row, kActionColumn, actions);
     connect(open_button, &QPushButton::clicked, this,
             [this, id] { manager_->OpenDownload(id); });
@@ -105,6 +108,8 @@ void DownloadPanel::RefreshDownload(quint32 id, bool is_new) {
         manager_->PauseDownload(id);
       }
     });
+    connect(remove_button, &QPushButton::clicked, this,
+            [this, id] { manager_->RemoveDownload(id); });
   }
 
   row->setText(0, download->file_name.isEmpty() ? download->url
@@ -129,6 +134,8 @@ void DownloadPanel::RefreshDownload(quint32 id, bool is_new) {
         ->setVisible(!active && !download->full_path.isEmpty());
     actions->findChild<QPushButton*>(QStringLiteral("cancelDownload"))
         ->setVisible(active);
+    actions->findChild<QPushButton*>(QStringLiteral("removeDownload"))
+        ->setVisible(!active);
     QPushButton* pause =
         actions->findChild<QPushButton*>(QStringLiteral("pauseDownload"));
     pause->setVisible(active &&

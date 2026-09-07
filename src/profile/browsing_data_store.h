@@ -30,6 +30,7 @@ class BrowsingDataStore final {
   bool RemoveBookmark(const QString& url);
   void RecordVisit(const QString& url, const QString& title,
                    QDateTime visited_at = QDateTime::currentDateTimeUtc());
+  bool RemoveHistory(const QString& url);
   void ClearHistory();
 
  private:
