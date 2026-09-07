@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.49.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.50.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -78,6 +78,8 @@ set(TRAIL_BROWSER_SOURCES
   src/settings/browser_settings.h
   src/util/bounded_file.cpp
   src/util/bounded_file.h
+  src/util/corrupt_file.cpp
+  src/util/corrupt_file.h
   src/ui/browser_view.cpp
   src/ui/browser_view.h
   src/ui/download_panel.cpp
@@ -327,6 +329,13 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_single_instance PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "SINGLE_INSTANCE_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_corrupt_recovery
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-corrupt-recovery)
+    set_tests_properties(trail_browser_corrupt_recovery PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "CORRUPT_RECOVERY_SMOKE_OK"
     )
     add_test(NAME trail_browser_linux_sandbox
       COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>

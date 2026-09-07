@@ -67,6 +67,11 @@ limits or replace the corresponding in-memory state.
 Bookmark HTML export is streamed through the same 5 MiB budget and committed
 atomically; an oversized export cannot consume a large assembly buffer or
 replace an existing destination file with partial output.
+If a session, settings, download-history, or browsing-data file exists but
+cannot be parsed safely, Trail Browser moves it to a timestamped `.corrupt-*`
+backup in the same directory before new state may use the original path. If
+that preservation step fails, writes for the affected data are disabled for
+the process so the unreadable source is never silently overwritten.
 Sensitive site capabilities use explicit one-time allow/block prompts, invalid
 HTTPS certificates are blocked with a dedicated error page, and only a small
 allowlist of external URL schemes can reach an OS application after user
@@ -239,6 +244,8 @@ HTML files are also rejected using the bytes actually read, with existing
 in-memory settings and profile data preserved.
 Bookmark export checks additionally cover strict output limits and preservation
 of an existing destination when the generated document would be too large.
+Corrupt-profile recovery verifies that all four persistent stores preserve the
+original bytes before replacement files are written and successfully reloaded.
 JavaScript-dialog limits, concurrency suppression, navigation reset, and
 before-unload cancellation are checked as well.
 Keyboard-accessible browser surfaces and full-screen exit routing are also
@@ -246,7 +253,7 @@ covered, along with numeric tab navigation, the all-tabs menu, and selective
 recent-tab restoration, native application-menu actions, search-setting
 persistence, safe external-input normalization, and single-instance URL
 forwarding. Linux additionally verifies that a renderer is running with
-`NoNewPrivs` and a seccomp filter. All twenty-three
+`NoNewPrivs` and a seccomp filter. All twenty-four
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

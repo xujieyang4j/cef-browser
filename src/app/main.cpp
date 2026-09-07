@@ -41,6 +41,7 @@
 #include "settings/browser_settings.h"
 #include "ui/browser_view.h"
 #include "ui/main_window.h"
+#include "util/corrupt_file.h"
 
 #if defined(OS_WIN)
 #include <windows.h>
@@ -64,6 +65,24 @@ bool WriteRepeatedFile(const QString& path, qint64 byte_count) {
     remaining -= next;
   }
   return file.flush();
+}
+
+std::optional<QString> FindCorruptBackup(const QString& path) {
+  const QFileInfo source(path);
+  const QDir directory = source.absoluteDir();
+  const QStringList matches = directory.entryList(
+      {source.fileName() + QStringLiteral(".corrupt-*")}, QDir::Files,
+      QDir::Name);
+  if (matches.size() != 1) return std::nullopt;
+  return directory.filePath(matches.first());
+}
+
+bool HasPreservedBytes(const QString& path, const QByteArray& expected) {
+  const auto backup = FindCorruptBackup(path);
+  if (!backup) return false;
+  QFile file(*backup);
+  return file.open(QIODevice::ReadOnly) &&
+         file.read(expected.size() + 1) == expected;
 }
 
 class CefMessagePump final : public QObject {
@@ -826,6 +845,71 @@ void StartFailureSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
+void StartCorruptRecoverySmokeTest(
+    MainWindow* window, const QString& session_path,
+    const QString& settings_path, const QString& download_history_path,
+    const QString& browsing_data_path) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  const QByteArray corrupt_bytes(32, 'x');
+  const bool backups_preserved =
+      HasPreservedBytes(session_path, corrupt_bytes) &&
+      HasPreservedBytes(settings_path, corrupt_bytes) &&
+      HasPreservedBytes(download_history_path, corrupt_bytes) &&
+      HasPreservedBytes(browsing_data_path, corrupt_bytes);
+
+  const QString home_url = QStringLiteral("https://example.test/recovered-home");
+  const bool settings_saved = window->SetHomePageForTesting(home_url);
+  window->UpdateDownloadForTesting(9500, 100, true);
+  const QString history_url =
+      QStringLiteral("https://example.test/recovered-history");
+  window->AddHistoryForTesting(history_url, QStringLiteral("Recovered"));
+  const bool session_saved = window->save_session_for_testing(false);
+
+  BrowserSettings restored_settings(settings_path);
+  DownloadManager restored_downloads(download_history_path);
+  BrowsingDataStore restored_browsing_data(browsing_data_path);
+  QString settings_error;
+  QString downloads_error;
+  QString browsing_data_error;
+  QString session_error;
+  const bool settings_restored = restored_settings.Load(&settings_error) &&
+                                 restored_settings.home_page() == home_url;
+  const bool downloads_restored =
+      restored_downloads.LoadHistory(&downloads_error) &&
+      restored_downloads.items().size() == 1 &&
+      restored_downloads.items().first().file_name ==
+          QStringLiteral("trail-test.bin");
+  const bool browsing_data_restored =
+      restored_browsing_data.Load(&browsing_data_error) &&
+      restored_browsing_data.history().size() == 1 &&
+      restored_browsing_data.history().first().url == history_url;
+  const auto restored_session = SessionStore::Load(session_path, &session_error);
+  const bool session_restored =
+      restored_session && !restored_session->tab_urls.isEmpty();
+
+  if (backups_preserved && settings_saved && session_saved &&
+      settings_restored && downloads_restored && browsing_data_restored &&
+      session_restored) {
+    *output << "CORRUPT_RECOVERY_SMOKE_OK files=4 backups=preserved "
+               "replacement=reloadable"
+            << Qt::endl;
+    window->close();
+    return;
+  }
+
+  *output << "CORRUPT_RECOVERY_SMOKE_FAILED backups=" << backups_preserved
+          << " settings_saved=" << settings_saved
+          << " session_saved=" << session_saved
+          << " settings=" << settings_restored
+          << " downloads=" << downloads_restored
+          << " browsing_data=" << browsing_data_restored
+          << " session=" << session_restored
+          << " errors=" << settings_error << QLatin1Char('|')
+          << downloads_error << QLatin1Char('|') << browsing_data_error
+          << QLatin1Char('|') << session_error << Qt::endl;
+  QCoreApplication::exit(24);
+}
+
 std::optional<QString> ExplicitStartupUrl() {
   const QStringList arguments = QCoreApplication::arguments();
   for (int index = 1; index < arguments.size(); ++index) {
@@ -863,7 +947,8 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth")) ||
          HasArgument(QStringLiteral("--smoke-test-js-dialogs")) ||
-         HasArgument(QStringLiteral("--smoke-test-tab-limit"));
+         HasArgument(QStringLiteral("--smoke-test-tab-limit")) ||
+         HasArgument(QStringLiteral("--smoke-test-corrupt-recovery"));
 }
 
 BrowserSession DefaultSession(const QString& url) {
@@ -2810,6 +2895,14 @@ int RunBrowser(int argc, char* argv[]) {
         QDir(data_path).filePath(QStringLiteral("settings.json"));
     const QString download_history_path =
         QDir(data_path).filePath(QStringLiteral("downloads.json"));
+    const QString profile_browsing_data_path =
+        QDir(data_path).filePath(QStringLiteral("browsing-data.json"));
+    if (HasArgument(QStringLiteral("--smoke-test-corrupt-recovery"))) {
+      WriteRepeatedFile(session_path, 32);
+      WriteRepeatedFile(settings_path, 32);
+      WriteRepeatedFile(download_history_path, 32);
+      WriteRepeatedFile(profile_browsing_data_path, 32);
+    }
     std::unique_ptr<QTemporaryDir> smoke_session_directory;
     std::unique_ptr<QTemporaryDir> smoke_profile_directory;
     QString active_session_path = session_path;
@@ -2819,9 +2912,34 @@ int RunBrowser(int argc, char* argv[]) {
     if (!startup_settings.Load(&startup_settings_error)) {
       qWarning("Unable to load browser settings: %s",
                qPrintable(startup_settings_error));
+      QString preserved_path;
+      QString preserve_error;
+      if (trail::PreserveCorruptFile(settings_path, &preserved_path,
+                                     &preserve_error)) {
+        qWarning("Preserved unreadable browser settings at: %s",
+                 qPrintable(preserved_path));
+      } else {
+        qCritical(
+            "Unable to preserve browser settings; persistence disabled: %s",
+            qPrintable(preserve_error));
+        active_settings_path.clear();
+      }
     }
     BrowserSession initial_session;
-    if (HasArgument(QStringLiteral("--smoke-test-session"))) {
+    if (HasArgument(QStringLiteral("--smoke-test-corrupt-recovery"))) {
+      QString session_error;
+      SessionStore::Load(session_path, &session_error);
+      if (!session_error.isEmpty()) {
+        QString preserved_path;
+        QString preserve_error;
+        if (!trail::PreserveCorruptFile(session_path, &preserved_path,
+                                        &preserve_error)) {
+          active_session_path.clear();
+        }
+      }
+      initial_session = DefaultSession(
+          QStringLiteral("https://example.test/recovery"));
+    } else if (HasArgument(QStringLiteral("--smoke-test-session"))) {
       smoke_session_directory = std::make_unique<QTemporaryDir>();
       if (!smoke_session_directory->isValid()) {
         CefShutdown();
@@ -2853,25 +2971,36 @@ int RunBrowser(int argc, char* argv[]) {
       active_session_path.clear();
       active_settings_path =
           QDir(data_path).filePath(QStringLiteral("settings.json"));
-    } else if (const auto startup_url = ExplicitStartupUrl()) {
-      // A URL explicitly supplied by the caller always wins over restoration.
-      initial_session =
-          SelectInitialSession(startup_settings, startup_url, std::nullopt);
     } else {
       QString session_error;
       const auto restored = SessionStore::Load(session_path, &session_error);
-      initial_session =
-          SelectInitialSession(startup_settings, std::nullopt, restored);
       if (!session_error.isEmpty()) {
         qWarning("Unable to restore browser session: %s",
                  qPrintable(session_error));
+        QString preserved_path;
+        QString preserve_error;
+        if (trail::PreserveCorruptFile(session_path, &preserved_path,
+                                       &preserve_error)) {
+          qWarning("Preserved unreadable browser session at: %s",
+                   qPrintable(preserved_path));
+        } else {
+          qCritical(
+              "Unable to preserve browser session; persistence disabled: %s",
+              qPrintable(preserve_error));
+          active_session_path.clear();
+        }
       }
+      // A URL explicitly supplied by the caller always wins over restoration,
+      // but the stored session is still validated before later saves may
+      // replace it.
+      initial_session = SelectInitialSession(
+          startup_settings, ExplicitStartupUrl(), restored);
     }
 
     const QString browsing_data_path =
-        IsSmokeTest() ? QString()
-                      : QDir(data_path).filePath(
-                            QStringLiteral("browsing-data.json"));
+        HasArgument(QStringLiteral("--smoke-test-corrupt-recovery"))
+            ? profile_browsing_data_path
+            : (IsSmokeTest() ? QString() : profile_browsing_data_path);
     QString active_browsing_data_path = browsing_data_path;
     if (HasArgument(QStringLiteral("--smoke-test-profile")) ||
         HasArgument(QStringLiteral("--smoke-test-privacy"))) {
@@ -2964,6 +3093,16 @@ int RunBrowser(int argc, char* argv[]) {
       StartJavaScriptDialogSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-tab-limit"))) {
       StartTabLimitSmokeTest(&main_window);
+    } else if (HasArgument(
+                   QStringLiteral("--smoke-test-corrupt-recovery"))) {
+      QTimer::singleShot(
+          300, &main_window,
+          [&main_window, active_session_path, active_settings_path,
+           download_history_path, active_browsing_data_path] {
+            StartCorruptRecoverySmokeTest(
+                &main_window, active_session_path, active_settings_path,
+                download_history_path, active_browsing_data_path);
+          });
     } else if (HasArgument(
                    QStringLiteral("--smoke-test-single-instance"))) {
       QTimer::singleShot(300, &main_window, [&main_window, data_path] {

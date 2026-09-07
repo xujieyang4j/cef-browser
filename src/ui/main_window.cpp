@@ -51,6 +51,7 @@
 #include "settings/browser_settings.h"
 #include "ui/browser_view.h"
 #include "ui/download_panel.h"
+#include "util/corrupt_file.h"
 
 namespace {
 
@@ -133,11 +134,23 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
                        QString settings_path, QString download_history_path,
                        QWidget* parent)
     : QMainWindow(parent), session_path_(std::move(session_path)) {
-  browser_settings_ = new BrowserSettings(std::move(settings_path));
+  browser_settings_ = new BrowserSettings(settings_path);
   QString settings_error;
   if (!browser_settings_->Load(&settings_error)) {
     qWarning("Unable to load browser settings: %s",
              qPrintable(settings_error));
+    QString preserved_path;
+    QString preserve_error;
+    if (trail::PreserveCorruptFile(settings_path, &preserved_path,
+                                   &preserve_error)) {
+      qWarning("Preserved unreadable browser settings at: %s",
+               qPrintable(preserved_path));
+    } else {
+      qCritical("Unable to preserve browser settings; persistence disabled: %s",
+                qPrintable(preserve_error));
+      delete browser_settings_;
+      browser_settings_ = new BrowserSettings(QString());
+    }
   }
   setWindowTitle(QStringLiteral("Trail Browser"));
   resize(1280, 800);
@@ -257,18 +270,41 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   loading_progress_->hide();
 
   tab_stack_ = new QStackedWidget(central);
-  download_manager_ =
-      new DownloadManager(std::move(download_history_path), this);
+  download_manager_ = new DownloadManager(download_history_path, this);
   QString download_history_error;
   if (!download_manager_->LoadHistory(&download_history_error)) {
     qWarning("Unable to load download history: %s",
              qPrintable(download_history_error));
+    QString preserved_path;
+    QString preserve_error;
+    if (trail::PreserveCorruptFile(download_history_path, &preserved_path,
+                                   &preserve_error)) {
+      qWarning("Preserved unreadable download history at: %s",
+               qPrintable(preserved_path));
+    } else {
+      qCritical("Unable to preserve download history; persistence disabled: %s",
+                qPrintable(preserve_error));
+      delete download_manager_;
+      download_manager_ = new DownloadManager(QString(), this);
+    }
   }
-  browsing_data_ = new BrowsingDataStore(std::move(browsing_data_path));
+  browsing_data_ = new BrowsingDataStore(browsing_data_path);
   QString browsing_data_error;
   if (!browsing_data_->Load(&browsing_data_error)) {
     qWarning("Unable to load browsing data: %s",
              qPrintable(browsing_data_error));
+    QString preserved_path;
+    QString preserve_error;
+    if (trail::PreserveCorruptFile(browsing_data_path, &preserved_path,
+                                   &preserve_error)) {
+      qWarning("Preserved unreadable browsing data at: %s",
+               qPrintable(preserved_path));
+    } else {
+      qCritical("Unable to preserve browsing data; persistence disabled: %s",
+                qPrintable(preserve_error));
+      delete browsing_data_;
+      browsing_data_ = new BrowsingDataStore(QString());
+    }
   }
   download_panel_ = new DownloadPanel(download_manager_, central);
   session_save_timer_ = new QTimer(this);
