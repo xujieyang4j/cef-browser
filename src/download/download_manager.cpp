@@ -378,7 +378,7 @@ bool DownloadManager::LoadHistory(QString* error) {
   return true;
 }
 
-bool DownloadManager::SaveHistory(QString* error) const {
+bool DownloadManager::SaveHistory(QString* error) {
   if (history_path_.isEmpty()) return true;
   if (!QDir().mkpath(QFileInfo(history_path_).absolutePath())) {
     SetError(error, QStringLiteral("Unable to create profile directory"));
@@ -386,6 +386,7 @@ bool DownloadManager::SaveHistory(QString* error) const {
   }
 
   QJsonArray downloads;
+  QList<quint32> persisted_ids;
   for (const quint32 id : order_) {
     const auto found = items_.constFind(id);
     if (found == items_.cend()) continue;
@@ -406,6 +407,7 @@ bool DownloadManager::SaveHistory(QString* error) const {
         {QStringLiteral("percent"), found->percent},
         {QStringLiteral("state"), state},
     });
+    persisted_ids.append(id);
     if (downloads.size() >= kMaxHistoryItems) break;
   }
 
@@ -417,8 +419,10 @@ bool DownloadManager::SaveHistory(QString* error) const {
         .toJson(QJsonDocument::Compact);
   };
   QByteArray bytes = serialize();
+  QList<quint32> trimmed_ids;
   while (bytes.size() > kMaxHistoryBytes && !downloads.isEmpty()) {
     downloads.removeLast();
+    trimmed_ids.prepend(persisted_ids.takeLast());
     bytes = serialize();
   }
   QSaveFile file(history_path_);
@@ -434,6 +438,20 @@ bool DownloadManager::SaveHistory(QString* error) const {
   if (!file.commit()) {
     SetError(error, file.errorString());
     return false;
+  }
+
+  // Keep the live model consistent with the history that will be restored.
+  // Records are serialized newest-first, so the byte budget only evicts the
+  // oldest persistable finished records. Apply the eviction after the atomic
+  // commit so a write failure never discards visible state.
+  for (const quint32 id : trimmed_ids) {
+    const auto found = items_.constFind(id);
+    if (found == items_.cend() || IsActive(found->state)) continue;
+    items_.remove(id);
+    order_.removeAll(id);
+    callbacks_.remove(id);
+    runtime_local_path_ids_.remove(id);
+    emit DownloadRemoved(id);
   }
   return true;
 }

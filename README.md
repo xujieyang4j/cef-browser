@@ -57,10 +57,12 @@ also provides in-page search, per-tab page zoom, persistent bookmarks, and a
 bounded visit history. Find-in-page text is limited to 4,096 characters and
 8 KiB before reaching Chromium, and bookmark-name editing is limited to the
 same 512 characters retained by profile storage. Download and browsing-data
-files share their read and
-write byte limits, retain the newest records when trimming is required, and
-prioritize bookmarks over older visit history so every saved profile remains
-reloadable. Session, settings, download-history, browsing-data, and bookmark
+files share their read and write byte limits and retain the newest records
+when trimming is required. Download-history budget eviction is applied to the
+live model only after the atomic commit succeeds, so the visible finished list
+matches the next restart. Browsing data prioritizes bookmarks over older visit
+history so every saved profile remains reloadable. Session, settings,
+download-history, browsing-data, and bookmark
 HTML input is read through strict byte budgets rather than trusting an earlier
 file-size check, so files that grow while being opened cannot bypass the
 limits or replace the corresponding in-memory state.

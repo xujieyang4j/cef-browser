@@ -47,7 +47,7 @@ class DownloadManager final : public QObject {
   std::optional<Item> item(quint32 id) const;
   int active_count() const;
   bool LoadHistory(QString* error = nullptr);
-  bool SaveHistory(QString* error = nullptr) const;
+  bool SaveHistory(QString* error = nullptr);
 
   void CancelDownload(quint32 id);
   void CancelAllActive();
