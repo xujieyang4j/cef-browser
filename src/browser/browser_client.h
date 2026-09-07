@@ -7,6 +7,7 @@
 class BrowserView;
 
 class BrowserClient final : public CefClient,
+                            public CefAudioHandler,
                             public CefDisplayHandler,
                             public CefFindHandler,
                             public CefJSDialogHandler,
@@ -21,6 +22,7 @@ class BrowserClient final : public CefClient,
                 CefRefPtr<CefDownloadHandler> download_handler);
 
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefAudioHandler> GetAudioHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override {
     return download_handler_;
   }
@@ -45,6 +47,14 @@ class BrowserClient final : public CefClient,
                        const CefString& value) override;
   void OnLoadingProgressChange(CefRefPtr<CefBrowser> browser,
                                double progress) override;
+  void OnAudioStreamStarted(CefRefPtr<CefBrowser> browser,
+                            const CefAudioParameters& params,
+                            int channels) override;
+  void OnAudioStreamPacket(CefRefPtr<CefBrowser> browser, const float** data,
+                           int frames, int64_t pts) override;
+  void OnAudioStreamStopped(CefRefPtr<CefBrowser> browser) override;
+  void OnAudioStreamError(CefRefPtr<CefBrowser> browser,
+                          const CefString& message) override;
   void OnFindResult(CefRefPtr<CefBrowser> browser, int identifier, int count,
                     const CefRect& selection_rect, int active_match_ordinal,
                     bool final_update) override;
@@ -115,6 +125,7 @@ class BrowserClient final : public CefClient,
 
   void DetachOwner();
   void NotifyExternalProtocol(const QString& url);
+  void NotifyAudioState(CefRefPtr<CefBrowser> browser, bool playing);
   void NotifyAuthRequest(CefRefPtr<CefBrowser> browser, QString origin_url,
                          bool is_proxy, QString host, int port, QString realm,
                          QString scheme, CefRefPtr<CefAuthCallback> callback);

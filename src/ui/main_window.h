@@ -55,6 +55,10 @@ class MainWindow final : public QMainWindow {
   QString download_status_for_testing(quint32 id) const;
   void SetCurrentFaviconForTesting();
   bool current_tab_has_favicon_for_testing() const;
+  void SetCurrentAudioStateForTesting(bool playing, bool muted);
+  void ToggleCurrentAudioMutedForTesting();
+  bool current_audio_muted_for_testing() const;
+  QString current_tab_text_for_testing() const;
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
   bool render_process_failed_for_testing() const;

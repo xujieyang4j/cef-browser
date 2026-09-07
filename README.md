@@ -40,6 +40,9 @@ Tabs also have a context menu for opening a new tab, duplicating the selected
 tab, copying its address, closing it, closing other tabs, or closing tabs to
 its right. Multi-tab closes wait for each CEF browser to finish shutting down
 and preserve the order used by recently closed tab recovery.
+Tabs indicate active audio playback and expose a per-tab mute/unmute action in
+the same context menu. Audio events are associated only with the owning main
+browser so auxiliary DevTools windows cannot change the tab state.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -127,7 +130,8 @@ closing, reopening, and finally shutting down multiple CEF browser instances.
 CTest also runs deterministic download-state, download-exit protection,
 tab-action, failure-page, atomic session restore, page-search/zoom,
 bookmark/history persistence, browsing-data cleanup, favicon mapping,
-security-policy, and authentication-dialog checks. All twelve
+audio/mute state, security-policy, and authentication-dialog checks. All
+thirteen
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

@@ -128,6 +128,19 @@ void BrowserView::SetFaviconForTesting(const QIcon& icon) {
   emit FaviconChanged(icon);
 }
 
+void BrowserView::SetAudioStateForTesting(bool playing, bool muted) {
+  audio_playing_ = playing;
+  audio_muted_ = muted;
+  emit AudioStateChanged(audio_playing_, audio_muted_);
+}
+
+void BrowserView::ToggleAudioMuted() {
+  audio_muted_ = browser_ ? !browser_->GetHost()->IsAudioMuted()
+                           : !audio_muted_;
+  if (browser_) browser_->GetHost()->SetAudioMuted(audio_muted_);
+  emit AudioStateChanged(audio_playing_, audio_muted_);
+}
+
 void BrowserView::GoBack() {
   if (browser_ && browser_->CanGoBack()) browser_->GoBack();
 }
@@ -312,6 +325,7 @@ void BrowserView::OnCefBrowserCreated(CefRefPtr<CefBrowser> browser) {
 
   browser_ = std::move(browser);
   primary_browser_id_ = browser_->GetIdentifier();
+  browser_->GetHost()->SetAudioMuted(audio_muted_);
   ResizeBrowser();
   UpdateNativeVisibility();
   if (closing_) {
@@ -468,6 +482,14 @@ void BrowserView::OnCefFaviconDownloaded(int browser_id,
   }
   const QImage image = QImage::fromData(png_data, "PNG");
   if (!image.isNull()) emit FaviconChanged(QIcon(QPixmap::fromImage(image)));
+}
+
+void BrowserView::OnCefAudioStateChanged(CefRefPtr<CefBrowser> browser,
+                                         bool playing) {
+  if (!browser_ || !browser_->IsSame(browser)) return;
+  audio_playing_ = playing;
+  audio_muted_ = browser_->GetHost()->IsAudioMuted();
+  emit AudioStateChanged(audio_playing_, audio_muted_);
 }
 
 void BrowserView::OnCefFullscreenChanged(CefRefPtr<CefBrowser> browser,

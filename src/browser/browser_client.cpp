@@ -66,6 +66,28 @@ class AuthRequestTask final : public CefTask {
   DISALLOW_COPY_AND_ASSIGN(AuthRequestTask);
 };
 
+class AudioStateTask final : public CefTask {
+ public:
+  AudioStateTask(CefRefPtr<BrowserClient> client,
+                 CefRefPtr<CefBrowser> browser, bool playing)
+      : client_(std::move(client)),
+        browser_(std::move(browser)),
+        playing_(playing) {}
+
+  void Execute() override {
+    CEF_REQUIRE_UI_THREAD();
+    client_->NotifyAudioState(browser_, playing_);
+  }
+
+ private:
+  CefRefPtr<BrowserClient> client_;
+  CefRefPtr<CefBrowser> browser_;
+  bool playing_;
+
+  IMPLEMENT_REFCOUNTING(AudioStateTask);
+  DISALLOW_COPY_AND_ASSIGN(AudioStateTask);
+};
+
 }  // namespace
 
 BrowserClient::BrowserClient(
@@ -113,6 +135,24 @@ void BrowserClient::OnLoadingProgressChange(CefRefPtr<CefBrowser> browser,
                                             double progress) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_) owner_->OnCefLoadingProgressChanged(browser, progress);
+}
+
+void BrowserClient::OnAudioStreamStarted(CefRefPtr<CefBrowser> browser,
+                                         const CefAudioParameters&, int) {
+  CefPostTask(TID_UI, new AudioStateTask(this, std::move(browser), true));
+}
+
+void BrowserClient::OnAudioStreamPacket(CefRefPtr<CefBrowser>, const float**,
+                                        int, int64_t) {}
+
+void BrowserClient::OnAudioStreamStopped(CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  CefPostTask(TID_UI, new AudioStateTask(this, std::move(browser), false));
+}
+
+void BrowserClient::OnAudioStreamError(CefRefPtr<CefBrowser> browser,
+                                       const CefString&) {
+  CefPostTask(TID_UI, new AudioStateTask(this, std::move(browser), false));
 }
 
 void BrowserClient::OnFindResult(CefRefPtr<CefBrowser> browser, int, int count,
@@ -315,6 +355,12 @@ void BrowserClient::DetachOwner() {
 void BrowserClient::NotifyExternalProtocol(const QString& url) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_) owner_->OnCefExternalProtocol(url);
+}
+
+void BrowserClient::NotifyAudioState(CefRefPtr<CefBrowser> browser,
+                                     bool playing) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) owner_->OnCefAudioStateChanged(browser, playing);
 }
 
 void BrowserClient::NotifyAuthRequest(

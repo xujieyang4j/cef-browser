@@ -524,6 +524,25 @@ bool MainWindow::current_tab_has_favicon_for_testing() const {
   return !tab_bar_->tabIcon(tab_bar_->currentIndex()).isNull();
 }
 
+void MainWindow::SetCurrentAudioStateForTesting(bool playing, bool muted) {
+  if (BrowserView* browser = CurrentBrowser()) {
+    browser->SetAudioStateForTesting(playing, muted);
+  }
+}
+
+void MainWindow::ToggleCurrentAudioMutedForTesting() {
+  if (BrowserView* browser = CurrentBrowser()) browser->ToggleAudioMuted();
+}
+
+bool MainWindow::current_audio_muted_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->audio_muted();
+}
+
+QString MainWindow::current_tab_text_for_testing() const {
+  return tab_bar_->tabText(tab_bar_->currentIndex());
+}
+
 void MainWindow::ShowFailureForTesting(bool render_process_failed) {
   if (BrowserView* browser = CurrentBrowser()) {
     browser->ShowFailureForTesting(render_process_failed);
@@ -812,6 +831,10 @@ BrowserView* MainWindow::AddTab(const QString& url, bool activate,
             const int index = IndexOf(browser);
             if (index >= 0) tab_bar_->setTabIcon(index, icon);
           });
+  connect(browser, &BrowserView::AudioStateChanged, this,
+          [this, browser](bool, bool) {
+            UpdateTabTitle(browser, browser->page_title());
+          });
   connect(browser, &BrowserView::AddressChanged, this,
           [this, browser](const QString& address) {
             const int index = IndexOf(browser);
@@ -943,6 +966,9 @@ void MainWindow::ShowTabContextMenu(const QPoint& position) {
   QAction* duplicate = menu->addAction(QStringLiteral("Duplicate tab"));
   QAction* copy_address =
       menu->addAction(QStringLiteral("Copy page address"));
+  QAction* mute = menu->addAction(browser->audio_muted()
+                                      ? QStringLiteral("Unmute tab")
+                                      : QStringLiteral("Mute tab"));
   menu->addSeparator();
   QAction* close_tab = menu->addAction(QStringLiteral("Close tab"));
   QAction* close_others =
@@ -959,6 +985,9 @@ void MainWindow::ShowTabContextMenu(const QPoint& position) {
           });
   connect(copy_address, &QAction::triggered, this, [target] {
     if (target) QApplication::clipboard()->setText(target->current_url());
+  });
+  connect(mute, &QAction::triggered, this, [target] {
+    if (target) target->ToggleAudioMuted();
   });
   connect(close_tab, &QAction::triggered, this,
           [this, target] {
@@ -1187,7 +1216,13 @@ void MainWindow::UpdateChrome() {
 void MainWindow::UpdateTabTitle(BrowserView* browser, const QString& title) {
   const int index = IndexOf(browser);
   if (index < 0) return;
-  tab_bar_->setTabText(index, TabText(title, browser->current_url()));
+  QString tab_text = TabText(title, browser->current_url());
+  if (browser->audio_muted()) {
+    tab_text.prepend(QStringLiteral("\U0001F507 "));
+  } else if (browser->audio_playing()) {
+    tab_text.prepend(QStringLiteral("\U0001F50A "));
+  }
+  tab_bar_->setTabText(index, tab_text);
   if (browser == CurrentBrowser()) UpdateChrome();
 }
 

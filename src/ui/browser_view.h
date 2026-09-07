@@ -71,6 +71,8 @@ class BrowserView final : public QWidget {
   bool can_go_forward() const { return can_go_forward_; }
   bool failure_page_active() const { return failure_page_active_; }
   bool render_process_failed() const { return render_process_failed_; }
+  bool audio_playing() const { return audio_playing_; }
+  bool audio_muted() const { return audio_muted_; }
   int zoom_percent() const;
   static QString MediaPermissionDescription(uint32_t permissions);
   static QString PermissionDescription(uint32_t permissions);
@@ -78,6 +80,8 @@ class BrowserView final : public QWidget {
   void ShowFailureForTesting(bool render_process_failed);
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
   void SetFaviconForTesting(const QIcon& icon);
+  void SetAudioStateForTesting(bool playing, bool muted);
+  void ToggleAudioMuted();
 
   // Starts an asynchronous close and returns true if no browser exists.
   bool RequestClose();
@@ -93,6 +97,7 @@ class BrowserView final : public QWidget {
                               const QStringList& icon_urls);
   void OnCefFaviconDownloaded(int browser_id, const QString& image_url,
                               quint64 generation, const QByteArray& png_data);
+  void OnCefAudioStateChanged(CefRefPtr<CefBrowser> browser, bool playing);
   void OnCefFullscreenChanged(CefRefPtr<CefBrowser> browser, bool fullscreen);
   void OnCefStatusMessage(CefRefPtr<CefBrowser> browser,
                           const QString& value);
@@ -134,6 +139,7 @@ class BrowserView final : public QWidget {
  signals:
   void TitleChanged(const QString& title);
   void FaviconChanged(const QIcon& icon);
+  void AudioStateChanged(bool playing, bool muted);
   void AddressChanged(const QString& url);
   void LoadingStateChanged(bool loading, bool can_go_back,
                            bool can_go_forward);
@@ -185,6 +191,8 @@ class BrowserView final : public QWidget {
   bool closing_ = false;
   bool primary_browser_closed_ = false;
   bool is_loading_ = false;
+  bool audio_playing_ = false;
+  bool audio_muted_ = false;
   bool can_go_back_ = false;
   bool can_go_forward_ = false;
   bool failure_page_active_ = false;

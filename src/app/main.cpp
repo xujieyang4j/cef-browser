@@ -326,6 +326,7 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-profile")) ||
          HasArgument(QStringLiteral("--smoke-test-privacy")) ||
          HasArgument(QStringLiteral("--smoke-test-favicon")) ||
+         HasArgument(QStringLiteral("--smoke-test-audio")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth"));
 }
@@ -507,6 +508,52 @@ void StartFaviconSmokeTest(MainWindow* window) {
     *output << "FAVICON_SMOKE_FAILED tab_icon=missing" << Qt::endl;
     QCoreApplication::exit(12);
   }
+}
+
+void StartAudioSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, stage, step] {
+    ++*attempts;
+    if (*stage == 0 && window->current_title() == QStringLiteral("Smoke")) {
+      window->SetCurrentAudioStateForTesting(true, false);
+      *stage = 1;
+    } else if (*stage == 1 &&
+               window->current_tab_text_for_testing().startsWith(
+                   QStringLiteral("\U0001F50A "))) {
+      window->ToggleCurrentAudioMutedForTesting();
+      *stage = 2;
+    } else if (*stage == 2 && window->current_audio_muted_for_testing() &&
+               window->current_tab_text_for_testing().startsWith(
+                   QStringLiteral("\U0001F507 "))) {
+      window->ToggleCurrentAudioMutedForTesting();
+      *stage = 3;
+    } else if (*stage == 3 && !window->current_audio_muted_for_testing() &&
+               window->current_tab_text_for_testing().startsWith(
+                   QStringLiteral("\U0001F50A "))) {
+      window->SetCurrentAudioStateForTesting(false, false);
+      *stage = 4;
+    } else if (*stage == 4 &&
+               !window->current_tab_text_for_testing().startsWith(
+                   QStringLiteral("\U0001F50A "))) {
+      *output << "AUDIO_SMOKE_OK playing=visible mute=roundtrip stopped=clean"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 160) {
+      *output << "AUDIO_SMOKE_FAILED stage=" << *stage
+              << " muted=" << window->current_audio_muted_for_testing()
+              << " text=" << window->current_tab_text_for_testing()
+              << Qt::endl;
+      QCoreApplication::exit(14);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
 void StartSecuritySmokeTest(MainWindow* window) {
@@ -751,6 +798,8 @@ int RunBrowser(int argc, char* argv[]) {
     } else if (HasArgument(QStringLiteral("--smoke-test-favicon"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartFaviconSmokeTest(&main_window); });
+    } else if (HasArgument(QStringLiteral("--smoke-test-audio"))) {
+      StartAudioSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-security"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartSecuritySmokeTest(&main_window); });

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.9.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.10.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -230,6 +230,13 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_favicon PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "FAVICON_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_audio
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-audio)
+    set_tests_properties(trail_browser_audio PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "AUDIO_SMOKE_OK"
     )
     add_test(NAME trail_browser_security
       COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
