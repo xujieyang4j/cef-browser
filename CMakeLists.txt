@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.29.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.30.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -18,10 +18,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 
-# Trail Browser currently ships without the platform sandbox support files.
-# Keep CEF's build configuration aligned with the explicit no_sandbox setting
-# in main.cpp (and avoid the Windows bootstrap-DLL build mode).
-set(USE_SANDBOX OFF CACHE BOOL "Build CEF with sandbox support" FORCE)
+# Linux binary distributions contain the Chromium sandbox helper and support
+# the user-namespace sandbox without additional application linking. Windows
+# CEF 138+ requires the separate bootstrap packaging flow, while macOS still
+# needs signed helper entitlements before sandboxing can be enabled safely.
+if(UNIX AND NOT APPLE)
+  set(USE_SANDBOX ON CACHE BOOL "Build CEF with sandbox support" FORCE)
+else()
+  set(USE_SANDBOX OFF CACHE BOOL "Build CEF with sandbox support" FORCE)
+endif()
 
 set(CEF_ROOT "" CACHE PATH "Path to an extracted CEF binary distribution")
 if(NOT CEF_ROOT AND DEFINED ENV{CEF_ROOT})
@@ -305,6 +310,13 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_single_instance PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "SINGLE_INSTANCE_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_linux_sandbox
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-sandbox)
+    set_tests_properties(trail_browser_linux_sandbox PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "LINUX_SANDBOX_SMOKE_OK"
     )
   endif()
 endif()

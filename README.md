@@ -183,7 +183,8 @@ Keyboard-accessible browser surfaces and full-screen exit routing are also
 covered, along with numeric tab navigation, the all-tabs menu, and selective
 recent-tab restoration, native application-menu actions, search-setting
 persistence, safe external-input normalization, and single-instance URL
-forwarding. All twenty
+forwarding. Linux additionally verifies that a renderer is running with
+`NoNewPrivs` and a seccomp filter. All twenty-one
 checks are registered when `xvfb-run` is available:
 
 ~~~sh
@@ -192,11 +193,14 @@ ctest --test-dir build --output-on-failure
 
 ## Security and platform notes
 
-This project currently runs CEF with no_sandbox enabled and forces
-USE_SANDBOX=OFF at configure time. That keeps the starter project portable but
-is not appropriate for browsing untrusted content in production. Enabling the
-sandbox requires platform-specific packaging and startup changes, notably
-Windows bootstrap/sandbox setup and macOS helper entitlements.
+Linux builds run CEF renderer and supported utility processes inside Chromium's
+sandbox. Chromium uses the kernel's unprivileged user-namespace support when
+available; distributions that disable user namespaces must install the copied
+`chrome-sandbox` helper as root with mode 4755. Windows and macOS builds still
+run with `no_sandbox` while their platform-specific release packaging remains
+unfinished: CEF 138 and newer requires the Windows bootstrap flow, and macOS
+requires signed helper entitlements. Those two targets are not ready for
+browsing untrusted content in production.
 
 On Linux, windowed CEF requires X11. Trail Browser selects Qt's xcb backend
 when QT_QPA_PLATFORM is unset. On native Wayland-only systems, install XWayland

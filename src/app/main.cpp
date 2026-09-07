@@ -11,11 +11,13 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSet>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -424,6 +426,7 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-application-menu")) ||
          HasArgument(QStringLiteral("--smoke-test-search-settings")) ||
          HasArgument(QStringLiteral("--smoke-test-single-instance")) ||
+         HasArgument(QStringLiteral("--smoke-test-sandbox")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth"));
 }
@@ -1441,6 +1444,109 @@ void StartSingleInstanceSmokeTest(MainWindow* window,
   QTimer::singleShot(50, window, [step] { (*step)(); });
 }
 
+#if defined(OS_LINUX)
+struct LinuxProcessStatus {
+  qint64 parent_pid = 0;
+  int no_new_privileges = -1;
+  int seccomp_mode = -1;
+  QByteArray command_line;
+};
+
+QHash<qint64, LinuxProcessStatus> ReadLinuxProcessStatuses() {
+  QHash<qint64, LinuxProcessStatus> processes;
+  const QStringList entries =
+      QDir(QStringLiteral("/proc"))
+          .entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+  for (const QString& entry : entries) {
+    bool valid_pid = false;
+    const qint64 pid = entry.toLongLong(&valid_pid);
+    if (!valid_pid) continue;
+
+    QFile status_file(QStringLiteral("/proc/%1/status").arg(pid));
+    QFile command_file(QStringLiteral("/proc/%1/cmdline").arg(pid));
+    if (!status_file.open(QIODevice::ReadOnly) ||
+        !command_file.open(QIODevice::ReadOnly)) {
+      continue;
+    }
+
+    LinuxProcessStatus status;
+    status.command_line = command_file.readAll();
+    status.command_line.replace('\0', ' ');
+    for (const QByteArray& line : status_file.readAll().split('\n')) {
+      if (line.startsWith("PPid:")) {
+        status.parent_pid = line.mid(5).trimmed().toLongLong();
+      } else if (line.startsWith("NoNewPrivs:")) {
+        status.no_new_privileges = line.mid(11).trimmed().toInt();
+      } else if (line.startsWith("Seccomp:")) {
+        status.seccomp_mode = line.mid(8).trimmed().toInt();
+      }
+    }
+    processes.insert(pid, std::move(status));
+  }
+  return processes;
+}
+
+bool IsDescendantProcess(
+    qint64 pid, qint64 ancestor,
+    const QHash<qint64, LinuxProcessStatus>& processes) {
+  QSet<qint64> visited;
+  while (pid > 1 && !visited.contains(pid)) {
+    visited.insert(pid);
+    const auto process = processes.constFind(pid);
+    if (process == processes.cend()) return false;
+    if (process->parent_pid == ancestor) return true;
+    pid = process->parent_pid;
+  }
+  return false;
+}
+
+void StartLinuxSandboxSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, step] {
+    ++*attempts;
+    const qint64 browser_pid = QCoreApplication::applicationPid();
+    const auto processes = ReadLinuxProcessStatuses();
+    bool renderer_seen = false;
+    bool renderer_sandboxed = false;
+    bool disable_switch_seen = false;
+    for (auto process = processes.cbegin(); process != processes.cend();
+         ++process) {
+      if (!IsDescendantProcess(process.key(), browser_pid, processes)) {
+        continue;
+      }
+      if (process->command_line.contains("--no-sandbox")) {
+        disable_switch_seen = true;
+      }
+      if (process->command_line.contains("--type=renderer")) {
+        renderer_seen = true;
+        if (process->no_new_privileges == 1 && process->seccomp_mode == 2) {
+          renderer_sandboxed = true;
+        }
+      }
+    }
+
+    if (renderer_sandboxed && !disable_switch_seen) {
+      *output << "LINUX_SANDBOX_SMOKE_OK renderer=seccomp "
+                 "no_new_privileges=1"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 120) {
+      *output << "LINUX_SANDBOX_SMOKE_FAILED renderer=" << renderer_seen
+              << " sandboxed=" << renderer_sandboxed
+              << " no_sandbox_switch=" << disable_switch_seen << Qt::endl;
+      QCoreApplication::exit(22);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+#endif
+
 int RunBrowser(int argc, char* argv[]) {
 #if defined(OS_MAC)
   CefScopedLibraryLoader library_loader;
@@ -1477,7 +1583,13 @@ int RunBrowser(int argc, char* argv[]) {
   QCoreApplication::setApplicationName(QStringLiteral("Trail Browser"));
 
   CefSettings settings;
-  settings.no_sandbox = true;  // Development default; see README security note.
+#if defined(OS_LINUX)
+  settings.no_sandbox = false;
+#else
+  // Windows requires CEF's bootstrap packaging flow and macOS requires signed
+  // helper entitlements before the Chromium sandbox can be enabled.
+  settings.no_sandbox = true;
+#endif
   settings.external_message_pump = true;
   settings.multi_threaded_message_loop = false;
   std::unique_ptr<QTemporaryDir> smoke_cef_directory;
@@ -1693,6 +1805,10 @@ int RunBrowser(int argc, char* argv[]) {
       QTimer::singleShot(300, &main_window, [&main_window, data_path] {
         StartSingleInstanceSmokeTest(&main_window, data_path);
       });
+#if defined(OS_LINUX)
+    } else if (HasArgument(QStringLiteral("--smoke-test-sandbox"))) {
+      StartLinuxSandboxSmokeTest(&main_window);
+#endif
     }
     exit_code = application.exec();
   }
