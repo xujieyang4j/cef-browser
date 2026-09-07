@@ -58,6 +58,9 @@ class MainWindow final : public QMainWindow {
   bool current_page_bookmarked_for_testing() const;
   int history_count_for_testing() const;
   int current_url_visit_count_for_testing() const;
+  QString media_permission_description_for_testing(uint32_t permissions) const;
+  QString permission_description_for_testing(uint32_t permissions) const;
+  bool external_scheme_allowed_for_testing(const QString& url) const;
 
  protected:
   void closeEvent(QCloseEvent* event) override;

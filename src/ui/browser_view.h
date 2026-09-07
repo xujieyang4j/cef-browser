@@ -1,14 +1,19 @@
 #pragma once
 
 #include <QSet>
+#include <QHash>
+#include <QPointer>
 #include <QWidget>
 
 #include "include/cef_browser.h"
+#include "include/cef_callback.h"
 #include "include/cef_download_handler.h"
+#include "include/cef_permission_handler.h"
 
 class BrowserClient;
 class QFocusEvent;
 class QHideEvent;
+class QMessageBox;
 class QResizeEvent;
 class QShowEvent;
 
@@ -57,6 +62,9 @@ class BrowserView final : public QWidget {
   bool failure_page_active() const { return failure_page_active_; }
   bool render_process_failed() const { return render_process_failed_; }
   int zoom_percent() const;
+  static QString MediaPermissionDescription(uint32_t permissions);
+  static QString PermissionDescription(uint32_t permissions);
+  static bool IsAllowedExternalScheme(const QString& url);
   void ShowFailureForTesting(bool render_process_failed);
 
   // Starts an asynchronous close and returns true if no browser exists.
@@ -80,6 +88,20 @@ class BrowserView final : public QWidget {
   void OnCefRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
                                     int status, int error_code,
                                     const QString& error_string);
+  void OnCefCertificateError(CefRefPtr<CefBrowser> browser, int error_code,
+                             const QString& request_url,
+                             CefRefPtr<CefCallback> callback);
+  void OnCefMediaPermissionRequest(
+      CefRefPtr<CefBrowser> browser, const QString& requesting_origin,
+      uint32_t requested_permissions,
+      CefRefPtr<CefMediaAccessCallback> callback);
+  void OnCefPermissionRequest(
+      CefRefPtr<CefBrowser> browser, quint64 prompt_id,
+      const QString& requesting_origin, uint32_t requested_permissions,
+      CefRefPtr<CefPermissionPromptCallback> callback);
+  void OnCefPermissionDismissed(CefRefPtr<CefBrowser> browser,
+                                quint64 prompt_id);
+  void OnCefExternalProtocol(const QString& url);
   void OnCefPopupRequested(CefRefPtr<CefBrowser> browser, const QString& url,
                            cef_window_open_disposition_t disposition);
 
@@ -92,6 +114,7 @@ class BrowserView final : public QWidget {
                          bool final_update);
   void ZoomChanged(int percent);
   void NavigationCompleted();
+  void SecurityMessage(const QString& message);
   void PopupRequested(const QString& url, int disposition);
   void ShortcutRequested(int action);
   void BrowserClosed();
@@ -134,6 +157,7 @@ class BrowserView final : public QWidget {
   bool failure_page_active_ = false;
   bool render_process_failed_ = false;
   QString failure_page_url_;
+  QHash<quint64, QPointer<QMessageBox>> permission_dialogs_;
 
   Q_DISABLE_COPY_MOVE(BrowserView)
 };

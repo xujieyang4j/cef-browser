@@ -5,9 +5,12 @@
 #include <utility>
 
 #include <QByteArray>
+#include <QDesktopServices>
 #include <QFocusEvent>
 #include <QHideEvent>
 #include <QMetaObject>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QResizeEvent>
 #include <QtMath>
 #include <QShowEvent>
@@ -145,6 +148,59 @@ int BrowserView::zoom_percent() const {
              ? qRound(100.0 *
                       std::pow(1.2, browser_->GetHost()->GetZoomLevel()))
              : 100;
+}
+
+QString BrowserView::MediaPermissionDescription(uint32_t permissions) {
+  QStringList names;
+  if (permissions & CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE) {
+    names.append(QStringLiteral("microphone"));
+  }
+  if (permissions & CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE) {
+    names.append(QStringLiteral("camera"));
+  }
+  if (permissions & CEF_MEDIA_PERMISSION_DESKTOP_AUDIO_CAPTURE) {
+    names.append(QStringLiteral("system audio"));
+  }
+  if (permissions & CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE) {
+    names.append(QStringLiteral("screen"));
+  }
+  return names.isEmpty() ? QStringLiteral("media devices")
+                         : names.join(QStringLiteral(", "));
+}
+
+QString BrowserView::PermissionDescription(uint32_t permissions) {
+  QStringList names;
+  const struct {
+    uint32_t flag;
+    const char* name;
+  } known[] = {
+      {CEF_PERMISSION_TYPE_CAMERA_STREAM, "camera"},
+      {CEF_PERMISSION_TYPE_CLIPBOARD, "clipboard"},
+      {CEF_PERMISSION_TYPE_GEOLOCATION, "location"},
+      {CEF_PERMISSION_TYPE_IDLE_DETECTION, "activity status"},
+      {CEF_PERMISSION_TYPE_MIC_STREAM, "microphone"},
+      {CEF_PERMISSION_TYPE_MIDI_SYSEX, "MIDI devices"},
+      {CEF_PERMISSION_TYPE_MULTIPLE_DOWNLOADS, "multiple downloads"},
+      {CEF_PERMISSION_TYPE_NOTIFICATIONS, "notifications"},
+      {CEF_PERMISSION_TYPE_POINTER_LOCK, "pointer lock"},
+      {CEF_PERMISSION_TYPE_FILE_SYSTEM_ACCESS, "files"},
+  };
+  for (const auto& permission : known) {
+    if (permissions & permission.flag) {
+      names.append(QString::fromLatin1(permission.name));
+    }
+  }
+  return names.isEmpty() ? QStringLiteral("additional capabilities")
+                         : names.join(QStringLiteral(", "));
+}
+
+bool BrowserView::IsAllowedExternalScheme(const QString& url) {
+  const QString scheme = QUrl(url).scheme().toLower();
+  return scheme == QStringLiteral("mailto") ||
+         scheme == QStringLiteral("tel") ||
+         scheme == QStringLiteral("sms") ||
+         scheme == QStringLiteral("webcal") ||
+         scheme == QStringLiteral("magnet");
 }
 
 void BrowserView::FinalizeClose() {
@@ -358,6 +414,125 @@ void BrowserView::OnCefRenderProcessTerminated(
   ShowFailurePage(QStringLiteral("This page crashed"),
                   QStringLiteral("Your other tabs are still available."),
                   reason, current_url_, true);
+}
+
+void BrowserView::OnCefCertificateError(CefRefPtr<CefBrowser> browser,
+                                        int error_code,
+                                        const QString& request_url,
+                                        CefRefPtr<CefCallback> callback) {
+  if (!browser_ || !browser_->IsSame(browser) || closing_) {
+    callback->Cancel();
+    return;
+  }
+  callback->Cancel();
+  QMetaObject::invokeMethod(
+      this,
+      [this, request_url, error_code] {
+        ShowFailurePage(
+            QStringLiteral("Your connection is not private"),
+            QStringLiteral("Trail Browser blocked this connection because "
+                           "the site's certificate is invalid."),
+            QStringLiteral("Certificate error %1").arg(error_code),
+            request_url, false);
+        emit SecurityMessage(QStringLiteral("Unsafe HTTPS connection blocked"));
+      },
+      Qt::QueuedConnection);
+}
+
+void BrowserView::OnCefMediaPermissionRequest(
+    CefRefPtr<CefBrowser> browser, const QString& requesting_origin,
+    uint32_t requested_permissions,
+    CefRefPtr<CefMediaAccessCallback> callback) {
+  if (!browser_ || !browser_->IsSame(browser) || closing_) {
+    callback->Cancel();
+    return;
+  }
+  auto* dialog = new QMessageBox(
+      QMessageBox::Question, QStringLiteral("Site permission"),
+      QStringLiteral("%1 wants to use your %2.")
+          .arg(requesting_origin.toHtmlEscaped(),
+               MediaPermissionDescription(requested_permissions)),
+      QMessageBox::NoButton, this);
+  dialog->setInformativeText(
+      QStringLiteral("Allow access for this request only?"));
+  dialog->addButton(QStringLiteral("Block"), QMessageBox::RejectRole);
+  QAbstractButton* allow_button =
+      dialog->addButton(QStringLiteral("Allow"), QMessageBox::AcceptRole);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QMessageBox::finished, this,
+          [dialog, allow_button, callback, requested_permissions](int) {
+            if (dialog->clickedButton() == allow_button) {
+              callback->Continue(requested_permissions);
+            } else {
+              callback->Cancel();
+            }
+          });
+  dialog->open();
+}
+
+void BrowserView::OnCefPermissionRequest(
+    CefRefPtr<CefBrowser> browser, quint64 prompt_id,
+    const QString& requesting_origin, uint32_t requested_permissions,
+    CefRefPtr<CefPermissionPromptCallback> callback) {
+  if (!browser_ || !browser_->IsSame(browser) || closing_) {
+    callback->Continue(CEF_PERMISSION_RESULT_DENY);
+    return;
+  }
+  auto* dialog = new QMessageBox(
+      QMessageBox::Question, QStringLiteral("Site permission"),
+      QStringLiteral("%1 wants to use %2.")
+          .arg(requesting_origin.toHtmlEscaped(),
+               PermissionDescription(requested_permissions)),
+      QMessageBox::NoButton, this);
+  dialog->setInformativeText(
+      QStringLiteral("Allow access for this request only?"));
+  dialog->addButton(QStringLiteral("Block"), QMessageBox::RejectRole);
+  QAbstractButton* allow_button =
+      dialog->addButton(QStringLiteral("Allow"), QMessageBox::AcceptRole);
+  permission_dialogs_.insert(prompt_id, dialog);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QMessageBox::finished, this,
+          [this, dialog, allow_button, callback, prompt_id](int) {
+    permission_dialogs_.remove(prompt_id);
+    if (dialog->property("cefDismissed").toBool()) return;
+    callback->Continue(dialog->clickedButton() == allow_button
+                           ? CEF_PERMISSION_RESULT_ACCEPT
+                           : CEF_PERMISSION_RESULT_DENY);
+  });
+  dialog->open();
+}
+
+void BrowserView::OnCefPermissionDismissed(CefRefPtr<CefBrowser> browser,
+                                           quint64 prompt_id) {
+  if (!browser_ || !browser_->IsSame(browser)) return;
+  QPointer<QMessageBox> dialog = permission_dialogs_.take(prompt_id);
+  if (dialog) {
+    dialog->setProperty("cefDismissed", true);
+    dialog->reject();
+  }
+}
+
+void BrowserView::OnCefExternalProtocol(const QString& url) {
+  if (closing_ || !IsAllowedExternalScheme(url)) {
+    emit SecurityMessage(QStringLiteral("External link was blocked"));
+    return;
+  }
+  auto* dialog = new QMessageBox(
+      QMessageBox::Question, QStringLiteral("Open external application?"),
+      QStringLiteral("This link wants to open another application."),
+      QMessageBox::NoButton, this);
+  dialog->setInformativeText(url);
+  dialog->addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
+  QAbstractButton* open_button =
+      dialog->addButton(QStringLiteral("Open link"), QMessageBox::AcceptRole);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QMessageBox::finished, this,
+          [dialog, open_button, url](int) {
+    if (dialog->clickedButton() == open_button) {
+      QDesktopServices::openUrl(QUrl(url));
+    }
+  });
+  dialog->open();
 }
 
 void BrowserView::OnCefPopupRequested(CefRefPtr<CefBrowser> browser,

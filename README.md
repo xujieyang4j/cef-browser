@@ -16,6 +16,10 @@ restored on the next regular launch. A previous unclean exit is detected and
 reported after its tabs are recovered. An explicit startup URL takes priority
 over the saved session. The browser also provides in-page search, per-tab page
 zoom, persistent bookmarks, and a bounded visit history.
+Sensitive site capabilities use explicit one-time allow/block prompts, invalid
+HTTPS certificates are blocked with a dedicated error page, and only a small
+allowlist of external URL schemes can reach an OS application after user
+confirmation.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -99,7 +103,8 @@ timeout 20s xvfb-run -a ./build/trail-browser --smoke-test-tabs \
 A passing run prints `TAB_SMOKE_OK` and exits with status 0 after creating,
 closing, reopening, and finally shutting down multiple CEF browser instances.
 CTest also runs deterministic download-state, failure-page, atomic session
-restore, page-search/zoom, and bookmark/history persistence checks. All six
+restore, page-search/zoom, bookmark/history persistence, and security-policy
+checks. All seven
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

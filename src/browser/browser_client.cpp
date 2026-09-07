@@ -5,7 +5,30 @@
 #include <QString>
 
 #include "include/wrapper/cef_helpers.h"
+#include "include/cef_task.h"
 #include "ui/browser_view.h"
+
+namespace {
+
+class ExternalProtocolTask final : public CefTask {
+ public:
+  ExternalProtocolTask(CefRefPtr<BrowserClient> client, QString url)
+      : client_(std::move(client)), url_(std::move(url)) {}
+
+  void Execute() override {
+    CEF_REQUIRE_UI_THREAD();
+    client_->NotifyExternalProtocol(url_);
+  }
+
+ private:
+  CefRefPtr<BrowserClient> client_;
+  QString url_;
+
+  IMPLEMENT_REFCOUNTING(ExternalProtocolTask);
+  DISALLOW_COPY_AND_ASSIGN(ExternalProtocolTask);
+};
+
+}  // namespace
 
 BrowserClient::BrowserClient(
     BrowserView* owner, CefRefPtr<CefDownloadHandler> download_handler)
@@ -75,6 +98,77 @@ void BrowserClient::OnRenderProcessTerminated(
   }
 }
 
+bool BrowserClient::OnCertificateError(CefRefPtr<CefBrowser> browser,
+                                       cef_errorcode_t cert_error,
+                                       const CefString& request_url,
+                                       CefRefPtr<CefSSLInfo>,
+                                       CefRefPtr<CefCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!owner_) {
+    callback->Cancel();
+    return true;
+  }
+  owner_->OnCefCertificateError(
+      browser, static_cast<int>(cert_error),
+      QString::fromStdString(request_url.ToString()), std::move(callback));
+  return true;
+}
+
+CefRefPtr<CefResourceRequestHandler>
+BrowserClient::GetResourceRequestHandler(
+    CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest>, bool,
+    bool, const CefString&, bool&) {
+  return this;
+}
+
+void BrowserClient::OnProtocolExecution(CefRefPtr<CefBrowser>,
+                                        CefRefPtr<CefFrame>,
+                                        CefRefPtr<CefRequest> request,
+                                        bool& allow_os_execution) {
+  CEF_REQUIRE_IO_THREAD();
+  allow_os_execution = false;
+  const QString url = QString::fromStdString(request->GetURL().ToString());
+  CefPostTask(TID_UI, new ExternalProtocolTask(this, url));
+}
+
+bool BrowserClient::OnRequestMediaAccessPermission(
+    CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
+    const CefString& requesting_origin, uint32_t requested_permissions,
+    CefRefPtr<CefMediaAccessCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!owner_) {
+    callback->Cancel();
+    return true;
+  }
+  owner_->OnCefMediaPermissionRequest(
+      browser, QString::fromStdString(requesting_origin.ToString()),
+      requested_permissions, std::move(callback));
+  return true;
+}
+
+bool BrowserClient::OnShowPermissionPrompt(
+    CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
+    const CefString& requesting_origin, uint32_t requested_permissions,
+    CefRefPtr<CefPermissionPromptCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!owner_) {
+    callback->Continue(CEF_PERMISSION_RESULT_DENY);
+    return true;
+  }
+  owner_->OnCefPermissionRequest(
+      browser, prompt_id,
+      QString::fromStdString(requesting_origin.ToString()),
+      requested_permissions, std::move(callback));
+  return true;
+}
+
+void BrowserClient::OnDismissPermissionPrompt(
+    CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
+    cef_permission_request_result_t) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) owner_->OnCefPermissionDismissed(browser, prompt_id);
+}
+
 void BrowserClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_) {
@@ -125,5 +219,10 @@ bool BrowserClient::OnBeforePopup(
 void BrowserClient::DetachOwner() {
   CEF_REQUIRE_UI_THREAD();
   owner_.clear();
+}
+
+void BrowserClient::NotifyExternalProtocol(const QString& url) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) owner_->OnCefExternalProtocol(url);
 }
 

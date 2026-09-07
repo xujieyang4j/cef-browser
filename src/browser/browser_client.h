@@ -13,7 +13,9 @@ class BrowserClient final : public CefClient,
                             public CefKeyboardHandler,
                             public CefLifeSpanHandler,
                             public CefLoadHandler,
-                            public CefRequestHandler {
+                            public CefRequestHandler,
+                            public CefPermissionHandler,
+                            public CefResourceRequestHandler {
  public:
   BrowserClient(BrowserView* owner,
                 CefRefPtr<CefDownloadHandler> download_handler);
@@ -27,6 +29,9 @@ class BrowserClient final : public CefClient,
   CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+  CefRefPtr<CefPermissionHandler> GetPermissionHandler() override {
+    return this;
+  }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
@@ -48,6 +53,31 @@ class BrowserClient final : public CefClient,
   void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
                                  TerminationStatus status, int error_code,
                                  const CefString& error_string) override;
+  bool OnCertificateError(CefRefPtr<CefBrowser> browser,
+                          cef_errorcode_t cert_error,
+                          const CefString& request_url,
+                          CefRefPtr<CefSSLInfo> ssl_info,
+                          CefRefPtr<CefCallback> callback) override;
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
+      CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+      CefRefPtr<CefRequest> request, bool is_navigation, bool is_download,
+      const CefString& request_initiator,
+      bool& disable_default_handling) override;
+  void OnProtocolExecution(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame,
+                           CefRefPtr<CefRequest> request,
+                           bool& allow_os_execution) override;
+  bool OnRequestMediaAccessPermission(
+      CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+      const CefString& requesting_origin, uint32_t requested_permissions,
+      CefRefPtr<CefMediaAccessCallback> callback) override;
+  bool OnShowPermissionPrompt(
+      CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
+      const CefString& requesting_origin, uint32_t requested_permissions,
+      CefRefPtr<CefPermissionPromptCallback> callback) override;
+  void OnDismissPermissionPrompt(
+      CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
+      cef_permission_request_result_t result) override;
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
   bool DoClose(CefRefPtr<CefBrowser> browser) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
@@ -70,6 +100,7 @@ class BrowserClient final : public CefClient,
                      bool* no_javascript_access) override;
 
   void DetachOwner();
+  void NotifyExternalProtocol(const QString& url);
 
  private:
   QPointer<BrowserView> owner_;

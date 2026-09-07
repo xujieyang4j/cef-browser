@@ -185,7 +185,8 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-failures")) ||
          HasArgument(QStringLiteral("--smoke-test-session")) ||
          HasArgument(QStringLiteral("--smoke-test-page-tools")) ||
-         HasArgument(QStringLiteral("--smoke-test-profile"));
+         HasArgument(QStringLiteral("--smoke-test-profile")) ||
+         HasArgument(QStringLiteral("--smoke-test-security"));
 }
 
 BrowserSession DefaultSession(const QString& url) {
@@ -294,6 +295,39 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
             << " history=" << history_ok << " removed=" << removed
             << Qt::endl;
     QCoreApplication::exit(7);
+  }
+}
+
+void StartSecuritySmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  const QString media = window->media_permission_description_for_testing(
+      CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE |
+      CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE);
+  const QString permissions = window->permission_description_for_testing(
+      CEF_PERMISSION_TYPE_GEOLOCATION | CEF_PERMISSION_TYPE_NOTIFICATIONS);
+  const bool media_ok = media.contains(QStringLiteral("microphone")) &&
+                        media.contains(QStringLiteral("camera"));
+  const bool permissions_ok =
+      permissions.contains(QStringLiteral("location")) &&
+      permissions.contains(QStringLiteral("notifications"));
+  const bool schemes_ok =
+      window->external_scheme_allowed_for_testing(
+          QStringLiteral("mailto:test@example.com")) &&
+      window->external_scheme_allowed_for_testing(
+          QStringLiteral("magnet:?xt=urn:test")) &&
+      !window->external_scheme_allowed_for_testing(
+          QStringLiteral("javascript:alert(1)")) &&
+      !window->external_scheme_allowed_for_testing(
+          QStringLiteral("unknown-scheme:payload"));
+  if (media_ok && permissions_ok && schemes_ok) {
+    *output << "SECURITY_SMOKE_OK media=2 permissions=2 schemes=guarded"
+            << Qt::endl;
+    window->close();
+  } else {
+    *output << "SECURITY_SMOKE_FAILED media=" << media_ok
+            << " permissions=" << permissions_ok
+            << " schemes=" << schemes_ok << Qt::endl;
+    QCoreApplication::exit(8);
   }
 }
 
@@ -453,6 +487,9 @@ int RunBrowser(int argc, char* argv[]) {
                            StartProfileSmokeTest(&main_window,
                                                  active_browsing_data_path);
                          });
+    } else if (HasArgument(QStringLiteral("--smoke-test-security"))) {
+      QTimer::singleShot(300, &main_window,
+                         [&main_window] { StartSecuritySmokeTest(&main_window); });
     }
     exit_code = application.exec();
   }

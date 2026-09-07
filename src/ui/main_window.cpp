@@ -476,6 +476,20 @@ int MainWindow::current_url_visit_count_for_testing() const {
   return 0;
 }
 
+QString MainWindow::media_permission_description_for_testing(
+    uint32_t permissions) const {
+  return BrowserView::MediaPermissionDescription(permissions);
+}
+
+QString MainWindow::permission_description_for_testing(
+    uint32_t permissions) const {
+  return BrowserView::PermissionDescription(permissions);
+}
+
+bool MainWindow::external_scheme_allowed_for_testing(const QString& url) const {
+  return BrowserView::IsAllowedExternalScheme(url);
+}
+
 void MainWindow::closeEvent(QCloseEvent* event) {
   if (allow_window_close_) {
     if (closing_session_) PersistSession(*closing_session_);
@@ -602,6 +616,10 @@ BrowserView* MainWindow::AddTab(const QString& url, bool activate,
           });
   connect(browser, &BrowserView::NavigationCompleted, this,
           [this, browser] { RecordVisit(browser); });
+  connect(browser, &BrowserView::SecurityMessage, this,
+          [this](const QString& message) {
+            statusBar()->showMessage(message, 5000);
+          });
   connect(browser, &BrowserView::LoadingStateChanged, this,
           [this, browser](bool loading, bool can_go_back, bool can_go_forward) {
             if (browser == CurrentBrowser()) {
