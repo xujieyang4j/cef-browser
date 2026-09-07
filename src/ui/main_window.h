@@ -78,6 +78,7 @@ class MainWindow final : public QMainWindow {
   int all_tabs_action_count_for_testing() const;
   int recently_closed_tab_count_for_testing() const;
   QStringList recently_closed_tabs_for_testing() const;
+  QStringList recently_closed_menu_labels_for_testing();
   bool TriggerRecentlyClosedForTesting(int recent_index);
   void ActivateTabShortcutForTesting(int number);
   void ShowFailureForTesting(bool render_process_failed);
@@ -220,8 +221,8 @@ class MainWindow final : public QMainWindow {
   QSet<BrowserView*> pinned_tabs_;
   QList<QPointer<BrowserView>> queued_tab_closes_;
   QPointer<BrowserView> active_queued_tab_close_;
-  QHash<BrowserView*, QString> pending_closed_urls_;
-  QStringList closed_tabs_;
+  QHash<BrowserView*, RecentlyClosedTab> pending_closed_tabs_;
+  QList<RecentlyClosedTab> closed_tabs_;
   QString session_path_;
   std::optional<BrowserSession> closing_session_;
   bool session_persistence_ready_ = false;

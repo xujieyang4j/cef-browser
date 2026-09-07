@@ -10,9 +10,13 @@
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
-#include <QStandardPaths>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QTimer>
@@ -412,8 +416,10 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
   const bool captured_ok =
       captured.tab_urls.size() == 2 && captured.active_tab == 1 &&
       !captured.window_geometry.isEmpty() && !captured.clean_exit &&
-      captured.recently_closed_urls == QStringList{QStringLiteral(
-                                               "https://example.test/closed")};
+      captured.recently_closed_tabs ==
+          QList<RecentlyClosedTab>{
+              {QStringLiteral("https://example.test/closed"),
+               QStringLiteral("Closed page")}};
   const bool unclean_saved = window->save_session_for_testing(false);
   const auto unclean = SessionStore::Load(session_path);
   const bool unclean_ok =
@@ -424,15 +430,46 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
   const bool clean_ok = clean && clean->clean_exit &&
                         clean->tab_urls == captured.tab_urls &&
                         clean->active_tab == captured.active_tab &&
-                        clean->recently_closed_urls ==
-                            captured.recently_closed_urls;
-  if (captured_ok && unclean_saved && unclean_ok && clean_saved && clean_ok) {
+                        clean->recently_closed_tabs ==
+                            captured.recently_closed_tabs;
+
+  const QString legacy_path = session_path + QStringLiteral(".v1");
+  QFile legacy_file(legacy_path);
+  const bool legacy_opened = legacy_file.open(QIODevice::WriteOnly);
+  bool legacy_written = false;
+  if (legacy_opened) {
+    const QJsonObject legacy_root{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("cleanExit"), true},
+        {QStringLiteral("activeTab"), 0},
+        {QStringLiteral("tabs"),
+         QJsonArray{QJsonObject{
+             {QStringLiteral("url"), QStringLiteral("about:blank")},
+             {QStringLiteral("pinned"), false}}}},
+        {QStringLiteral("recentlyClosed"),
+         QJsonArray{QStringLiteral("https://example.test/legacy")}},
+    };
+    legacy_written =
+        legacy_file.write(QJsonDocument(legacy_root).toJson(
+            QJsonDocument::Compact)) > 0;
+    legacy_file.close();
+  }
+  const auto legacy = SessionStore::Load(legacy_path);
+  const bool legacy_ok =
+      legacy_written && legacy && legacy->recently_closed_tabs.size() == 1 &&
+      legacy->recently_closed_tabs.first().url ==
+          QStringLiteral("https://example.test/legacy") &&
+      legacy->recently_closed_tabs.first().title.isEmpty();
+  if (captured_ok && unclean_saved && unclean_ok && clean_saved && clean_ok &&
+      legacy_ok) {
     *output << "SESSION_SMOKE_OK tabs=" << clean->tab_urls.size()
-            << " active=" << clean->active_tab << Qt::endl;
+            << " active=" << clean->active_tab
+            << " recent_title=persisted legacy=migrated" << Qt::endl;
     window->close();
   } else {
     *output << "SESSION_SMOKE_FAILED captured=" << captured_ok
             << " unclean=" << unclean_ok << " clean=" << clean_ok
+            << " legacy=" << legacy_ok
             << Qt::endl;
     QCoreApplication::exit(5);
   }
@@ -602,7 +639,7 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path) {
                            window->recently_closed_tab_count_for_testing() == 0;
       const auto restored = SessionStore::Load(session_path);
       const bool session_cleared =
-          restored && restored->recently_closed_urls.isEmpty();
+          restored && restored->recently_closed_tabs.isEmpty();
       const bool completed =
           window->browsing_data_clear_result_for_testing().startsWith(
               QStringLiteral("Browsing history"));
@@ -827,22 +864,28 @@ void StartRecentlyClosedTabsSmokeTest(MainWindow* window) {
       const bool ordered =
           window->recently_closed_tabs_for_testing() ==
           QStringList{third_url, second_url};
+      const bool titled =
+          window->recently_closed_menu_labels_for_testing() ==
+          QStringList{QStringLiteral("Second"), QStringLiteral("Third")};
       const bool triggered = window->TriggerRecentlyClosedForTesting(1);
       const bool remaining =
           window->recently_closed_tabs_for_testing() ==
           QStringList{second_url};
       const bool persisted =
-          window->session_for_testing(true).recently_closed_urls ==
-          QStringList{second_url};
-      if (ordered && triggered && remaining && persisted &&
+          window->session_for_testing(true).recently_closed_tabs ==
+          QList<RecentlyClosedTab>{
+              {second_url, QStringLiteral("Second")}};
+      if (ordered && titled && triggered && remaining && persisted &&
           window->tab_count() == 2 && window->current_url() == third_url) {
-        *output << "RECENT_TABS_SMOKE_OK menu=2 restored=older persisted=1"
+        *output << "RECENT_TABS_SMOKE_OK menu=2 titles=1 restored=older "
+                   "persisted=1"
                 << Qt::endl;
         window->close();
         return;
       }
       *output << "RECENT_TABS_SMOKE_FAILED ordered=" << ordered
-              << " triggered=" << triggered << " remaining=" << remaining
+              << " titled=" << titled << " triggered=" << triggered
+              << " remaining=" << remaining
               << " persisted=" << persisted
               << " current=" << window->current_url() << Qt::endl;
       QCoreApplication::exit(18);
@@ -1032,8 +1075,9 @@ int RunBrowser(int argc, char* argv[]) {
           QStringLiteral("data:text/html,<title>Session Two</title>")};
       initial_session.active_tab = 1;
       initial_session.clean_exit = false;
-      initial_session.recently_closed_urls = {
-          QStringLiteral("https://example.test/closed")};
+      initial_session.recently_closed_tabs = {
+          {QStringLiteral("https://example.test/closed"),
+           QStringLiteral("Closed page")}};
     } else if (HasArgument(QStringLiteral("--smoke-test-pinned-tabs"))) {
       smoke_session_directory = std::make_unique<QTemporaryDir>();
       if (!smoke_session_directory->isValid()) {

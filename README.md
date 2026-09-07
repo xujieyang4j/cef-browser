@@ -51,7 +51,9 @@ survive session restoration, and are protected from "close other tabs" and
 An all-tabs menu lists every open page with its current pin, audio, title, and
 selection state for quick navigation when the tab strip is crowded. It also
 lists the ten most recently closed tabs in newest-first order, allowing any
-entry to be restored instead of only the latest one.
+entry to be restored instead of only the latest one. Closed-tab titles are
+stored with the session, including across restarts and after history changes;
+sessions written by earlier Trail Browser versions remain compatible.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites

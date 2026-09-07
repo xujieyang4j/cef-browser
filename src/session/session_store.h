@@ -7,10 +7,17 @@
 #include <QString>
 #include <QStringList>
 
+struct RecentlyClosedTab {
+  QString url;
+  QString title;
+
+  bool operator==(const RecentlyClosedTab&) const = default;
+};
+
 struct BrowserSession {
   QStringList tab_urls;
   QList<bool> tab_pinned;
-  QStringList recently_closed_urls;
+  QList<RecentlyClosedTab> recently_closed_tabs;
   int active_tab = 0;
   QByteArray window_geometry;
   bool clean_exit = true;

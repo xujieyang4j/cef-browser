@@ -467,9 +467,9 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
                                        ? QStringList{QStringLiteral("https://www.example.com")}
                                        : initial_session.tab_urls;
   const int closed_start = std::max(
-      0, static_cast<int>(initial_session.recently_closed_urls.size()) -
+      0, static_cast<int>(initial_session.recently_closed_tabs.size()) -
              kMaxClosedTabs);
-  closed_tabs_ = initial_session.recently_closed_urls.mid(closed_start);
+  closed_tabs_ = initial_session.recently_closed_tabs.mid(closed_start);
   QList<BrowserView*> restored_tabs;
   for (const QString& url : initial_urls) {
     restored_tabs.append(AddTab(url, false));
@@ -710,7 +710,20 @@ int MainWindow::recently_closed_tab_count_for_testing() const {
 }
 
 QStringList MainWindow::recently_closed_tabs_for_testing() const {
-  return closed_tabs_;
+  QStringList urls;
+  for (const RecentlyClosedTab& tab : closed_tabs_) urls.append(tab.url);
+  return urls;
+}
+
+QStringList MainWindow::recently_closed_menu_labels_for_testing() {
+  RebuildAllTabsMenu();
+  QStringList labels;
+  const QList<QAction*> actions = all_tabs_menu_->actions();
+  const int first_recent_action = tab_bar_->count() + 1;
+  for (int index = first_recent_action; index < actions.size(); ++index) {
+    labels.append(actions.at(index)->text());
+  }
+  return labels;
 }
 
 bool MainWindow::TriggerRecentlyClosedForTesting(int recent_index) {
@@ -945,8 +958,8 @@ void MainWindow::ReopenClosedTab() {
 bool MainWindow::ReopenClosedTabAt(int recent_index) {
   const int stored_index = closed_tabs_.size() - 1 - recent_index;
   if (stored_index < 0 || stored_index >= closed_tabs_.size()) return false;
-  const QString url = closed_tabs_.takeAt(stored_index);
-  AddTab(url, true);
+  const RecentlyClosedTab tab = closed_tabs_.takeAt(stored_index);
+  AddTab(tab.url, true);
   return true;
 }
 
@@ -1378,7 +1391,9 @@ void MainWindow::BeginTabClose(BrowserView* browser, bool remember_url) {
   closing_tabs_.insert(browser);
   if (remember_url && !forgotten_closing_tabs_.contains(browser) &&
       !browser->current_url().isEmpty()) {
-    pending_closed_urls_.insert(browser, browser->current_url());
+    pending_closed_tabs_.insert(
+        browser, RecentlyClosedTab{browser->current_url(),
+                                   browser->page_title().trimmed()});
   }
   const int index = IndexOf(browser);
   if (index >= 0) tab_bar_->setTabEnabled(index, false);
@@ -1393,11 +1408,11 @@ void MainWindow::CompleteTabClose(BrowserView* browser) {
   pinned_tabs_.remove(browser);
 
   const bool forget_closed_tab = forgotten_closing_tabs_.remove(browser);
-  if (!forget_closed_tab && pending_closed_urls_.contains(browser)) {
-    closed_tabs_.append(pending_closed_urls_.take(browser));
+  if (!forget_closed_tab && pending_closed_tabs_.contains(browser)) {
+    closed_tabs_.append(pending_closed_tabs_.take(browser));
     while (closed_tabs_.size() > kMaxClosedTabs) closed_tabs_.removeFirst();
   }
-  pending_closed_urls_.remove(browser);
+  pending_closed_tabs_.remove(browser);
 
   const int index = IndexOf(browser);
   if (index >= 0) {
@@ -1423,7 +1438,7 @@ void MainWindow::CancelTabClose(BrowserView* browser) {
   if (!browser || !closing_tabs_.remove(browser)) return;
   const bool queued_close = active_queued_tab_close_ == browser;
   if (queued_close) active_queued_tab_close_.clear();
-  pending_closed_urls_.remove(browser);
+  pending_closed_tabs_.remove(browser);
   forgotten_closing_tabs_.remove(browser);
   const int index = IndexOf(browser);
   if (index >= 0) {
@@ -1741,27 +1756,11 @@ void MainWindow::RebuildAllTabsMenu() {
   const int count = std::min(static_cast<int>(closed_tabs_.size()),
                              kVisibleRecentlyClosedTabs);
   for (int recent_index = 0; recent_index < count; ++recent_index) {
-    const QString url = closed_tabs_.at(closed_tabs_.size() - 1 - recent_index);
-    QString title;
-    for (const BrowsingDataStore::Bookmark& bookmark :
-         browsing_data_->bookmarks()) {
-      if (bookmark.url == url) {
-        title = bookmark.title;
-        break;
-      }
-    }
-    if (title.isEmpty()) {
-      for (const BrowsingDataStore::HistoryEntry& entry :
-           browsing_data_->history()) {
-        if (entry.url == url) {
-          title = entry.title;
-          break;
-        }
-      }
-    }
-    QAction* action =
-        all_tabs_menu_->addAction(title.isEmpty() ? url : title);
-    action->setToolTip(url);
+    const RecentlyClosedTab& tab =
+        closed_tabs_.at(closed_tabs_.size() - 1 - recent_index);
+    QAction* action = all_tabs_menu_->addAction(
+        tab.title.isEmpty() ? tab.url : tab.title);
+    action->setToolTip(tab.url);
     connect(action, &QAction::triggered, this, [this, recent_index] {
       ReopenClosedTabAt(recent_index);
     });
@@ -1810,7 +1809,7 @@ void MainWindow::BeginClearBrowsingData(bool show_result_dialog) {
   for (const QPointer<BrowserView>& browser : queued_tab_closes_) {
     if (browser) forgotten_closing_tabs_.insert(browser);
   }
-  pending_closed_urls_.clear();
+  pending_closed_tabs_.clear();
   CompleteBrowsingDataClearTask(QStringLiteral("history"),
                                 SaveBrowsingData());
   RebuildHistoryMenu();
@@ -1963,7 +1962,7 @@ BrowserSession MainWindow::CaptureSession(bool clean_exit) const {
   session.clean_exit = clean_exit;
   session.active_tab = std::max(0, tab_bar_->currentIndex());
   session.window_geometry = saveGeometry();
-  session.recently_closed_urls = closed_tabs_;
+  session.recently_closed_tabs = closed_tabs_;
   for (int index = 0; index < tab_bar_->count(); ++index) {
     BrowserView* browser =
         qvariant_cast<BrowserView*>(tab_bar_->tabData(index));

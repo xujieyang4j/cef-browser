@@ -12,7 +12,8 @@
 
 namespace {
 
-constexpr int kSessionVersion = 1;
+constexpr int kSessionVersion = 2;
+constexpr int kLegacySessionVersion = 1;
 constexpr int kMaxRestoredTabs = 100;
 constexpr int kMaxSessionBytes = 1024 * 1024;
 
@@ -44,7 +45,8 @@ std::optional<BrowserSession> SessionStore::Load(const QString& path,
   }
 
   const QJsonObject root = document.object();
-  if (root.value(QStringLiteral("version")).toInt() != kSessionVersion) {
+  const int version = root.value(QStringLiteral("version")).toInt();
+  if (version != kSessionVersion && version != kLegacySessionVersion) {
     SetError(error, QStringLiteral("Unsupported session version"));
     return std::nullopt;
   }
@@ -72,8 +74,17 @@ std::optional<BrowserSession> SessionStore::Load(const QString& path,
   const int recently_closed_count =
       std::min(static_cast<int>(recently_closed.size()), kMaxRestoredTabs);
   for (int index = 0; index < recently_closed_count; ++index) {
-    const QString url = recently_closed.at(index).toString().trimmed();
-    if (!url.isEmpty()) session.recently_closed_urls.append(url);
+    const QJsonValue value = recently_closed.at(index);
+    const QJsonObject object = value.toObject();
+    const QString url =
+        (value.isString() ? value.toString()
+                          : object.value(QStringLiteral("url")).toString())
+            .trimmed();
+    const QString title =
+        object.value(QStringLiteral("title")).toString().trimmed();
+    if (!url.isEmpty()) {
+      session.recently_closed_tabs.append(RecentlyClosedTab{url, title});
+    }
   }
 
   session.active_tab = std::clamp(
@@ -113,9 +124,13 @@ bool SessionStore::Save(const QString& path, const BrowserSession& session,
     return false;
   }
   QJsonArray recently_closed;
-  for (const QString& url :
-       session.recently_closed_urls.mid(0, kMaxRestoredTabs)) {
-    if (!url.trimmed().isEmpty()) recently_closed.append(url);
+  for (const RecentlyClosedTab& tab :
+       session.recently_closed_tabs.mid(0, kMaxRestoredTabs)) {
+    if (!tab.url.trimmed().isEmpty()) {
+      recently_closed.append(
+          QJsonObject{{QStringLiteral("url"), tab.url},
+                      {QStringLiteral("title"), tab.title}});
+    }
   }
 
   const QJsonObject root{
