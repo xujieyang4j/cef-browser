@@ -413,6 +413,21 @@ BrowserSession DefaultSession(const QString& url) {
   return session;
 }
 
+BrowserSession SelectInitialSession(
+    const BrowserSettings& settings, const std::optional<QString>& explicit_url,
+    const std::optional<BrowserSession>& restored) {
+  if (explicit_url) return DefaultSession(*explicit_url);
+  switch (settings.startup_behavior()) {
+    case BrowserSettings::StartupBehavior::RestoreSession:
+      return restored.value_or(DefaultSession(settings.home_page()));
+    case BrowserSettings::StartupBehavior::HomePage:
+      return DefaultSession(settings.home_page());
+    case BrowserSettings::StartupBehavior::BlankPage:
+      return DefaultSession(QStringLiteral("about:blank"));
+  }
+  return DefaultSession(settings.home_page());
+}
+
 void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
   auto output = std::make_shared<QTextStream>(stdout);
   const BrowserSession captured = window->session_for_testing(false);
@@ -1018,7 +1033,8 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
                                   QStringLiteral("Default Search Engine"),
                                   QStringLiteral("Use Current Page as Home"),
                                   QStringLiteral("Reset Home Page"),
-                                  QStringLiteral("Open Home Page in New Tabs")};
+                                  QStringLiteral("Open Home Page in New Tabs"),
+                                  QStringLiteral("On Startup")};
   const QString home_url = QStringLiteral("https://example.test/home");
   const bool home_saved = window->SetHomePageForTesting(home_url);
   BrowserSettings home_restored(settings_path);
@@ -1034,17 +1050,54 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
   const bool new_tab_persisted =
       new_tab_loaded && new_tab_restored.open_home_on_new_tab() &&
       window->open_home_on_new_tab_for_testing();
+  const bool startup_selected = window->SetStartupBehaviorForTesting(
+      QStringLiteral("Open Home Page"));
+  BrowserSettings startup_restored(settings_path);
+  const bool startup_loaded = startup_restored.Load();
+  BrowserSession previous_session;
+  previous_session.tab_urls = {QStringLiteral("https://example.test/previous")};
+  const bool startup_persisted =
+      startup_loaded &&
+      startup_restored.startup_behavior() ==
+          BrowserSettings::StartupBehavior::HomePage &&
+      window->startup_behavior_for_testing() ==
+          QStringLiteral("Open Home Page");
+  const bool home_startup =
+      SelectInitialSession(startup_restored, std::nullopt, previous_session)
+          .tab_urls == QStringList{home_url};
+  startup_restored.set_startup_behavior(
+      BrowserSettings::StartupBehavior::RestoreSession);
+  const bool restore_startup =
+      SelectInitialSession(startup_restored, std::nullopt, previous_session)
+          .tab_urls == previous_session.tab_urls;
+  startup_restored.set_startup_behavior(
+      BrowserSettings::StartupBehavior::BlankPage);
+  const bool blank_startup =
+      SelectInitialSession(startup_restored, std::nullopt, previous_session)
+          .tab_urls == QStringList{QStringLiteral("about:blank")};
+  const bool explicit_startup =
+      SelectInitialSession(startup_restored,
+                           QStringLiteral("https://example.test/explicit"),
+                           previous_session)
+              .tab_urls ==
+          QStringList{QStringLiteral("https://example.test/explicit")};
+  const bool startup_decision = home_startup && restore_startup &&
+                                blank_startup && explicit_startup;
   const bool preliminary_ok = default_ok && selected && persisted && encoded &&
                               address_ok && menu_ok && home_saved &&
                               home_persisted && unsafe_rejected &&
-                              new_tab_setting && new_tab_persisted;
+                              new_tab_setting && new_tab_persisted &&
+                              startup_selected && startup_persisted &&
+                              startup_decision;
   if (!preliminary_ok) {
     *output << "SEARCH_SETTINGS_SMOKE_FAILED default=" << default_ok
             << " selected=" << selected << " persisted=" << persisted
             << " encoded=" << encoded << " address=" << address_ok
             << " menu=" << menu_ok << " home=" << home_persisted
             << " unsafe=" << unsafe_rejected
-            << " new_tab=" << new_tab_persisted << Qt::endl;
+            << " new_tab=" << new_tab_persisted
+            << " startup=" << startup_persisted
+            << " decision=" << startup_decision << Qt::endl;
     QCoreApplication::exit(20);
     return;
   }
@@ -1063,7 +1116,7 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
     ++*attempts;
     if (window->tab_count() == 2 && window->current_url() == home_url) {
       *output << "SEARCH_SETTINGS_SMOKE_OK default=google selected=duckduckgo "
-                 "persisted=1 encoded=1 home=new-tab"
+                 "persisted=1 encoded=1 home=new-tab startup=home"
               << Qt::endl;
       window->close();
       return;
@@ -1239,6 +1292,12 @@ int RunBrowser(int argc, char* argv[]) {
     std::unique_ptr<QTemporaryDir> smoke_profile_directory;
     QString active_session_path = session_path;
     QString active_settings_path = settings_path;
+    BrowserSettings startup_settings(settings_path);
+    QString startup_settings_error;
+    if (!startup_settings.Load(&startup_settings_error)) {
+      qWarning("Unable to load browser settings: %s",
+               qPrintable(startup_settings_error));
+    }
     BrowserSession initial_session;
     if (HasArgument(QStringLiteral("--smoke-test-session"))) {
       smoke_session_directory = std::make_unique<QTemporaryDir>();
@@ -1274,12 +1333,13 @@ int RunBrowser(int argc, char* argv[]) {
           QDir(data_path).filePath(QStringLiteral("settings.json"));
     } else if (const auto startup_url = ExplicitStartupUrl()) {
       // A URL explicitly supplied by the caller always wins over restoration.
-      initial_session = DefaultSession(*startup_url);
+      initial_session =
+          SelectInitialSession(startup_settings, startup_url, std::nullopt);
     } else {
       QString session_error;
       const auto restored = SessionStore::Load(session_path, &session_error);
-      initial_session = restored.value_or(
-          DefaultSession(QStringLiteral("https://www.example.com")));
+      initial_session =
+          SelectInitialSession(startup_settings, std::nullopt, restored);
       if (!session_error.isEmpty()) {
         qWarning("Unable to restore browser session: %s",
                  qPrintable(session_error));

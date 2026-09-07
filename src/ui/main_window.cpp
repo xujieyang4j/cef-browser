@@ -697,6 +697,24 @@ bool MainWindow::open_home_on_new_tab_for_testing() const {
   return browser_settings_->open_home_on_new_tab();
 }
 
+bool MainWindow::SetStartupBehaviorForTesting(const QString& name) {
+  const BrowserSettings::StartupBehavior behaviors[] = {
+      BrowserSettings::StartupBehavior::RestoreSession,
+      BrowserSettings::StartupBehavior::HomePage,
+      BrowserSettings::StartupBehavior::BlankPage};
+  for (BrowserSettings::StartupBehavior behavior : behaviors) {
+    if (BrowserSettings::StartupBehaviorName(behavior) == name) {
+      return SetStartupBehavior(static_cast<int>(behavior));
+    }
+  }
+  return false;
+}
+
+QString MainWindow::startup_behavior_for_testing() const {
+  return BrowserSettings::StartupBehaviorName(
+      browser_settings_->startup_behavior());
+}
+
 void MainWindow::ActivateTabShortcutForTesting(int number) {
   ActivateTabByShortcut(number == 9 ? tab_bar_->count() - 1 : number - 1);
 }
@@ -1806,6 +1824,26 @@ void MainWindow::CreateApplicationMenus() {
   open_home->setProperty("openHomeOnNewTabAction", true);
   connect(open_home, &QAction::toggled, this,
           [this](bool enabled) { SetOpenHomeOnNewTab(enabled); });
+  settings->addSeparator();
+  QMenu* startup = settings->addMenu(QStringLiteral("On Startup"));
+  QActionGroup* startup_group = new QActionGroup(startup);
+  startup_group->setExclusive(true);
+  const BrowserSettings::StartupBehavior behaviors[] = {
+      BrowserSettings::StartupBehavior::RestoreSession,
+      BrowserSettings::StartupBehavior::HomePage,
+      BrowserSettings::StartupBehavior::BlankPage};
+  for (BrowserSettings::StartupBehavior behavior : behaviors) {
+    QAction* action =
+        startup->addAction(BrowserSettings::StartupBehaviorName(behavior));
+    action->setCheckable(true);
+    action->setChecked(browser_settings_->startup_behavior() == behavior);
+    action->setProperty("startupBehaviorAction", true);
+    action->setData(static_cast<int>(behavior));
+    startup_group->addAction(action);
+    connect(action, &QAction::triggered, this, [this, behavior] {
+      SetStartupBehavior(static_cast<int>(behavior));
+    });
+  }
 
   QMenu* window = menuBar()->addMenu(QStringLiteral("Window"));
   add_action(window, QStringLiteral("Next Tab"), QKeySequence::NextChild,
@@ -1906,6 +1944,40 @@ bool MainWindow::SetOpenHomeOnNewTab(bool enabled) {
   statusBar()->showMessage(
       enabled ? QStringLiteral("New tabs will open the home page")
               : QStringLiteral("New tabs will open a blank page"),
+      2500);
+  return true;
+}
+
+bool MainWindow::SetStartupBehavior(int behavior_value) {
+  const auto behavior =
+      static_cast<BrowserSettings::StartupBehavior>(behavior_value);
+  const BrowserSettings::StartupBehavior previous =
+      browser_settings_->startup_behavior();
+  browser_settings_->set_startup_behavior(behavior);
+  QString error;
+  if (!browser_settings_->Save(&error)) {
+    browser_settings_->set_startup_behavior(previous);
+    for (QAction* action : findChildren<QAction*>()) {
+      if (action->property("startupBehaviorAction").toBool()) {
+        const QSignalBlocker blocker(action);
+        action->setChecked(
+            action->data().toInt() == static_cast<int>(previous));
+      }
+    }
+    statusBar()->showMessage(
+        QStringLiteral("Unable to save browser settings: %1").arg(error),
+        8000);
+    return false;
+  }
+  for (QAction* action : findChildren<QAction*>()) {
+    if (action->property("startupBehaviorAction").toBool()) {
+      const QSignalBlocker blocker(action);
+      action->setChecked(action->data().toInt() == behavior_value);
+    }
+  }
+  statusBar()->showMessage(
+      QStringLiteral("On startup: %1")
+          .arg(BrowserSettings::StartupBehaviorName(behavior)),
       2500);
   return true;
 }

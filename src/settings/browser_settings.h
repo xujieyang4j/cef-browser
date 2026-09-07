@@ -5,6 +5,7 @@
 class BrowserSettings final {
  public:
   enum class SearchEngine { Google, DuckDuckGo, Bing };
+  enum class StartupBehavior { RestoreSession, HomePage, BlankPage };
 
   explicit BrowserSettings(QString path);
 
@@ -18,14 +19,21 @@ class BrowserSettings final {
   void set_open_home_on_new_tab(bool enabled) {
     open_home_on_new_tab_ = enabled;
   }
+  StartupBehavior startup_behavior() const { return startup_behavior_; }
+  void set_startup_behavior(StartupBehavior behavior) {
+    startup_behavior_ = behavior;
+  }
 
   static QString SearchEngineId(SearchEngine engine);
   static QString SearchEngineName(SearchEngine engine);
   static QString SearchUrl(SearchEngine engine, const QString& query);
+  static QString StartupBehaviorId(StartupBehavior behavior);
+  static QString StartupBehaviorName(StartupBehavior behavior);
 
  private:
   QString path_;
   SearchEngine search_engine_ = SearchEngine::Google;
   QString home_page_ = QStringLiteral("https://www.example.com");
   bool open_home_on_new_tab_ = false;
+  StartupBehavior startup_behavior_ = StartupBehavior::RestoreSession;
 };

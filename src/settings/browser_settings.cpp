@@ -57,6 +57,15 @@ bool BrowserSettings::Load(QString* error) {
   set_home_page(root.value(QStringLiteral("homePage")).toString());
   open_home_on_new_tab_ =
       root.value(QStringLiteral("openHomeOnNewTab")).toBool(false);
+  const QString startup =
+      root.value(QStringLiteral("startupBehavior")).toString();
+  if (startup == QStringLiteral("home")) {
+    startup_behavior_ = StartupBehavior::HomePage;
+  } else if (startup == QStringLiteral("blank")) {
+    startup_behavior_ = StartupBehavior::BlankPage;
+  } else {
+    startup_behavior_ = StartupBehavior::RestoreSession;
+  }
   return true;
 }
 
@@ -70,6 +79,8 @@ bool BrowserSettings::Save(QString* error) const {
       {QStringLiteral("searchEngine"), SearchEngineId(search_engine_)},
       {QStringLiteral("homePage"), home_page_},
       {QStringLiteral("openHomeOnNewTab"), open_home_on_new_tab_},
+      {QStringLiteral("startupBehavior"),
+       StartupBehaviorId(startup_behavior_)},
   };
   QSaveFile file(path_);
   if (!file.open(QIODevice::WriteOnly)) {
@@ -142,4 +153,28 @@ QString BrowserSettings::SearchUrl(SearchEngine engine, const QString& query) {
       return QStringLiteral("https://www.bing.com/search?q=%1").arg(encoded);
   }
   return QStringLiteral("https://www.google.com/search?q=%1").arg(encoded);
+}
+
+QString BrowserSettings::StartupBehaviorId(StartupBehavior behavior) {
+  switch (behavior) {
+    case StartupBehavior::RestoreSession:
+      return QStringLiteral("restore");
+    case StartupBehavior::HomePage:
+      return QStringLiteral("home");
+    case StartupBehavior::BlankPage:
+      return QStringLiteral("blank");
+  }
+  return QStringLiteral("restore");
+}
+
+QString BrowserSettings::StartupBehaviorName(StartupBehavior behavior) {
+  switch (behavior) {
+    case StartupBehavior::RestoreSession:
+      return QStringLiteral("Restore Last Session");
+    case StartupBehavior::HomePage:
+      return QStringLiteral("Open Home Page");
+    case StartupBehavior::BlankPage:
+      return QStringLiteral("Open Blank Page");
+  }
+  return QStringLiteral("Restore Last Session");
 }

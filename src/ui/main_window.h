@@ -97,6 +97,8 @@ class MainWindow final : public QMainWindow {
   void GoHomeForTesting();
   bool SetOpenHomeOnNewTabForTesting(bool enabled);
   bool open_home_on_new_tab_for_testing() const;
+  bool SetStartupBehaviorForTesting(const QString& name);
+  QString startup_behavior_for_testing() const;
   QString NormalizeUrlForTesting(const QString& input) const;
   void ActivateTabShortcutForTesting(int number);
   void ShowFailureForTesting(bool render_process_failed);
@@ -212,6 +214,7 @@ class MainWindow final : public QMainWindow {
   bool SetHomePage(const QString& value);
   void GoHome();
   bool SetOpenHomeOnNewTab(bool enabled);
+  bool SetStartupBehavior(int behavior_value);
 
   QTabBar* tab_bar_ = nullptr;
   QStackedWidget* tab_stack_ = nullptr;
