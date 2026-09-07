@@ -64,6 +64,15 @@ class MainWindow final : public QMainWindow {
   void ToggleCurrentAudioMutedForTesting();
   bool current_audio_muted_for_testing() const;
   QString current_tab_text_for_testing() const;
+  void ShowDownloadsForTesting();
+  void ShowBookmarksForTesting();
+  void ShowHistoryForTesting();
+  void ShowClearBrowsingDataForTesting();
+  void HideBrowserSurfacesForTesting();
+  bool downloads_visible_for_testing() const;
+  bool bookmarks_visible_for_testing() const;
+  bool history_visible_for_testing() const;
+  bool clear_data_prompt_visible_for_testing() const;
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
   bool render_process_failed_for_testing() const;
@@ -128,6 +137,8 @@ class MainWindow final : public QMainWindow {
   void RefreshAddressSuggestions();
 
  private:
+  enum class BrowserUiSurface { Downloads, Bookmarks, History, ClearData };
+
   static QString NormalizeUrl(QString input);
   BrowserView* AddTab(const QString& url, bool activate,
                       bool focus_address = false);
@@ -151,6 +162,8 @@ class MainWindow final : public QMainWindow {
   void UpdateChrome();
   void UpdateTabTitle(BrowserView* browser, const QString& title);
   void HandleBrowserShortcut(int action);
+  void ShowBrowserUiSurface(BrowserUiSurface surface);
+  void PerformBrowserUiSurface(BrowserUiSurface surface);
   void ScheduleSessionSave();
   BrowserSession CaptureSession(bool clean_exit) const;
   bool PersistSession(const BrowserSession& session);
@@ -161,6 +174,7 @@ class MainWindow final : public QMainWindow {
   QPushButton* back_button_ = nullptr;
   QPushButton* forward_button_ = nullptr;
   QPushButton* reload_button_ = nullptr;
+  QPushButton* downloads_button_ = nullptr;
   QProgressBar* loading_progress_ = nullptr;
   QCompleter* address_completer_ = nullptr;
   QStringListModel* address_suggestions_ = nullptr;
@@ -197,6 +211,7 @@ class MainWindow final : public QMainWindow {
   bool window_close_requested_ = false;
   bool allow_window_close_ = false;
   bool web_fullscreen_ = false;
+  std::optional<BrowserUiSurface> pending_browser_ui_surface_;
   bool window_was_maximized_ = false;
   bool find_bar_was_visible_ = false;
 

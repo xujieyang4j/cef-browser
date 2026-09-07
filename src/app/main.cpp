@@ -393,6 +393,7 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-privacy")) ||
          HasArgument(QStringLiteral("--smoke-test-favicon")) ||
          HasArgument(QStringLiteral("--smoke-test-audio")) ||
+         HasArgument(QStringLiteral("--smoke-test-browser-surfaces")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth"));
 }
@@ -615,6 +616,62 @@ void StartAudioSmokeTest(MainWindow* window) {
               << " text=" << window->current_tab_text_for_testing()
               << Qt::endl;
       QCoreApplication::exit(14);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
+void StartBrowserSurfacesSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, stage, step] {
+    ++*attempts;
+    if (*stage == 0 && window->current_title() == QStringLiteral("Smoke")) {
+      window->ShowDownloadsForTesting();
+      *stage = 1;
+    } else if (*stage == 1 && window->downloads_visible_for_testing()) {
+      window->HideBrowserSurfacesForTesting();
+      window->ShowBookmarksForTesting();
+      *stage = 2;
+    } else if (*stage == 2 && window->bookmarks_visible_for_testing()) {
+      window->HideBrowserSurfacesForTesting();
+      window->ShowHistoryForTesting();
+      *stage = 3;
+    } else if (*stage == 3 && window->history_visible_for_testing()) {
+      window->HideBrowserSurfacesForTesting();
+      window->SetWebFullscreenForTesting(true);
+      window->ShowHistoryForTesting();
+      *stage = 4;
+    } else if (*stage == 4 && window->web_fullscreen_for_testing()) {
+      window->SetWebFullscreenForTesting(false);
+    } else if (*stage == 4 && !window->web_fullscreen_for_testing() &&
+               window->history_visible_for_testing()) {
+      window->HideBrowserSurfacesForTesting();
+      window->ShowClearBrowsingDataForTesting();
+      *stage = 5;
+    } else if (*stage == 5 &&
+               window->clear_data_prompt_visible_for_testing()) {
+      if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
+        dialog->reject();
+      }
+      *output << "BROWSER_SURFACES_SMOKE_OK downloads=1 bookmarks=1 "
+                 "history=1 fullscreen=exit clear=prompt"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 180) {
+      *output << "BROWSER_SURFACES_SMOKE_FAILED stage=" << *stage
+              << " downloads=" << window->downloads_visible_for_testing()
+              << " bookmarks=" << window->bookmarks_visible_for_testing()
+              << " history=" << window->history_visible_for_testing()
+              << " fullscreen=" << window->web_fullscreen_for_testing()
+              << Qt::endl;
+      QCoreApplication::exit(16);
       return;
     }
     QTimer::singleShot(50, window, [step] { (*step)(); });
@@ -878,6 +935,9 @@ int RunBrowser(int argc, char* argv[]) {
                          [&main_window] { StartFaviconSmokeTest(&main_window); });
     } else if (HasArgument(QStringLiteral("--smoke-test-audio"))) {
       StartAudioSmokeTest(&main_window);
+    } else if (HasArgument(
+                   QStringLiteral("--smoke-test-browser-surfaces"))) {
+      StartBrowserSurfacesSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-security"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartSecuritySmokeTest(&main_window); });

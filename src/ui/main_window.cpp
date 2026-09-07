@@ -147,8 +147,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   forward_button_ = new QPushButton(QStringLiteral("→"), toolbar_);
   reload_button_ = new QPushButton(QStringLiteral("↻"), toolbar_);
   address_bar_ = new QLineEdit(toolbar_);
-  auto* downloads_button =
-      new QPushButton(QStringLiteral("Downloads"), toolbar_);
+  downloads_button_ = new QPushButton(QStringLiteral("Downloads"), toolbar_);
   bookmark_button_ = new QPushButton(QStringLiteral("☆"), toolbar_);
   bookmarks_button_ = new QPushButton(QStringLiteral("Bookmarks"), toolbar_);
   history_button_ = new QPushButton(QStringLiteral("History"), toolbar_);
@@ -170,7 +169,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   address_completer_->setFilterMode(Qt::MatchContains);
   address_completer_->setMaxVisibleItems(12);
   address_bar_->setCompleter(address_completer_);
-  downloads_button->setToolTip(QStringLiteral("Show downloads"));
+  downloads_button_->setToolTip(QStringLiteral("Show downloads"));
   bookmark_button_->setToolTip(QStringLiteral("Bookmark this page"));
   back_button_->setEnabled(false);
   forward_button_->setEnabled(false);
@@ -182,7 +181,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   toolbar_layout->addWidget(bookmark_button_);
   toolbar_layout->addWidget(bookmarks_button_);
   toolbar_layout->addWidget(history_button_);
-  toolbar_layout->addWidget(downloads_button);
+  toolbar_layout->addWidget(downloads_button_);
 
   find_bar_ = new QWidget(central);
   auto* find_layout = new QHBoxLayout(find_bar_);
@@ -271,8 +270,9 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   connect(next_match, &QPushButton::clicked, this,
           [this] { FindFromBar(true, true); });
   connect(close_find, &QPushButton::clicked, this, &MainWindow::HideFindBar);
-  connect(downloads_button, &QPushButton::clicked, download_panel_,
-          &DownloadPanel::ToggleVisibility);
+  connect(downloads_button_, &QPushButton::clicked, this, [this] {
+    download_panel_->ToggleVisibility();
+  });
   connect(bookmark_button_, &QPushButton::clicked, this,
           &MainWindow::ToggleCurrentBookmark);
   connect(bookmarks_menu_, &QMenu::aboutToShow, this,
@@ -280,8 +280,8 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   connect(history_menu_, &QMenu::aboutToShow, this,
           &MainWindow::RebuildHistoryMenu);
   connect(download_manager_, &DownloadManager::ActiveCountChanged, this,
-          [downloads_button](int count) {
-            downloads_button->setText(
+          [this](int count) {
+            downloads_button_->setText(
                 count > 0 ? QStringLiteral("Downloads (%1)").arg(count)
                           : QStringLiteral("Downloads"));
           });
@@ -394,6 +394,40 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
 #endif
   connect(toggle_bookmark, &QShortcut::activated, this,
           &MainWindow::ToggleCurrentBookmark);
+#if defined(OS_MAC)
+  auto* show_downloads =
+      new QShortcut(QKeySequence(QStringLiteral("Meta+Shift+J")), this);
+  auto* show_history =
+      new QShortcut(QKeySequence(QStringLiteral("Meta+Y")), this);
+  auto* clear_browsing_data = new QShortcut(
+      QKeySequence(QStringLiteral("Meta+Shift+Backspace")), this);
+#else
+  auto* show_downloads =
+      new QShortcut(QKeySequence(QStringLiteral("Ctrl+J")), this);
+  auto* show_history =
+      new QShortcut(QKeySequence(QStringLiteral("Ctrl+H")), this);
+  auto* clear_browsing_data =
+      new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+Delete")), this);
+#endif
+  connect(show_downloads, &QShortcut::activated, this, [this] {
+    ShowBrowserUiSurface(BrowserUiSurface::Downloads);
+  });
+  connect(show_history, &QShortcut::activated, this, [this] {
+    ShowBrowserUiSurface(BrowserUiSurface::History);
+  });
+  connect(clear_browsing_data, &QShortcut::activated, this, [this] {
+    ShowBrowserUiSurface(BrowserUiSurface::ClearData);
+  });
+#if defined(OS_MAC)
+  auto* show_bookmarks =
+      new QShortcut(QKeySequence(QStringLiteral("Meta+Shift+B")), this);
+#else
+  auto* show_bookmarks =
+      new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")), this);
+#endif
+  connect(show_bookmarks, &QShortcut::activated, this, [this] {
+    ShowBrowserUiSurface(BrowserUiSurface::Bookmarks);
+  });
 
   const QStringList initial_urls = initial_session.tab_urls.isEmpty()
                                        ? QStringList{QStringLiteral("https://www.example.com")}
@@ -578,6 +612,50 @@ bool MainWindow::current_audio_muted_for_testing() const {
 
 QString MainWindow::current_tab_text_for_testing() const {
   return tab_bar_->tabText(tab_bar_->currentIndex());
+}
+
+void MainWindow::ShowDownloadsForTesting() {
+  ShowBrowserUiSurface(BrowserUiSurface::Downloads);
+}
+
+void MainWindow::ShowBookmarksForTesting() {
+  ShowBrowserUiSurface(BrowserUiSurface::Bookmarks);
+}
+
+void MainWindow::ShowHistoryForTesting() {
+  ShowBrowserUiSurface(BrowserUiSurface::History);
+}
+
+void MainWindow::ShowClearBrowsingDataForTesting() {
+  ShowBrowserUiSurface(BrowserUiSurface::ClearData);
+}
+
+void MainWindow::HideBrowserSurfacesForTesting() {
+  download_panel_->hide();
+  bookmarks_menu_->close();
+  history_menu_->close();
+}
+
+bool MainWindow::downloads_visible_for_testing() const {
+  return download_panel_->isVisible();
+}
+
+bool MainWindow::bookmarks_visible_for_testing() const {
+  return bookmarks_menu_->isVisible();
+}
+
+bool MainWindow::history_visible_for_testing() const {
+  return history_menu_->isVisible();
+}
+
+bool MainWindow::clear_data_prompt_visible_for_testing() const {
+  for (QMessageBox* dialog : findChildren<QMessageBox*>()) {
+    if (dialog && dialog->windowTitle() == QStringLiteral("Clear browsing data?") &&
+        dialog->isVisible()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void MainWindow::ShowFailureForTesting(bool render_process_failed) {
@@ -921,6 +999,12 @@ BrowserView* MainWindow::AddTab(const QString& url, bool activate,
             if (fullscreen) {
               statusBar()->showMessage(
                   QStringLiteral("Press Esc to exit full screen"), 3000);
+            } else if (pending_browser_ui_surface_) {
+              const BrowserUiSurface surface = *pending_browser_ui_surface_;
+              pending_browser_ui_surface_.reset();
+              QMetaObject::invokeMethod(
+                  this, [this, surface] { PerformBrowserUiSurface(surface); },
+                  Qt::QueuedConnection);
             }
           });
   connect(browser, &BrowserView::LoadingStateChanged, this,
@@ -1370,6 +1454,18 @@ void MainWindow::HandleBrowserShortcut(int action_value) {
     case BrowserView::ShortcutAction::ToggleBookmark:
       ToggleCurrentBookmark();
       break;
+    case BrowserView::ShortcutAction::ShowDownloads:
+      ShowBrowserUiSurface(BrowserUiSurface::Downloads);
+      break;
+    case BrowserView::ShortcutAction::ShowBookmarks:
+      ShowBrowserUiSurface(BrowserUiSurface::Bookmarks);
+      break;
+    case BrowserView::ShortcutAction::ShowHistory:
+      ShowBrowserUiSurface(BrowserUiSurface::History);
+      break;
+    case BrowserView::ShortcutAction::ClearBrowsingData:
+      ShowBrowserUiSurface(BrowserUiSurface::ClearData);
+      break;
     case BrowserView::ShortcutAction::ExitFullscreen:
       if (web_fullscreen_) {
         if (BrowserView* browser = CurrentBrowser()) browser->ExitFullscreen();
@@ -1383,6 +1479,38 @@ void MainWindow::HandleBrowserShortcut(int action_value) {
       break;
     case BrowserView::ShortcutAction::Reload:
       if (BrowserView* browser = CurrentBrowser()) browser->Reload();
+      break;
+  }
+}
+
+void MainWindow::ShowBrowserUiSurface(BrowserUiSurface surface) {
+  if (web_fullscreen_) {
+    pending_browser_ui_surface_ = surface;
+    if (BrowserView* browser = CurrentBrowser()) browser->ExitFullscreen();
+    return;
+  }
+  PerformBrowserUiSurface(surface);
+}
+
+void MainWindow::PerformBrowserUiSurface(BrowserUiSurface surface) {
+  switch (surface) {
+    case BrowserUiSurface::Downloads:
+      download_panel_->show();
+      download_panel_->raise();
+      downloads_button_->setFocus(Qt::ShortcutFocusReason);
+      break;
+    case BrowserUiSurface::Bookmarks:
+      RebuildBookmarksMenu();
+      bookmarks_menu_->popup(bookmarks_button_->mapToGlobal(
+          QPoint(0, bookmarks_button_->height())));
+      break;
+    case BrowserUiSurface::History:
+      RebuildHistoryMenu();
+      history_menu_->popup(history_button_->mapToGlobal(
+          QPoint(0, history_button_->height())));
+      break;
+    case BrowserUiSurface::ClearData:
+      ShowClearBrowsingDataPrompt();
       break;
   }
 }

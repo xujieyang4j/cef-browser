@@ -111,6 +111,10 @@ application builds automatically use the Release CEF runtime.
 - Ctrl/Cmd++ / Ctrl/Cmd+-: zoom the active page
 - Ctrl/Cmd+0: reset page zoom
 - Ctrl/Cmd+D: add or remove a bookmark for the active page
+- Ctrl+J (Cmd+Shift+J on macOS): show downloads
+- Ctrl+Shift+B / Cmd+Shift+B: show bookmarks
+- Ctrl+H (Cmd+Y on macOS): show history
+- Ctrl+Shift+Delete (Cmd+Shift+Backspace on macOS): clear browsing data
 - Ctrl/Cmd+P: print the active page
 - F12: open CEF DevTools
 
@@ -135,7 +139,8 @@ CTest also runs deterministic download-state, download-exit protection,
 tab-action, pinned-tab persistence, failure-page, atomic session restore,
 page-search/zoom, bookmark/history persistence, browsing-data cleanup, favicon
 mapping, audio/mute state, security-policy, and authentication-dialog checks.
-All fourteen
+Keyboard-accessible browser surfaces and full-screen exit routing are also
+covered. All fifteen
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

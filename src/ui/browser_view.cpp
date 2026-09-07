@@ -417,6 +417,23 @@ bool BrowserView::OnCefKeyEvent(CefRefPtr<CefBrowser> browser,
     action = ShortcutAction::ResetZoom;
   } else if (primary_modifier && !shift && event.windows_key_code == 'D') {
     action = ShortcutAction::ToggleBookmark;
+#if defined(OS_MAC)
+  } else if (primary_modifier && shift && event.windows_key_code == 'J') {
+    action = ShortcutAction::ShowDownloads;
+  } else if (primary_modifier && !shift && event.windows_key_code == 'Y') {
+    action = ShortcutAction::ShowHistory;
+  } else if (primary_modifier && shift && event.windows_key_code == 0x08) {
+    action = ShortcutAction::ClearBrowsingData;
+#else
+  } else if (primary_modifier && !shift && event.windows_key_code == 'J') {
+    action = ShortcutAction::ShowDownloads;
+  } else if (primary_modifier && !shift && event.windows_key_code == 'H') {
+    action = ShortcutAction::ShowHistory;
+  } else if (primary_modifier && shift && event.windows_key_code == 0x2E) {
+    action = ShortcutAction::ClearBrowsingData;
+#endif
+  } else if (primary_modifier && shift && event.windows_key_code == 'B') {
+    action = ShortcutAction::ShowBookmarks;
   } else if ((event.modifiers & EVENTFLAG_CONTROL_DOWN) &&
              event.windows_key_code == 0x09) {
     action = shift ? ShortcutAction::PreviousTab : ShortcutAction::NextTab;
