@@ -76,6 +76,52 @@ std::optional<QString> NormalizeImportedUrl(QString value) {
   return normalized;
 }
 
+QJsonArray Prefix(const QJsonArray& values, int count) {
+  QJsonArray result;
+  for (int index = 0; index < count; ++index) result.append(values.at(index));
+  return result;
+}
+
+QByteArray SerializeData(const QJsonArray& bookmarks,
+                         const QJsonArray& history) {
+  return QJsonDocument(QJsonObject{
+                           {QStringLiteral("version"), kDataVersion},
+                           {QStringLiteral("bookmarks"), bookmarks},
+                           {QStringLiteral("history"), history},
+                       })
+      .toJson(QJsonDocument::Compact);
+}
+
+int LargestHistoryPrefix(const QJsonArray& bookmarks,
+                         const QJsonArray& history) {
+  int low = 0;
+  int high = history.size();
+  while (low < high) {
+    const int middle = low + (high - low + 1) / 2;
+    if (SerializeData(bookmarks, Prefix(history, middle)).size() <=
+        kMaxDataBytes) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return low;
+}
+
+int LargestBookmarkPrefix(const QJsonArray& bookmarks) {
+  int low = 0;
+  int high = bookmarks.size();
+  while (low < high) {
+    const int middle = low + (high - low + 1) / 2;
+    if (SerializeData(Prefix(bookmarks, middle), {}).size() <= kMaxDataBytes) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return low;
+}
+
 }  // namespace
 
 BrowsingDataStore::BrowsingDataStore(QString path) : path_(std::move(path)) {}
@@ -181,17 +227,23 @@ bool BrowsingDataStore::Save(QString* error) const {
     if (history.size() >= kMaxHistoryEntries) break;
   }
 
-  const QJsonObject root{
-      {QStringLiteral("version"), kDataVersion},
-      {QStringLiteral("bookmarks"), bookmarks},
-      {QStringLiteral("history"), history},
-  };
+  QByteArray bytes = SerializeData(bookmarks, history);
+  if (bytes.size() > kMaxDataBytes) {
+    const QByteArray bookmarks_only = SerializeData(bookmarks, {});
+    if (bookmarks_only.size() <= kMaxDataBytes) {
+      history = Prefix(history, LargestHistoryPrefix(bookmarks, history));
+    } else {
+      history = {};
+      bookmarks = Prefix(bookmarks, LargestBookmarkPrefix(bookmarks));
+    }
+    bytes = SerializeData(bookmarks, history);
+  }
   QSaveFile file(path_);
   if (!file.open(QIODevice::WriteOnly)) {
     SetError(error, file.errorString());
     return false;
   }
-  if (file.write(QJsonDocument(root).toJson(QJsonDocument::Compact)) < 0) {
+  if (file.write(bytes) != bytes.size()) {
     SetError(error, file.errorString());
     file.cancelWriting();
     return false;

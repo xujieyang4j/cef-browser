@@ -22,6 +22,10 @@ namespace {
 constexpr int kHistoryVersion = 1;
 constexpr int kMaxHistoryItems = 200;
 constexpr int kMaxHistoryBytes = 2 * 1024 * 1024;
+constexpr int kMaxSourceUrlBytes = 64 * 1024;
+constexpr int kMaxLocalPathBytes = 32 * 1024;
+constexpr int kMaxFileNameCharacters = 512;
+constexpr int kMaxDetailCharacters = 1024;
 
 void SetError(QString* error, const QString& value) {
   if (error) *error = value;
@@ -37,28 +41,49 @@ std::optional<QString> NormalizeSourceUrl(QString value) {
     return std::nullopt;
   }
   url.setScheme(scheme);
-  return url.toString(QUrl::FullyEncoded);
+  const QString normalized = url.toString(QUrl::FullyEncoded);
+  if (normalized.toUtf8().size() > kMaxSourceUrlBytes) return std::nullopt;
+  return normalized;
 }
 
 std::optional<QString> NormalizeLocalPath(const QString& value) {
   if (value.isEmpty() || value.contains(QChar::Null)) return std::nullopt;
   const QString path = QDir::cleanPath(QDir::fromNativeSeparators(value));
   if (!QDir::isAbsolutePath(path)) return std::nullopt;
-  return QFileInfo(path).absoluteFilePath();
+  const QString normalized = QFileInfo(path).absoluteFilePath();
+  if (normalized.toUtf8().size() > kMaxLocalPathBytes) return std::nullopt;
+  return normalized;
 }
 
 QString NormalizeDisplayFileName(QString value) {
   if (value.contains(QChar::Null)) return QString();
   value = QFileInfo(QDir::fromNativeSeparators(value.trimmed())).fileName();
+  for (qsizetype index = 0; index < value.size(); ++index) {
+    if (value.at(index).category() == QChar::Other_Control) {
+      value[index] = QLatin1Char(' ');
+    }
+  }
+  value = value.simplified().left(kMaxFileNameCharacters);
   if (value == QStringLiteral(".") || value == QStringLiteral("..")) {
     return QString();
   }
   return value;
 }
 
+QString NormalizeDetail(QString value) {
+  for (qsizetype index = 0; index < value.size(); ++index) {
+    if (value.at(index).category() == QChar::Other_Control) {
+      value[index] = QLatin1Char(' ');
+    }
+  }
+  return value.simplified().left(kMaxDetailCharacters);
+}
+
 QString FileNameForRecord(const QString& path, const QString& stored_name,
                           const QString& url) {
-  if (!path.isEmpty()) return QFileInfo(path).fileName();
+  if (!path.isEmpty()) {
+    return NormalizeDisplayFileName(QFileInfo(path).fileName());
+  }
   const QString sanitized = NormalizeDisplayFileName(stored_name);
   if (!sanitized.isEmpty()) return sanitized;
   return NormalizeDisplayFileName(QUrl(url).path());
@@ -248,7 +273,8 @@ bool DownloadManager::LoadHistory(QString* error) {
     item.file_name = FileNameForRecord(
         item.full_path, object.value(QStringLiteral("fileName")).toString(),
         item.url);
-    item.detail = object.value(QStringLiteral("detail")).toString();
+    item.detail =
+        NormalizeDetail(object.value(QStringLiteral("detail")).toString());
     item.received_bytes =
         std::max<qint64>(0, object.value(QStringLiteral("receivedBytes"))
                                 .toVariant()
@@ -294,7 +320,7 @@ bool DownloadManager::SaveHistory(QString* error) const {
          FileNameForRecord(full_path, found->file_name, *url)},
         {QStringLiteral("fullPath"), full_path},
         {QStringLiteral("url"), *url},
-        {QStringLiteral("detail"), found->detail},
+        {QStringLiteral("detail"), NormalizeDetail(found->detail)},
         {QStringLiteral("receivedBytes"), found->received_bytes},
         {QStringLiteral("totalBytes"), found->total_bytes},
         {QStringLiteral("percent"), found->percent},
@@ -303,16 +329,24 @@ bool DownloadManager::SaveHistory(QString* error) const {
     if (downloads.size() >= kMaxHistoryItems) break;
   }
 
-  const QJsonObject root{
-      {QStringLiteral("version"), kHistoryVersion},
-      {QStringLiteral("downloads"), downloads},
+  auto serialize = [&downloads] {
+    return QJsonDocument(QJsonObject{
+                             {QStringLiteral("version"), kHistoryVersion},
+                             {QStringLiteral("downloads"), downloads},
+                         })
+        .toJson(QJsonDocument::Compact);
   };
+  QByteArray bytes = serialize();
+  while (bytes.size() > kMaxHistoryBytes && !downloads.isEmpty()) {
+    downloads.removeLast();
+    bytes = serialize();
+  }
   QSaveFile file(history_path_);
   if (!file.open(QIODevice::WriteOnly)) {
     SetError(error, file.errorString());
     return false;
   }
-  if (file.write(QJsonDocument(root).toJson(QJsonDocument::Compact)) < 0) {
+  if (file.write(bytes) != bytes.size()) {
     SetError(error, file.errorString());
     file.cancelWriting();
     return false;
@@ -518,12 +552,14 @@ void DownloadManager::UpdateDownload(
   const auto local_path = NormalizeLocalPath(item.full_path);
   normalized.full_path = local_path.value_or(QString());
   if (local_path) {
-    normalized.file_name = QFileInfo(*local_path).fileName();
+    normalized.file_name =
+        NormalizeDisplayFileName(QFileInfo(*local_path).fileName());
     runtime_local_path_ids_.insert(item.id);
   } else {
     normalized.file_name = NormalizeDisplayFileName(item.file_name);
     runtime_local_path_ids_.remove(item.id);
   }
+  normalized.detail = NormalizeDetail(item.detail);
   items_.insert(item.id, normalized);
 
   if (IsActive(normalized.state) && callback) {

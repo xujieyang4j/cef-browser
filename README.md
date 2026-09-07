@@ -36,13 +36,17 @@ reported after its tabs are recovered. An explicit startup URL takes priority
 over the saved session. Session fields and total output are bounded so even a
 page-generated extreme URL or title cannot create a file the next launch will
 refuse to restore; the active tab is retained when trimming is necessary.
-Restored tabs, recently closed tabs, bookmarks, and
-history are revalidated before they can navigate, so a damaged or modified
-profile cannot reintroduce blocked URL schemes. Bookmark and history recovery
+Restored tabs, recently closed tabs, bookmarks, visit history, and download
+history are revalidated before they can navigate or invoke local-file actions,
+so a damaged or modified profile cannot reintroduce blocked URL schemes.
+Bookmark and history recovery
 also removes duplicate URLs, bounds display text and visit counters, and
 repairs invalid timestamps before the data reaches browser menus. The browser
 also provides in-page search, per-tab page zoom, persistent bookmarks, and a
-bounded visit history.
+bounded visit history. Download and browsing-data files share their read and
+write byte limits, retain the newest records when trimming is required, and
+prioritize bookmarks over older visit history so every saved profile remains
+reloadable.
 Sensitive site capabilities use explicit one-time allow/block prompts, invalid
 HTTPS certificates are blocked with a dedicated error page, and only a small
 allowlist of external URL schemes can reach an OS application after user

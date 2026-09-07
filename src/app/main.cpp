@@ -457,13 +457,53 @@ void StartDownloadSmokeTest(MainWindow* window,
       !live_downloads.CanOpenDownload(live_item.id) &&
       !live_downloads.CanShowDownloadInFolder(live_item.id);
 
+  const QString bounded_history_path =
+      download_history_path + QStringLiteral(".bounded.json");
+  DownloadManager bounded_downloads(bounded_history_path);
+  constexpr int kBoundedDownloadCount = 40;
+  const QString long_download_payload(60 * 1024, QLatin1Char('a'));
+  const QString long_download_name(700, QLatin1Char('n'));
+  const QString long_download_detail(1400, QLatin1Char('d'));
+  QString newest_download_url;
+  for (int index = 0; index < kBoundedDownloadCount; ++index) {
+    DownloadManager::Item bounded_item;
+    bounded_item.id = 1000 + index;
+    bounded_item.file_name = long_download_name;
+    bounded_item.url =
+        QStringLiteral("https://example.test/download/%1?payload=%2")
+            .arg(index)
+            .arg(long_download_payload);
+    bounded_item.detail = long_download_detail;
+    bounded_item.received_bytes = 4096;
+    bounded_item.total_bytes = 4096;
+    bounded_item.percent = 100;
+    bounded_item.state = DownloadManager::State::Interrupted;
+    bounded_downloads.UpdateForTesting(bounded_item);
+    newest_download_url = bounded_item.url;
+  }
+  const bool bounded_downloads_saved = bounded_downloads.SaveHistory();
+  DownloadManager bounded_downloads_restored(bounded_history_path);
+  const bool bounded_downloads_loaded = bounded_downloads_restored.LoadHistory();
+  const QList<DownloadManager::Item> bounded_download_items =
+      bounded_downloads_restored.items();
+  const bool bounded_download_history =
+      bounded_downloads_saved &&
+      QFileInfo(bounded_history_path).size() > 0 &&
+      QFileInfo(bounded_history_path).size() <= 2 * 1024 * 1024 &&
+      bounded_downloads_loaded && !bounded_download_items.isEmpty() &&
+      bounded_download_items.size() < kBoundedDownloadCount &&
+      bounded_download_items.first().url == newest_download_url &&
+      bounded_download_items.first().file_name.size() == 512 &&
+      bounded_download_items.first().detail.size() == 1024;
+
   if (started && paused && resumed && completed && persisted &&
       active_protected && empty_after_clear && tampered_filtered &&
       restored_actions_blocked && live_actions_validated &&
       missing_file_blocked && incomplete_file_blocked &&
-      relative_path_blocked) {
+      relative_path_blocked && bounded_download_history) {
     *output << "DOWNLOAD_SMOKE_OK paused=1 resumed=1 status=Complete "
-               "persisted=1 removed=1 untrusted=blocked local_paths=validated"
+               "persisted=1 removed=1 untrusted=blocked local_paths=validated "
+               "bounded=reloadable"
             << Qt::endl;
     window->close();
   } else {
@@ -477,7 +517,8 @@ void StartDownloadSmokeTest(MainWindow* window,
             << " live_actions=" << live_actions_validated
             << " missing=" << missing_file_blocked
             << " incomplete=" << incomplete_file_blocked
-            << " relative=" << relative_path_blocked << Qt::endl;
+            << " relative=" << relative_path_blocked
+            << " bounded=" << bounded_download_history << Qt::endl;
     QCoreApplication::exit(3);
   }
 }
@@ -1003,6 +1044,55 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
           std::numeric_limits<int>::max() &&
       untrusted_data.history().first().last_visited_at ==
           QDateTime::fromSecsSinceEpoch(123, Qt::UTC);
+
+  const QString bounded_data_path =
+      data_path + QStringLiteral(".bounded.json");
+  BrowsingDataStore bounded_data(bounded_data_path);
+  constexpr int kBoundedRecordCount = 40;
+  const QString long_record_payload(48 * 1024, QLatin1Char('p'));
+  const QString long_record_title(512, QLatin1Char('t'));
+  QString newest_bookmark_url;
+  QString newest_history_url;
+  QString oldest_history_url;
+  bool bounded_records_added = true;
+  for (int index = 0; index < kBoundedRecordCount; ++index) {
+    const QString bookmark_url =
+        QStringLiteral("https://example.test/bookmark/%1?payload=%2")
+            .arg(index)
+            .arg(long_record_payload);
+    const QString history_url =
+        QStringLiteral("https://example.test/history/%1?payload=%2")
+            .arg(index)
+            .arg(long_record_payload);
+    bounded_records_added =
+        bounded_records_added &&
+        bounded_data.AddBookmark(bookmark_url, long_record_title);
+    bounded_data.RecordVisit(history_url, long_record_title);
+    if (index == 0) oldest_history_url = history_url;
+    newest_bookmark_url = bookmark_url;
+    newest_history_url = history_url;
+  }
+  const bool bounded_data_saved = bounded_data.Save();
+  BrowsingDataStore bounded_data_restored(bounded_data_path);
+  const bool bounded_data_loaded = bounded_data_restored.Load();
+  const bool oldest_history_removed =
+      std::none_of(bounded_data_restored.history().cbegin(),
+                   bounded_data_restored.history().cend(),
+                   [&oldest_history_url](
+                       const BrowsingDataStore::HistoryEntry& entry) {
+                     return entry.url == oldest_history_url;
+                   });
+  const bool bounded_browsing_data =
+      bounded_records_added && bounded_data_saved &&
+      QFileInfo(bounded_data_path).size() > 0 &&
+      QFileInfo(bounded_data_path).size() <= 2 * 1024 * 1024 &&
+      bounded_data_loaded &&
+      bounded_data_restored.bookmarks().size() == kBoundedRecordCount &&
+      bounded_data_restored.bookmarks().first().url == newest_bookmark_url &&
+      !bounded_data_restored.history().isEmpty() &&
+      bounded_data_restored.history().size() < kBoundedRecordCount &&
+      bounded_data_restored.history().first().url == newest_history_url &&
+      oldest_history_removed;
   const bool removed = restored.RemoveBookmark(first_url) &&
                        !restored.IsBookmarked(first_url);
   const QString bookmarked_url = window->current_url();
@@ -1055,6 +1145,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
   const bool profile_ok = add_first && reject_duplicate && add_second && saved &&
                           import_ok && round_trip_ok &&
                           bookmark_ok && history_ok && stored_data_sanitized &&
+                          bounded_browsing_data &&
                           removed && suggestions_ok && !first_label.isEmpty() &&
                           renamed &&
                           rename_persisted && empty_name &&
@@ -1065,6 +1156,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
             << " import=" << import_ok << " roundtrip=" << round_trip_ok
             << " history=" << history_ok << " removed=" << removed
             << " stored_data=" << stored_data_sanitized
+            << " bounded=" << bounded_browsing_data
             << " suggestions=" << suggestions_ok
             << " titled=" << !first_label.isEmpty()
             << " renamed=" << rename_persisted
@@ -1083,6 +1175,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
     if (window->current_url() == first_url) {
       *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2 "
                  "html=roundtrip "
+                 "bounded=reloadable "
                  "rename=persisted empty=url single-remove=persisted "
                  "suggestions=titled-navigation"
               << Qt::endl;
