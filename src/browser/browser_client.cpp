@@ -5,6 +5,7 @@
 
 #include <QString>
 
+#include "include/cef_parser.h"
 #include "include/wrapper/cef_helpers.h"
 #include "include/cef_task.h"
 #include "ui/browser_view.h"
@@ -18,6 +19,8 @@ constexpr size_t kMaxFaviconUrlCharacters = 64 * 1024;
 constexpr size_t kMaxActionUrlCharacters = 64 * 1024;
 constexpr size_t kMaxSecurityOriginCharacters = 8 * 1024;
 constexpr size_t kMaxPromptFieldCharacters = 512;
+constexpr size_t kMaxJavaScriptMessageCharacters = 4 * 1024;
+constexpr size_t kMaxJavaScriptPromptCharacters = 1024;
 
 QString BoundedString(const CefString& value, size_t max_characters) {
   size_t length = std::min(value.length(), max_characters);
@@ -34,6 +37,16 @@ std::optional<QString> CheckedString(const CefString& value,
                                      size_t max_characters) {
   if (value.length() > max_characters) return std::nullopt;
   return BoundedString(value, max_characters);
+}
+
+std::optional<QString> CheckedUtf8String(const CefString& value,
+                                         size_t max_bytes) {
+  if (value.length() > max_bytes) return std::nullopt;
+  QString converted = BoundedString(value, max_bytes);
+  if (converted.toUtf8().size() > static_cast<qsizetype>(max_bytes)) {
+    return std::nullopt;
+  }
+  return converted;
 }
 
 class ExternalProtocolTask final : public CefTask {
@@ -203,9 +216,53 @@ void BrowserClient::OnAddressChange(CefRefPtr<CefBrowser> browser,
                                     const CefString& url) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_ && frame->IsMain()) {
-    owner_->OnCefAddressChanged(browser,
-                                QString::fromStdString(url.ToString()));
+    const auto safe_url = CheckedUtf8String(url, kMaxActionUrlCharacters);
+    if (safe_url) owner_->OnCefAddressChanged(browser, *safe_url);
   }
+}
+
+bool BrowserClient::OnJSDialog(
+    CefRefPtr<CefBrowser> browser, const CefString& origin_url,
+    JSDialogType dialog_type, const CefString& message_text,
+    const CefString& default_prompt_text,
+    CefRefPtr<CefJSDialogCallback> callback, bool& suppress_message) {
+  CEF_REQUIRE_UI_THREAD();
+  suppress_message = false;
+  if (!owner_) {
+    callback->Continue(false, CefString());
+    return true;
+  }
+  if (origin_url.length() > kMaxSecurityOriginCharacters) {
+    suppress_message = true;
+    return false;
+  }
+
+  const QString origin = BoundedString(
+      CefFormatUrlForSecurityDisplay(origin_url), kMaxPromptFieldCharacters);
+  const bool shown = owner_->OnCefJavaScriptDialog(
+      browser, origin, dialog_type,
+      BoundedString(message_text, kMaxJavaScriptMessageCharacters),
+      BoundedString(default_prompt_text, kMaxJavaScriptPromptCharacters),
+      std::move(callback));
+  if (!shown) suppress_message = true;
+  return shown;
+}
+
+bool BrowserClient::OnBeforeUnloadDialog(
+    CefRefPtr<CefBrowser> browser, const CefString&, bool is_reload,
+    CefRefPtr<CefJSDialogCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) {
+    owner_->OnCefBeforeUnloadDialog(browser, is_reload, std::move(callback));
+  } else {
+    callback->Continue(false, CefString());
+  }
+  return true;
+}
+
+void BrowserClient::OnResetDialogState(CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) owner_->OnCefResetJavaScriptDialog(browser);
 }
 
 void BrowserClient::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,

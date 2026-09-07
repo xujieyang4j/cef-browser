@@ -59,7 +59,11 @@ bound to the browser that requested them, and share a per-tab prompt gate with
 site permissions and HTTP authentication. Permission origins and
 authentication metadata are normalized, size-limited, and displayed as plain
 text. Concurrent page requests are denied instead of stacking or replacing
-pending callbacks.
+pending callbacks. JavaScript alert, confirmation, prompt, and before-unload
+requests use the same non-blocking per-tab gate. Their page-controlled display
+text and prompt values are bounded, navigation resets complete callbacks
+exactly once, and oversized address-change values are rejected before they can
+enter the native UI or persisted session state.
 Web pages can enter native full screen, hovered-link destinations appear in the
 status bar, and Ctrl/Cmd+P opens the platform print flow.
 Navigation shows page-load progress and supports standard back, forward, and
@@ -209,12 +213,14 @@ tab-action, pinned-tab persistence, failure-page, atomic session restore,
 page-search/zoom, titled address suggestions, bookmark/history persistence,
 browsing-data cleanup, favicon
 mapping, audio/mute state, security-policy, and authentication-dialog checks.
+JavaScript-dialog limits, concurrency suppression, navigation reset, and
+before-unload cancellation are checked as well.
 Keyboard-accessible browser surfaces and full-screen exit routing are also
 covered, along with numeric tab navigation, the all-tabs menu, and selective
 recent-tab restoration, native application-menu actions, search-setting
 persistence, safe external-input normalization, and single-instance URL
 forwarding. Linux additionally verifies that a renderer is running with
-`NoNewPrivs` and a seccomp filter. All twenty-one
+`NoNewPrivs` and a seccomp filter. All twenty-two
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

@@ -13,6 +13,7 @@
 #include "include/cef_auth_callback.h"
 #include "include/cef_callback.h"
 #include "include/cef_download_handler.h"
+#include "include/cef_jsdialog_handler.h"
 #include "include/cef_permission_handler.h"
 
 class BrowserClient;
@@ -109,12 +110,19 @@ class BrowserView final : public QWidget {
   static std::optional<QString> NormalizeSecurityOriginForTesting(
       QString origin);
   static QString NormalizePromptTextForTesting(QString text);
+  static bool IsNavigationUrlWithinLimitForTesting(const QString& url);
   void ShowFailureForTesting(bool render_process_failed);
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
   bool ShowMediaPermissionForTesting(
       CefRefPtr<CefMediaAccessCallback> callback);
   bool ShowPermissionForTesting(
       quint64 prompt_id, CefRefPtr<CefPermissionPromptCallback> callback);
+  bool ShowJavaScriptDialogForTesting(
+      cef_jsdialog_type_t dialog_type, const QString& message,
+      const QString& default_prompt,
+      CefRefPtr<CefJSDialogCallback> callback);
+  bool ShowBeforeUnloadForTesting(CefRefPtr<CefJSDialogCallback> callback);
+  void ResetJavaScriptDialogForTesting();
   void SetFaviconForTesting(const QIcon& icon);
   void SetAudioStateForTesting(bool playing, bool muted);
   void ToggleAudioMuted();
@@ -142,6 +150,15 @@ class BrowserView final : public QWidget {
   void OnCefFindResult(CefRefPtr<CefBrowser> browser, int count,
                        int active_match_ordinal, bool final_update);
   void OnCefAddressChanged(CefRefPtr<CefBrowser> browser, const QString& url);
+  bool OnCefJavaScriptDialog(
+      CefRefPtr<CefBrowser> browser, const QString& origin,
+      cef_jsdialog_type_t dialog_type, const QString& message,
+      const QString& default_prompt,
+      CefRefPtr<CefJSDialogCallback> callback);
+  void OnCefBeforeUnloadDialog(
+      CefRefPtr<CefBrowser> browser, bool is_reload,
+      CefRefPtr<CefJSDialogCallback> callback);
+  void OnCefResetJavaScriptDialog(CefRefPtr<CefBrowser> browser);
   void OnCefLoadingStateChanged(CefRefPtr<CefBrowser> browser, bool loading,
                                 bool can_go_back,
                                 bool can_go_forward);
@@ -206,6 +223,8 @@ class BrowserView final : public QWidget {
   void UpdateNativeVisibility();
   void ResizeBrowser();
   void DismissOpenDialogs();
+  void CompleteJavaScriptDialog(quint64 generation, bool success,
+                                const QString& user_input = {});
   void ShowFailurePage(const QString& heading, const QString& summary,
                        const QString& detail, const QString& failed_url,
                        bool render_process_failed);
@@ -236,6 +255,9 @@ class BrowserView final : public QWidget {
   bool render_process_failed_ = false;
   QString failure_page_url_;
   QPointer<QMessageBox> page_request_dialog_;
+  QPointer<QMessageBox> javascript_dialog_;
+  CefRefPtr<CefJSDialogCallback> javascript_dialog_callback_;
+  quint64 javascript_dialog_generation_ = 0;
   std::optional<quint64> permission_prompt_id_;
   QString certificate_failure_url_;
 

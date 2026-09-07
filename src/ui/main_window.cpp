@@ -1002,6 +1002,28 @@ bool MainWindow::ShowPermissionForTesting(
          browser->ShowPermissionForTesting(prompt_id, std::move(callback));
 }
 
+bool MainWindow::ShowJavaScriptDialogForTesting(
+    cef_jsdialog_type_t dialog_type, const QString& message,
+    const QString& default_prompt,
+    CefRefPtr<CefJSDialogCallback> callback) {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->ShowJavaScriptDialogForTesting(
+                        dialog_type, message, default_prompt,
+                        std::move(callback));
+}
+
+bool MainWindow::ShowBeforeUnloadForTesting(
+    CefRefPtr<CefJSDialogCallback> callback) {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->ShowBeforeUnloadForTesting(std::move(callback));
+}
+
+void MainWindow::ResetJavaScriptDialogForTesting() {
+  if (BrowserView* browser = CurrentBrowser()) {
+    browser->ResetJavaScriptDialogForTesting();
+  }
+}
+
 void MainWindow::SetWebFullscreenForTesting(bool fullscreen) {
   if (BrowserView* browser = CurrentBrowser()) {
     browser->FullscreenChanged(fullscreen);

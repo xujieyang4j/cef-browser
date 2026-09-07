@@ -104,6 +104,12 @@ struct PermissionSmokeResult {
   std::optional<cef_permission_request_result_t> result;
 };
 
+struct JavaScriptDialogSmokeResult {
+  int calls = 0;
+  bool success = false;
+  QString input;
+};
+
 class AuthSmokeCallback final : public CefAuthCallback {
  public:
   explicit AuthSmokeCallback(std::shared_ptr<AuthSmokeResult> result)
@@ -154,6 +160,25 @@ class PermissionSmokeCallback final : public CefPermissionPromptCallback {
 
   IMPLEMENT_REFCOUNTING(PermissionSmokeCallback);
   DISALLOW_COPY_AND_ASSIGN(PermissionSmokeCallback);
+};
+
+class JavaScriptDialogSmokeCallback final : public CefJSDialogCallback {
+ public:
+  explicit JavaScriptDialogSmokeCallback(
+      std::shared_ptr<JavaScriptDialogSmokeResult> result)
+      : result_(std::move(result)) {}
+
+  void Continue(bool success, const CefString& user_input) override {
+    ++result_->calls;
+    result_->success = success;
+    result_->input = QString::fromStdString(user_input.ToString());
+  }
+
+ private:
+  std::shared_ptr<JavaScriptDialogSmokeResult> result_;
+
+  IMPLEMENT_REFCOUNTING(JavaScriptDialogSmokeCallback);
+  DISALLOW_COPY_AND_ASSIGN(JavaScriptDialogSmokeCallback);
 };
 
 void StartTabSmokeTest(MainWindow* window) {
@@ -651,7 +676,8 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-single-instance")) ||
          HasArgument(QStringLiteral("--smoke-test-sandbox")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
-         HasArgument(QStringLiteral("--smoke-test-auth"));
+         HasArgument(QStringLiteral("--smoke-test-auth")) ||
+         HasArgument(QStringLiteral("--smoke-test-js-dialogs"));
 }
 
 BrowserSession DefaultSession(const QString& url) {
@@ -2036,6 +2062,109 @@ void StartAuthSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
+void StartJavaScriptDialogSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto prompt = std::make_shared<JavaScriptDialogSmokeResult>();
+  auto duplicate = std::make_shared<JavaScriptDialogSmokeResult>();
+  auto reset = std::make_shared<JavaScriptDialogSmokeResult>();
+  auto before_unload = std::make_shared<JavaScriptDialogSmokeResult>();
+  auto stage = std::make_shared<int>(0);
+  auto attempts = std::make_shared<int>(0);
+  auto limits_ok = std::make_shared<bool>(false);
+  auto prompt_ui_ok = std::make_shared<bool>(false);
+  auto duplicate_suppressed = std::make_shared<bool>(false);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, prompt, duplicate, reset, before_unload, stage,
+           attempts, limits_ok, prompt_ui_ok, duplicate_suppressed, step] {
+    ++*attempts;
+    if (*stage == 0 &&
+        window->current_title() == QStringLiteral("Dialogs")) {
+      *limits_ok = BrowserView::IsNavigationUrlWithinLimitForTesting(
+                       QString(64 * 1024, QLatin1Char('a'))) &&
+                   !BrowserView::IsNavigationUrlWithinLimitForTesting(
+                       QString(64 * 1024 + 1, QLatin1Char('a'))) &&
+                   !BrowserView::IsNavigationUrlWithinLimitForTesting(
+                       QString(24 * 1024, QChar(0x754C)));
+      const bool shown = window->ShowJavaScriptDialogForTesting(
+          JSDIALOGTYPE_PROMPT, QString(5 * 1024, QLatin1Char('m')),
+          QString(2 * 1024, QLatin1Char('d')),
+          new JavaScriptDialogSmokeCallback(prompt));
+      if (shown) *stage = 1;
+    } else if (*stage == 1) {
+      if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
+        const QList<QLineEdit*> fields = dialog->findChildren<QLineEdit*>();
+        *prompt_ui_ok =
+            dialog->textFormat() == Qt::PlainText &&
+            dialog->informativeText().size() == 4 * 1024 &&
+            fields.size() == 1 && fields.front()->maxLength() == 1024 &&
+            fields.front()->text().size() == 1024;
+        const bool second_shown = window->ShowJavaScriptDialogForTesting(
+            JSDIALOGTYPE_ALERT, QStringLiteral("duplicate"), QString(),
+            new JavaScriptDialogSmokeCallback(duplicate));
+        *duplicate_suppressed = !second_shown && duplicate->calls == 0;
+        fields.front()->setText(QString(1100, QLatin1Char('p')));
+        for (QAbstractButton* button : dialog->buttons()) {
+          if (dialog->buttonRole(button) == QMessageBox::AcceptRole) {
+            button->click();
+            break;
+          }
+        }
+        *stage = 2;
+      }
+    } else if (*stage == 2 && prompt->calls == 1 && prompt->success &&
+               prompt->input.size() == 1024) {
+      const bool shown = window->ShowJavaScriptDialogForTesting(
+          JSDIALOGTYPE_ALERT, QStringLiteral("reset me"), QString(),
+          new JavaScriptDialogSmokeCallback(reset));
+      if (shown) {
+        window->ResetJavaScriptDialogForTesting();
+        *stage = 3;
+      }
+    } else if (*stage == 3 && reset->calls == 1 && !reset->success) {
+      if (window->ShowBeforeUnloadForTesting(
+              new JavaScriptDialogSmokeCallback(before_unload))) {
+        *stage = 4;
+      }
+    } else if (*stage == 4) {
+      if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
+        for (QAbstractButton* button : dialog->buttons()) {
+          if (dialog->buttonRole(button) == QMessageBox::RejectRole) {
+            button->click();
+            break;
+          }
+        }
+        *stage = 5;
+      }
+    } else if (*stage == 5 && before_unload->calls == 1 &&
+               !before_unload->success && *limits_ok && *prompt_ui_ok &&
+               *duplicate_suppressed && reset->calls == 1) {
+      *output << "JAVASCRIPT_DIALOG_SMOKE_OK prompt=bounded "
+                 "concurrent=suppressed reset=cancelled "
+                 "beforeunload=cancelled navigation=bounded"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+
+    if (*attempts > 160) {
+      *output << "JAVASCRIPT_DIALOG_SMOKE_FAILED stage=" << *stage
+              << " limits=" << *limits_ok
+              << " prompt_ui=" << *prompt_ui_ok
+              << " prompt_calls=" << prompt->calls
+              << " prompt_success=" << prompt->success
+              << " prompt_length=" << prompt->input.size()
+              << " duplicate=" << *duplicate_suppressed
+              << " reset_calls=" << reset->calls
+              << " beforeunload_calls=" << before_unload->calls
+              << Qt::endl;
+      QCoreApplication::exit(22);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
 void StartSingleInstanceSmokeTest(MainWindow* window,
                                   const QString& data_path) {
   auto output = std::make_shared<QTextStream>(stdout);
@@ -2505,6 +2634,9 @@ int RunBrowser(int argc, char* argv[]) {
                          [&main_window] { StartSecuritySmokeTest(&main_window); });
     } else if (HasArgument(QStringLiteral("--smoke-test-auth"))) {
       StartAuthSmokeTest(&main_window);
+    } else if (HasArgument(
+                   QStringLiteral("--smoke-test-js-dialogs"))) {
+      StartJavaScriptDialogSmokeTest(&main_window);
     } else if (HasArgument(
                    QStringLiteral("--smoke-test-single-instance"))) {
       QTimer::singleShot(300, &main_window, [&main_window, data_path] {

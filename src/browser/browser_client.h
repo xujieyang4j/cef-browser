@@ -61,6 +61,17 @@ class BrowserClient final : public CefClient,
   void OnAddressChange(CefRefPtr<CefBrowser> browser,
                        CefRefPtr<CefFrame> frame,
                        const CefString& url) override;
+  bool OnJSDialog(CefRefPtr<CefBrowser> browser,
+                  const CefString& origin_url,
+                  JSDialogType dialog_type,
+                  const CefString& message_text,
+                  const CefString& default_prompt_text,
+                  CefRefPtr<CefJSDialogCallback> callback,
+                  bool& suppress_message) override;
+  bool OnBeforeUnloadDialog(
+      CefRefPtr<CefBrowser> browser, const CefString& message_text,
+      bool is_reload, CefRefPtr<CefJSDialogCallback> callback) override;
+  void OnResetDialogState(CefRefPtr<CefBrowser> browser) override;
   void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
                             bool is_loading,
                             bool can_go_back,

@@ -48,6 +48,8 @@ constexpr int kMaxExternalUrlBytes = 16 * 1024;
 constexpr int kMaxSecurityOriginBytes = 8 * 1024;
 constexpr int kMaxPromptTextCharacters = 512;
 constexpr int kMaxCredentialCharacters = 1024;
+constexpr int kMaxJavaScriptMessageCharacters = 4 * 1024;
+constexpr int kMaxJavaScriptPromptCharacters = 1024;
 
 QString NormalizeUiText(QString value, int max_characters) {
   for (qsizetype index = 0; index < value.size(); ++index) {
@@ -58,6 +60,21 @@ QString NormalizeUiText(QString value, int max_characters) {
   value = value.simplified();
   qsizetype length = std::min(value.size(),
                               static_cast<qsizetype>(max_characters));
+  if (length < value.size() && length > 0 &&
+      value.at(length - 1).isHighSurrogate()) {
+    --length;
+  }
+  return value.first(length);
+}
+
+bool IsNavigationUrlWithinLimit(const QString& value) {
+  return !value.isEmpty() && value.size() <= kMaxActionUrlBytes &&
+         value.toUtf8().size() <= kMaxActionUrlBytes;
+}
+
+QString BoundedInput(QString value, int max_characters) {
+  qsizetype length =
+      std::min(value.size(), static_cast<qsizetype>(max_characters));
   if (length < value.size() && length > 0 &&
       value.at(length - 1).isHighSurrogate()) {
     --length;
@@ -218,6 +235,10 @@ BrowserView::~BrowserView() {
 }
 
 void BrowserView::LoadUrl(const QString& url) {
+  if (!IsNavigationUrlWithinLimit(url)) {
+    emit SecurityMessage(QStringLiteral("Oversized navigation was blocked"));
+    return;
+  }
   failure_page_active_ = false;
   render_process_failed_ = false;
   failure_page_url_.clear();
@@ -489,6 +510,10 @@ QString BrowserView::NormalizePromptTextForTesting(QString text) {
   return NormalizeUiText(std::move(text), kMaxPromptTextCharacters);
 }
 
+bool BrowserView::IsNavigationUrlWithinLimitForTesting(const QString& url) {
+  return IsNavigationUrlWithinLimit(url);
+}
+
 bool BrowserView::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
   if (!browser_) return false;
   OnCefAuthRequest(browser_, QStringLiteral("https://example.test"), false,
@@ -517,6 +542,27 @@ bool BrowserView::ShowPermissionForTesting(
   return true;
 }
 
+bool BrowserView::ShowJavaScriptDialogForTesting(
+    cef_jsdialog_type_t dialog_type, const QString& message,
+    const QString& default_prompt,
+    CefRefPtr<CefJSDialogCallback> callback) {
+  if (!browser_) return false;
+  return OnCefJavaScriptDialog(browser_, QStringLiteral("example.test"),
+                               dialog_type, message, default_prompt,
+                               std::move(callback));
+}
+
+bool BrowserView::ShowBeforeUnloadForTesting(
+    CefRefPtr<CefJSDialogCallback> callback) {
+  if (!browser_) return false;
+  OnCefBeforeUnloadDialog(browser_, false, std::move(callback));
+  return true;
+}
+
+void BrowserView::ResetJavaScriptDialogForTesting() {
+  if (browser_) OnCefResetJavaScriptDialog(browser_);
+}
+
 void BrowserView::FinalizeClose() {
   if (!browser_) return;
   browser_->GetHost()->CloseBrowser(true);
@@ -539,10 +585,26 @@ bool BrowserView::RequestClose() {
 }
 
 void BrowserView::DismissOpenDialogs() {
+  CompleteJavaScriptDialog(javascript_dialog_generation_, false);
   const auto dialogs = findChildren<QMessageBox*>();
   for (QMessageBox* dialog : dialogs) {
     if (dialog) dialog->reject();
   }
+}
+
+void BrowserView::CompleteJavaScriptDialog(quint64 generation, bool success,
+                                           const QString& user_input) {
+  if (generation != javascript_dialog_generation_ ||
+      !javascript_dialog_callback_) {
+    return;
+  }
+  CefRefPtr<CefJSDialogCallback> callback = javascript_dialog_callback_;
+  javascript_dialog_callback_ = nullptr;
+  const QString bounded_input =
+      BoundedInput(user_input, kMaxJavaScriptPromptCharacters);
+  const QByteArray encoded = bounded_input.toUtf8();
+  callback->Continue(
+      success, std::string(encoded.constData(), encoded.size()));
 }
 
 void BrowserView::OnCefBrowserCreated(CefRefPtr<CefBrowser> browser) {
@@ -768,7 +830,8 @@ void BrowserView::OnCefLoadingProgressChanged(CefRefPtr<CefBrowser> browser,
 
 void BrowserView::OnCefAddressChanged(CefRefPtr<CefBrowser> browser,
                                       const QString& url) {
-  if (browser_ && browser_->IsSame(browser)) {
+  if (browser_ && browser_->IsSame(browser) &&
+      IsNavigationUrlWithinLimit(url)) {
     if (failure_page_active_ && url == failure_page_url_) {
       // The data URL is only an implementation detail. Keep the attempted URL
       // visible and available for session restore and manual retry.
@@ -785,6 +848,140 @@ void BrowserView::OnCefAddressChanged(CefRefPtr<CefBrowser> browser,
     current_url_ = url;
     emit AddressChanged(url);
   }
+}
+
+bool BrowserView::OnCefJavaScriptDialog(
+    CefRefPtr<CefBrowser> browser, const QString& origin,
+    cef_jsdialog_type_t dialog_type, const QString& message,
+    const QString& default_prompt,
+    CefRefPtr<CefJSDialogCallback> callback) {
+  if (!browser_ || !browser_->IsSame(browser) || closing_ || !callback ||
+      page_request_dialog_) {
+    if (page_request_dialog_) {
+      emit SecurityMessage(
+          QStringLiteral("Another page request is already pending"));
+    }
+    return false;
+  }
+  if (dialog_type != JSDIALOGTYPE_ALERT &&
+      dialog_type != JSDIALOGTYPE_CONFIRM &&
+      dialog_type != JSDIALOGTYPE_PROMPT) {
+    return false;
+  }
+
+  const QString safe_origin =
+      NormalizeUiText(origin, kMaxPromptTextCharacters);
+  const QString source = safe_origin.isEmpty()
+                             ? QStringLiteral("This page")
+                             : safe_origin;
+  const QString safe_message =
+      NormalizeUiText(message, kMaxJavaScriptMessageCharacters);
+  const QString title =
+      dialog_type == JSDIALOGTYPE_ALERT
+          ? QStringLiteral("Page message")
+          : dialog_type == JSDIALOGTYPE_CONFIRM
+                ? QStringLiteral("Page confirmation")
+                : QStringLiteral("Page prompt");
+  auto* dialog = new QMessageBox(
+      dialog_type == JSDIALOGTYPE_ALERT ? QMessageBox::Information
+                                        : QMessageBox::Question,
+      title, QStringLiteral("%1 says:").arg(source), QMessageBox::NoButton,
+      this);
+  dialog->setTextFormat(Qt::PlainText);
+  dialog->setInformativeText(safe_message);
+  page_request_dialog_ = dialog;
+  javascript_dialog_ = dialog;
+  javascript_dialog_callback_ = std::move(callback);
+  const quint64 generation = ++javascript_dialog_generation_;
+
+  QLineEdit* prompt = nullptr;
+  if (dialog_type == JSDIALOGTYPE_PROMPT) {
+    auto* prompt_container = new QWidget(dialog);
+    auto* layout = new QVBoxLayout(prompt_container);
+    layout->setContentsMargins(0, 4, 0, 0);
+    prompt = new QLineEdit(prompt_container);
+    prompt->setMaxLength(kMaxJavaScriptPromptCharacters);
+    prompt->setText(
+        BoundedInput(default_prompt, kMaxJavaScriptPromptCharacters));
+    layout->addWidget(prompt);
+    dialog->layout()->addWidget(prompt_container);
+  }
+
+  QAbstractButton* accept_button = dialog->addButton(
+      QStringLiteral("OK"), QMessageBox::AcceptRole);
+  if (dialog_type != JSDIALOGTYPE_ALERT) {
+    dialog->addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
+  }
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QMessageBox::finished, this,
+          [this, dialog, accept_button, prompt, generation](int) {
+            const bool accepted = dialog->clickedButton() == accept_button;
+            const QString input = prompt && accepted ? prompt->text()
+                                                     : QString();
+            if (page_request_dialog_ == dialog) page_request_dialog_.clear();
+            if (javascript_dialog_ == dialog) javascript_dialog_.clear();
+            CompleteJavaScriptDialog(generation, accepted, input);
+          });
+  dialog->open();
+  if (prompt) prompt->setFocus();
+  return true;
+}
+
+void BrowserView::OnCefBeforeUnloadDialog(
+    CefRefPtr<CefBrowser> browser, bool is_reload,
+    CefRefPtr<CefJSDialogCallback> callback) {
+  if (!browser_ || !browser_->IsSame(browser) || !callback) {
+    if (callback) callback->Continue(false, CefString());
+    return;
+  }
+  if (closing_) {
+    callback->Continue(true, CefString());
+    return;
+  }
+  if (page_request_dialog_) {
+    callback->Continue(false, CefString());
+    emit SecurityMessage(
+        QStringLiteral("Another page request is already pending"));
+    return;
+  }
+
+  auto* dialog = new QMessageBox(
+      QMessageBox::Warning,
+      is_reload ? QStringLiteral("Reload page?")
+                : QStringLiteral("Leave page?"),
+      QStringLiteral("Changes you made may not be saved."),
+      QMessageBox::NoButton, this);
+  dialog->setTextFormat(Qt::PlainText);
+  page_request_dialog_ = dialog;
+  javascript_dialog_ = dialog;
+  javascript_dialog_callback_ = std::move(callback);
+  const quint64 generation = ++javascript_dialog_generation_;
+  dialog->addButton(is_reload ? QStringLiteral("Keep editing")
+                              : QStringLiteral("Stay"),
+                    QMessageBox::RejectRole);
+  QAbstractButton* leave_button = dialog->addButton(
+      is_reload ? QStringLiteral("Reload") : QStringLiteral("Leave"),
+      QMessageBox::AcceptRole);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QMessageBox::finished, this,
+          [this, dialog, leave_button, generation](int) {
+            const bool accepted = dialog->clickedButton() == leave_button;
+            if (page_request_dialog_ == dialog) page_request_dialog_.clear();
+            if (javascript_dialog_ == dialog) javascript_dialog_.clear();
+            CompleteJavaScriptDialog(generation, accepted);
+          });
+  dialog->open();
+}
+
+void BrowserView::OnCefResetJavaScriptDialog(
+    CefRefPtr<CefBrowser> browser) {
+  if (!browser_ || !browser_->IsSame(browser) ||
+      !javascript_dialog_callback_) {
+    return;
+  }
+  const quint64 generation = javascript_dialog_generation_;
+  CompleteJavaScriptDialog(generation, false);
+  if (javascript_dialog_) javascript_dialog_->reject();
 }
 
 void BrowserView::OnCefLoadingStateChanged(CefRefPtr<CefBrowser> browser,

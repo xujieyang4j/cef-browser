@@ -11,6 +11,7 @@
 #include <QStringList>
 
 #include "include/cef_auth_callback.h"
+#include "include/cef_jsdialog_handler.h"
 #include "include/cef_permission_handler.h"
 #include "session/session_store.h"
 
@@ -156,6 +157,12 @@ class MainWindow final : public QMainWindow {
       CefRefPtr<CefMediaAccessCallback> callback);
   bool ShowPermissionForTesting(
       quint64 prompt_id, CefRefPtr<CefPermissionPromptCallback> callback);
+  bool ShowJavaScriptDialogForTesting(
+      cef_jsdialog_type_t dialog_type, const QString& message,
+      const QString& default_prompt,
+      CefRefPtr<CefJSDialogCallback> callback);
+  bool ShowBeforeUnloadForTesting(CefRefPtr<CefJSDialogCallback> callback);
+  void ResetJavaScriptDialogForTesting();
   void SetWebFullscreenForTesting(bool fullscreen);
   bool web_fullscreen_for_testing() const { return web_fullscreen_; }
   bool window_close_requested_for_testing() const {
