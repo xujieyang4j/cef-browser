@@ -6,10 +6,12 @@
 #include <string>
 
 #include <QApplication>
+#include <QAbstractButton>
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
 #include <QStandardPaths>
+#include <QMessageBox>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QTimer>
@@ -68,6 +70,28 @@ class CefMessagePump final : public QObject {
 struct TabSmokeState {
   int stage = 0;
   int attempts = 0;
+};
+
+struct AuthSmokeResult {
+  bool continued = false;
+  bool cancelled = false;
+};
+
+class AuthSmokeCallback final : public CefAuthCallback {
+ public:
+  explicit AuthSmokeCallback(std::shared_ptr<AuthSmokeResult> result)
+      : result_(std::move(result)) {}
+
+  void Continue(const CefString&, const CefString&) override {
+    result_->continued = true;
+  }
+  void Cancel() override { result_->cancelled = true; }
+
+ private:
+  std::shared_ptr<AuthSmokeResult> result_;
+
+  IMPLEMENT_REFCOUNTING(AuthSmokeCallback);
+  DISALLOW_COPY_AND_ASSIGN(AuthSmokeCallback);
 };
 
 void StartTabSmokeTest(MainWindow* window) {
@@ -196,7 +220,8 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-session")) ||
          HasArgument(QStringLiteral("--smoke-test-page-tools")) ||
          HasArgument(QStringLiteral("--smoke-test-profile")) ||
-         HasArgument(QStringLiteral("--smoke-test-security"));
+         HasArgument(QStringLiteral("--smoke-test-security")) ||
+         HasArgument(QStringLiteral("--smoke-test-auth"));
 }
 
 BrowserSession DefaultSession(const QString& url) {
@@ -345,6 +370,43 @@ void StartSecuritySmokeTest(MainWindow* window) {
             << " schemes=" << schemes_ok << Qt::endl;
     QCoreApplication::exit(8);
   }
+}
+
+void StartAuthSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto result = std::make_shared<AuthSmokeResult>();
+  auto attempts = std::make_shared<int>(0);
+  auto requested = std::make_shared<bool>(false);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, result, attempts, requested, step] {
+    ++*attempts;
+    if (!*requested && window->current_title() == QStringLiteral("Auth")) {
+      *requested = window->ShowAuthForTesting(new AuthSmokeCallback(result));
+    } else if (*requested && !result->cancelled) {
+      if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
+        for (QAbstractButton* button : dialog->buttons()) {
+          if (dialog->buttonRole(button) == QMessageBox::RejectRole) {
+            button->click();
+            break;
+          }
+        }
+      }
+    } else if (result->cancelled && !result->continued) {
+      *output << "AUTH_SMOKE_OK cancelled=1 credentials=persisted-none"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 160) {
+      *output << "AUTH_SMOKE_FAILED requested=" << *requested
+              << " cancelled=" << result->cancelled
+              << " continued=" << result->continued << Qt::endl;
+      QCoreApplication::exit(9);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
 int RunBrowser(int argc, char* argv[]) {
@@ -506,6 +568,8 @@ int RunBrowser(int argc, char* argv[]) {
     } else if (HasArgument(QStringLiteral("--smoke-test-security"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartSecuritySmokeTest(&main_window); });
+    } else if (HasArgument(QStringLiteral("--smoke-test-auth"))) {
+      StartAuthSmokeTest(&main_window);
     }
     exit_code = application.exec();
   }

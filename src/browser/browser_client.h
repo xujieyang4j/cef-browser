@@ -40,6 +40,8 @@ class BrowserClient final : public CefClient,
                               bool fullscreen) override;
   void OnStatusMessage(CefRefPtr<CefBrowser> browser,
                        const CefString& value) override;
+  void OnLoadingProgressChange(CefRefPtr<CefBrowser> browser,
+                               double progress) override;
   void OnFindResult(CefRefPtr<CefBrowser> browser, int identifier, int count,
                     const CefRect& selection_rect, int active_match_ordinal,
                     bool final_update) override;
@@ -62,6 +64,11 @@ class BrowserClient final : public CefClient,
                           const CefString& request_url,
                           CefRefPtr<CefSSLInfo> ssl_info,
                           CefRefPtr<CefCallback> callback) override;
+  bool GetAuthCredentials(CefRefPtr<CefBrowser> browser,
+                          const CefString& origin_url, bool is_proxy,
+                          const CefString& host, int port,
+                          const CefString& realm, const CefString& scheme,
+                          CefRefPtr<CefAuthCallback> callback) override;
   CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
       CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
       CefRefPtr<CefRequest> request, bool is_navigation, bool is_download,
@@ -105,6 +112,9 @@ class BrowserClient final : public CefClient,
 
   void DetachOwner();
   void NotifyExternalProtocol(const QString& url);
+  void NotifyAuthRequest(CefRefPtr<CefBrowser> browser, QString origin_url,
+                         bool is_proxy, QString host, int port, QString realm,
+                         QString scheme, CefRefPtr<CefAuthCallback> callback);
 
  private:
   QPointer<BrowserView> owner_;

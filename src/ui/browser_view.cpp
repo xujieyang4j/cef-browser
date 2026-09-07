@@ -8,13 +8,15 @@
 #include <QDesktopServices>
 #include <QFocusEvent>
 #include <QHideEvent>
+#include <QLineEdit>
 #include <QMetaObject>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QResizeEvent>
-#include <QtMath>
 #include <QShowEvent>
 #include <QUrl>
+#include <QVBoxLayout>
+#include <QtMath>
 
 #include "browser/browser_client.h"
 #include "include/cef_browser.h"
@@ -53,6 +55,7 @@ void BrowserView::LoadUrl(const QString& url) {
   failure_page_active_ = false;
   render_process_failed_ = false;
   failure_page_url_.clear();
+  certificate_failure_url_.clear();
   if (browser_) {
     const QByteArray encoded_url = url.toUtf8();
     browser_->GetMainFrame()->LoadURL(
@@ -213,6 +216,15 @@ bool BrowserView::IsAllowedExternalScheme(const QString& url) {
          scheme == QStringLiteral("magnet");
 }
 
+bool BrowserView::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
+  if (!browser_) return false;
+  OnCefAuthRequest(browser_, QStringLiteral("https://example.test"), false,
+                   QStringLiteral("example.test"), 443,
+                   QStringLiteral("Trail test realm"),
+                   QStringLiteral("basic"), std::move(callback));
+  return true;
+}
+
 void BrowserView::FinalizeClose() {
   if (!browser_) return;
   browser_->GetHost()->CloseBrowser(true);
@@ -314,6 +326,22 @@ bool BrowserView::OnCefKeyEvent(CefRefPtr<CefBrowser> browser,
     action = ShortcutAction::FocusAddress;
   } else if (primary_modifier && !shift && event.windows_key_code == 'F') {
     action = ShortcutAction::FindInPage;
+  } else if (primary_modifier && event.windows_key_code == 'R') {
+    action = ShortcutAction::Reload;
+  } else if (event.windows_key_code == 0x74) {
+    action = ShortcutAction::Reload;
+  } else if ((event.modifiers & EVENTFLAG_ALT_DOWN) &&
+             event.windows_key_code == 0x25) {
+    action = ShortcutAction::GoBack;
+  } else if ((event.modifiers & EVENTFLAG_ALT_DOWN) &&
+             event.windows_key_code == 0x27) {
+    action = ShortcutAction::GoForward;
+#if defined(OS_MAC)
+  } else if (primary_modifier && event.windows_key_code == 0xDB) {
+    action = ShortcutAction::GoBack;
+  } else if (primary_modifier && event.windows_key_code == 0xDD) {
+    action = ShortcutAction::GoForward;
+#endif
   } else if (primary_modifier &&
              (event.windows_key_code == '+' ||
               event.windows_key_code == '=' ||
@@ -364,6 +392,13 @@ void BrowserView::OnCefStatusMessage(CefRefPtr<CefBrowser> browser,
   if (browser_ && browser_->IsSame(browser)) emit StatusMessageChanged(value);
 }
 
+void BrowserView::OnCefLoadingProgressChanged(CefRefPtr<CefBrowser> browser,
+                                              double progress) {
+  if (browser_ && browser_->IsSame(browser)) {
+    emit LoadingProgressChanged(progress);
+  }
+}
+
 void BrowserView::OnCefAddressChanged(CefRefPtr<CefBrowser> browser,
                                       const QString& url) {
   if (browser_ && browser_->IsSame(browser)) {
@@ -376,6 +411,7 @@ void BrowserView::OnCefAddressChanged(CefRefPtr<CefBrowser> browser,
     failure_page_active_ = false;
     render_process_failed_ = false;
     failure_page_url_.clear();
+    certificate_failure_url_.clear();
     current_url_ = url;
     emit AddressChanged(url);
   }
@@ -398,6 +434,10 @@ void BrowserView::OnCefLoadingStateChanged(CefRefPtr<CefBrowser> browser,
 void BrowserView::OnCefLoadError(CefRefPtr<CefBrowser> browser, int error_code,
                                  const QString& error_text,
                                  const QString& failed_url) {
+  if (!certificate_failure_url_.isEmpty() &&
+      failed_url == certificate_failure_url_) {
+    return;
+  }
   if (!browser_ || !browser_->IsSame(browser) || closing_ ||
       failed_url == failure_page_url_) {
     return;
@@ -454,6 +494,7 @@ void BrowserView::OnCefCertificateError(CefRefPtr<CefBrowser> browser,
     callback->Cancel();
     return;
   }
+  certificate_failure_url_ = request_url;
   callback->Cancel();
   QMetaObject::invokeMethod(
       this,
@@ -563,6 +604,62 @@ void BrowserView::OnCefExternalProtocol(const QString& url) {
     }
   });
   dialog->open();
+}
+
+void BrowserView::OnCefAuthRequest(
+    CefRefPtr<CefBrowser> browser, const QString& origin_url, bool is_proxy,
+    const QString& host, int port, const QString& realm, const QString& scheme,
+    CefRefPtr<CefAuthCallback> callback) {
+  if (!browser_ || !browser_->IsSame(browser) || closing_) {
+    callback->Cancel();
+    return;
+  }
+
+  auto* dialog = new QMessageBox(
+      QMessageBox::Question,
+      is_proxy ? QStringLiteral("Proxy authentication")
+               : QStringLiteral("Sign in required"),
+      is_proxy
+          ? QStringLiteral("The proxy %1:%2 requires a username and password.")
+                .arg(host)
+                .arg(port)
+          : QStringLiteral("%1 requires a username and password.")
+                .arg(origin_url.toHtmlEscaped()),
+      QMessageBox::NoButton, this);
+  auto* fields = new QWidget(dialog);
+  auto* layout = new QVBoxLayout(fields);
+  layout->setContentsMargins(0, 4, 0, 0);
+  auto* username = new QLineEdit(fields);
+  auto* password = new QLineEdit(fields);
+  username->setPlaceholderText(QStringLiteral("Username"));
+  password->setPlaceholderText(QStringLiteral("Password"));
+  password->setEchoMode(QLineEdit::Password);
+  layout->addWidget(username);
+  layout->addWidget(password);
+  dialog->layout()->addWidget(fields);
+  const QString details = realm.isEmpty()
+                              ? scheme
+                              : QStringLiteral("%1 · %2").arg(realm, scheme);
+  if (!details.isEmpty()) dialog->setInformativeText(details);
+  dialog->addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
+  QAbstractButton* sign_in =
+      dialog->addButton(QStringLiteral("Sign in"), QMessageBox::AcceptRole);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QMessageBox::finished, this,
+          [dialog, sign_in, username, password, callback](int) {
+            if (dialog->clickedButton() == sign_in &&
+                !username->text().isEmpty()) {
+              const QByteArray user = username->text().toUtf8();
+              const QByteArray pass = password->text().toUtf8();
+              callback->Continue(
+                  std::string(user.constData(), user.size()),
+                  std::string(pass.constData(), pass.size()));
+            } else {
+              callback->Cancel();
+            }
+          });
+  dialog->open();
+  username->setFocus();
 }
 
 void BrowserView::OnCefPopupRequested(CefRefPtr<CefBrowser> browser,

@@ -6,6 +6,7 @@
 #include <QWidget>
 
 #include "include/cef_browser.h"
+#include "include/cef_auth_callback.h"
 #include "include/cef_callback.h"
 #include "include/cef_download_handler.h"
 #include "include/cef_permission_handler.h"
@@ -36,6 +37,9 @@ class BrowserView final : public QWidget {
     ResetZoom,
     ToggleBookmark,
     ExitFullscreen,
+    GoBack,
+    GoForward,
+    Reload,
   };
 
   BrowserView(QString initial_url,
@@ -69,6 +73,7 @@ class BrowserView final : public QWidget {
   static QString PermissionDescription(uint32_t permissions);
   static bool IsAllowedExternalScheme(const QString& url);
   void ShowFailureForTesting(bool render_process_failed);
+  bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
 
   // Starts an asynchronous close and returns true if no browser exists.
   bool RequestClose();
@@ -83,6 +88,8 @@ class BrowserView final : public QWidget {
   void OnCefFullscreenChanged(CefRefPtr<CefBrowser> browser, bool fullscreen);
   void OnCefStatusMessage(CefRefPtr<CefBrowser> browser,
                           const QString& value);
+  void OnCefLoadingProgressChanged(CefRefPtr<CefBrowser> browser,
+                                   double progress);
   void OnCefFindResult(CefRefPtr<CefBrowser> browser, int count,
                        int active_match_ordinal, bool final_update);
   void OnCefAddressChanged(CefRefPtr<CefBrowser> browser, const QString& url);
@@ -108,6 +115,11 @@ class BrowserView final : public QWidget {
   void OnCefPermissionDismissed(CefRefPtr<CefBrowser> browser,
                                 quint64 prompt_id);
   void OnCefExternalProtocol(const QString& url);
+  void OnCefAuthRequest(CefRefPtr<CefBrowser> browser,
+                        const QString& origin_url, bool is_proxy,
+                        const QString& host, int port, const QString& realm,
+                        const QString& scheme,
+                        CefRefPtr<CefAuthCallback> callback);
   void OnCefPopupRequested(CefRefPtr<CefBrowser> browser, const QString& url,
                            cef_window_open_disposition_t disposition);
 
@@ -123,6 +135,7 @@ class BrowserView final : public QWidget {
   void SecurityMessage(const QString& message);
   void FullscreenChanged(bool fullscreen);
   void StatusMessageChanged(const QString& message);
+  void LoadingProgressChanged(double progress);
   void PopupRequested(const QString& url, int disposition);
   void ShortcutRequested(int action);
   void BrowserClosed();
@@ -167,6 +180,7 @@ class BrowserView final : public QWidget {
   bool render_process_failed_ = false;
   QString failure_page_url_;
   QHash<quint64, QPointer<QMessageBox>> permission_dialogs_;
+  QString certificate_failure_url_;
 
   Q_DISABLE_COPY_MOVE(BrowserView)
 };

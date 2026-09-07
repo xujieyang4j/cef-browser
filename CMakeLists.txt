@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.5.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.6.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -209,6 +209,13 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_security PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "SECURITY_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_auth
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-auth "data:text/html,<title>Auth</title>")
+    set_tests_properties(trail_browser_auth PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "AUTH_SMOKE_OK"
     )
   endif()
 endif()

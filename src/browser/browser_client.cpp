@@ -28,6 +28,44 @@ class ExternalProtocolTask final : public CefTask {
   DISALLOW_COPY_AND_ASSIGN(ExternalProtocolTask);
 };
 
+class AuthRequestTask final : public CefTask {
+ public:
+  AuthRequestTask(CefRefPtr<BrowserClient> client,
+                  CefRefPtr<CefBrowser> browser, QString origin_url,
+                  bool is_proxy, QString host, int port, QString realm,
+                  QString scheme, CefRefPtr<CefAuthCallback> callback)
+      : client_(std::move(client)),
+        browser_(std::move(browser)),
+        origin_url_(std::move(origin_url)),
+        is_proxy_(is_proxy),
+        host_(std::move(host)),
+        port_(port),
+        realm_(std::move(realm)),
+        scheme_(std::move(scheme)),
+        callback_(std::move(callback)) {}
+
+  void Execute() override {
+    CEF_REQUIRE_UI_THREAD();
+    client_->NotifyAuthRequest(browser_, std::move(origin_url_), is_proxy_,
+                               std::move(host_), port_, std::move(realm_),
+                               std::move(scheme_), std::move(callback_));
+  }
+
+ private:
+  CefRefPtr<BrowserClient> client_;
+  CefRefPtr<CefBrowser> browser_;
+  QString origin_url_;
+  bool is_proxy_;
+  QString host_;
+  int port_;
+  QString realm_;
+  QString scheme_;
+  CefRefPtr<CefAuthCallback> callback_;
+
+  IMPLEMENT_REFCOUNTING(AuthRequestTask);
+  DISALLOW_COPY_AND_ASSIGN(AuthRequestTask);
+};
+
 }  // namespace
 
 BrowserClient::BrowserClient(
@@ -56,6 +94,12 @@ void BrowserClient::OnStatusMessage(CefRefPtr<CefBrowser> browser,
     owner_->OnCefStatusMessage(
         browser, QString::fromStdString(value.ToString()));
   }
+}
+
+void BrowserClient::OnLoadingProgressChange(CefRefPtr<CefBrowser> browser,
+                                            double progress) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) owner_->OnCefLoadingProgressChanged(browser, progress);
 }
 
 void BrowserClient::OnFindResult(CefRefPtr<CefBrowser> browser, int, int count,
@@ -126,6 +170,25 @@ bool BrowserClient::OnCertificateError(CefRefPtr<CefBrowser> browser,
   owner_->OnCefCertificateError(
       browser, static_cast<int>(cert_error),
       QString::fromStdString(request_url.ToString()), std::move(callback));
+  return true;
+}
+
+bool BrowserClient::GetAuthCredentials(
+    CefRefPtr<CefBrowser> browser, const CefString& origin_url, bool is_proxy,
+    const CefString& host, int port, const CefString& realm,
+    const CefString& scheme, CefRefPtr<CefAuthCallback> callback) {
+  CEF_REQUIRE_IO_THREAD();
+  CefRefPtr<CefAuthCallback> pending_callback = callback;
+  if (!CefPostTask(
+          TID_UI, new AuthRequestTask(
+                      this, std::move(browser),
+                      QString::fromStdString(origin_url.ToString()), is_proxy,
+                      QString::fromStdString(host.ToString()), port,
+                      QString::fromStdString(realm.ToString()),
+                      QString::fromStdString(scheme.ToString()),
+                      std::move(callback)))) {
+    pending_callback->Cancel();
+  }
   return true;
 }
 
@@ -239,5 +302,18 @@ void BrowserClient::DetachOwner() {
 void BrowserClient::NotifyExternalProtocol(const QString& url) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_) owner_->OnCefExternalProtocol(url);
+}
+
+void BrowserClient::NotifyAuthRequest(
+    CefRefPtr<CefBrowser> browser, QString origin_url, bool is_proxy,
+    QString host, int port, QString realm, QString scheme,
+    CefRefPtr<CefAuthCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) {
+    owner_->OnCefAuthRequest(browser, origin_url, is_proxy, host, port, realm,
+                             scheme, std::move(callback));
+  } else {
+    callback->Cancel();
+  }
 }
 

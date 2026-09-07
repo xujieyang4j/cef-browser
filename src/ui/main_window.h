@@ -7,6 +7,7 @@
 #include <QSet>
 #include <QStringList>
 
+#include "include/cef_auth_callback.h"
 #include "session/session_store.h"
 
 class BrowserView;
@@ -20,6 +21,7 @@ class QLineEdit;
 class QLabel;
 class QMenu;
 class QPushButton;
+class QProgressBar;
 class QStackedWidget;
 class QTabBar;
 class QTimer;
@@ -62,6 +64,7 @@ class MainWindow final : public QMainWindow {
   QString media_permission_description_for_testing(uint32_t permissions) const;
   QString permission_description_for_testing(uint32_t permissions) const;
   bool external_scheme_allowed_for_testing(const QString& url) const;
+  bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
   void SetWebFullscreenForTesting(bool fullscreen);
   bool web_fullscreen_for_testing() const { return web_fullscreen_; }
 
@@ -112,6 +115,7 @@ class MainWindow final : public QMainWindow {
   QPushButton* back_button_ = nullptr;
   QPushButton* forward_button_ = nullptr;
   QPushButton* reload_button_ = nullptr;
+  QProgressBar* loading_progress_ = nullptr;
   QWidget* find_bar_ = nullptr;
   QWidget* tab_strip_ = nullptr;
   QWidget* toolbar_ = nullptr;

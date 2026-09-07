@@ -12,6 +12,7 @@
 #include <QMouseEvent>
 #include <QMoveEvent>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QResizeEvent>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -154,6 +155,11 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   find_layout->addWidget(next_match);
   find_layout->addWidget(close_find);
   find_bar_->hide();
+  loading_progress_ = new QProgressBar(central);
+  loading_progress_->setRange(0, 1000);
+  loading_progress_->setTextVisible(false);
+  loading_progress_->setFixedHeight(3);
+  loading_progress_->hide();
 
   tab_stack_ = new QStackedWidget(central);
   download_manager_ = new DownloadManager(this);
@@ -173,6 +179,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   });
   page_layout->addWidget(tab_strip_);
   page_layout->addWidget(toolbar_);
+  page_layout->addWidget(loading_progress_);
   page_layout->addWidget(find_bar_);
   page_layout->addWidget(tab_stack_, 1);
   page_layout->addWidget(download_panel_);
@@ -268,6 +275,18 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   auto* print_page = new QShortcut(QKeySequence::Print, this);
   connect(print_page, &QShortcut::activated, this, [this] {
     if (BrowserView* browser = CurrentBrowser()) browser->Print();
+  });
+  auto* go_back = new QShortcut(QKeySequence::Back, this);
+  connect(go_back, &QShortcut::activated, this, [this] {
+    if (BrowserView* browser = CurrentBrowser()) browser->GoBack();
+  });
+  auto* go_forward = new QShortcut(QKeySequence::Forward, this);
+  connect(go_forward, &QShortcut::activated, this, [this] {
+    if (BrowserView* browser = CurrentBrowser()) browser->GoForward();
+  });
+  auto* refresh = new QShortcut(QKeySequence::Refresh, this);
+  connect(refresh, &QShortcut::activated, this, [this] {
+    if (BrowserView* browser = CurrentBrowser()) browser->Reload();
   });
   auto* find_in_page = new QShortcut(QKeySequence::Find, this);
   connect(find_in_page, &QShortcut::activated, this, &MainWindow::ShowFindBar);
@@ -511,6 +530,11 @@ bool MainWindow::external_scheme_allowed_for_testing(const QString& url) const {
   return BrowserView::IsAllowedExternalScheme(url);
 }
 
+bool MainWindow::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->ShowAuthForTesting(std::move(callback));
+}
+
 void MainWindow::SetWebFullscreenForTesting(bool fullscreen) {
   if (BrowserView* browser = CurrentBrowser()) {
     browser->FullscreenChanged(fullscreen);
@@ -588,6 +612,15 @@ void MainWindow::UpdateLoadingState(bool loading, bool can_go_back,
                                   : QStringLiteral("↻"));
   reload_button_->setToolTip(loading ? QStringLiteral("Stop")
                                      : QStringLiteral("Reload"));
+  if (loading) {
+    if (loading_progress_->value() >= loading_progress_->maximum()) {
+      loading_progress_->setValue(0);
+    }
+    loading_progress_->show();
+  } else {
+    loading_progress_->setValue(loading_progress_->maximum());
+    loading_progress_->hide();
+  }
 }
 
 void MainWindow::UpdateAddress(const QString& url) {
@@ -652,6 +685,14 @@ BrowserView* MainWindow::AddTab(const QString& url, bool activate,
             if (browser != CurrentBrowser()) return;
             message.isEmpty() ? statusBar()->clearMessage()
                               : statusBar()->showMessage(message);
+          });
+  connect(browser, &BrowserView::LoadingProgressChanged, this,
+          [this, browser](double progress) {
+            if (browser != CurrentBrowser()) return;
+            const int value = std::clamp(static_cast<int>(progress * 1000),
+                                         0, 1000);
+            loading_progress_->setValue(value);
+            loading_progress_->setVisible(value < 1000 && browser->is_loading());
           });
   connect(browser, &BrowserView::FullscreenChanged, this,
           [this, browser](bool fullscreen) {
@@ -933,6 +974,15 @@ void MainWindow::HandleBrowserShortcut(int action_value) {
       if (web_fullscreen_) {
         if (BrowserView* browser = CurrentBrowser()) browser->ExitFullscreen();
       }
+      break;
+    case BrowserView::ShortcutAction::GoBack:
+      if (BrowserView* browser = CurrentBrowser()) browser->GoBack();
+      break;
+    case BrowserView::ShortcutAction::GoForward:
+      if (BrowserView* browser = CurrentBrowser()) browser->GoForward();
+      break;
+    case BrowserView::ShortcutAction::Reload:
+      if (BrowserView* browser = CurrentBrowser()) browser->Reload();
       break;
   }
 }

@@ -23,6 +23,10 @@ allowlist of external URL schemes can reach an OS application after user
 confirmation.
 Web pages can enter native full screen, hovered-link destinations appear in the
 status bar, and Ctrl/Cmd+P opens the platform print flow.
+Navigation shows page-load progress and supports standard back, forward, and
+refresh shortcuts even while the embedded page owns keyboard focus. HTTP and
+proxy authentication use an in-memory, non-blocking credential prompt; entered
+credentials are never stored by Trail Browser.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -107,8 +111,8 @@ timeout 20s xvfb-run -a ./build/trail-browser --smoke-test-tabs \
 A passing run prints `TAB_SMOKE_OK` and exits with status 0 after creating,
 closing, reopening, and finally shutting down multiple CEF browser instances.
 CTest also runs deterministic download-state, failure-page, atomic session
-restore, page-search/zoom, bookmark/history persistence, and security-policy
-checks. All seven
+restore, page-search/zoom, bookmark/history persistence, security-policy, and
+authentication-dialog checks. All eight
 checks are registered when `xvfb-run` is available:
 
 ~~~sh
