@@ -102,6 +102,10 @@ class BrowserView final : public QWidget {
   static bool IsAllowedExternalScheme(const QString& url);
   static bool IsAllowedFaviconUrlForTesting(const QString& url);
   static bool IsAllowedFaviconPngForTesting(const QByteArray& png_data);
+  static std::optional<QString> SelectFaviconUrlForTesting(
+      const QStringList& urls);
+  static QString NormalizePageTitleForTesting(QString title);
+  static QString NormalizeStatusMessageForTesting(QString message);
   void ShowFailureForTesting(bool render_process_failed);
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
   bool ShowMediaPermissionForTesting(

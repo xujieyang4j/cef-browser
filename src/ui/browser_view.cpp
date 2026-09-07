@@ -40,6 +40,18 @@ namespace {
 constexpr int kMaxFaviconUrlBytes = 64 * 1024;
 constexpr int kMaxFaviconPngBytes = 256 * 1024;
 constexpr int kMaxFaviconDimension = 128;
+constexpr int kMaxFaviconCandidates = 16;
+constexpr int kMaxPageTitleCharacters = 512;
+constexpr int kMaxStatusMessageCharacters = 2048;
+
+QString NormalizeUiText(QString value, int max_characters) {
+  for (qsizetype index = 0; index < value.size(); ++index) {
+    if (value.at(index).category() == QChar::Other_Control) {
+      value[index] = QLatin1Char(' ');
+    }
+  }
+  return value.simplified().left(max_characters);
+}
 
 std::optional<QString> NormalizeFaviconUrl(QString value) {
   value = value.trimmed();
@@ -67,6 +79,16 @@ std::optional<QString> NormalizeFaviconUrl(QString value) {
   }
   url.setScheme(scheme);
   return url.toString(QUrl::FullyEncoded);
+}
+
+std::optional<QString> SelectFaviconUrl(const QStringList& urls) {
+  const qsizetype count =
+      std::min(urls.size(), static_cast<qsizetype>(kMaxFaviconCandidates));
+  for (qsizetype index = 0; index < count; ++index) {
+    const auto normalized = NormalizeFaviconUrl(urls.at(index));
+    if (normalized) return normalized;
+  }
+  return std::nullopt;
 }
 
 QImage DecodeFaviconPng(const QByteArray& png_data) {
@@ -404,6 +426,19 @@ bool BrowserView::IsAllowedFaviconPngForTesting(
   return !DecodeFaviconPng(png_data).isNull();
 }
 
+std::optional<QString> BrowserView::SelectFaviconUrlForTesting(
+    const QStringList& urls) {
+  return SelectFaviconUrl(urls);
+}
+
+QString BrowserView::NormalizePageTitleForTesting(QString title) {
+  return NormalizeUiText(std::move(title), kMaxPageTitleCharacters);
+}
+
+QString BrowserView::NormalizeStatusMessageForTesting(QString message) {
+  return NormalizeUiText(std::move(message), kMaxStatusMessageCharacters);
+}
+
 bool BrowserView::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
   if (!browser_) return false;
   OnCefAuthRequest(browser_, QStringLiteral("https://example.test"), false,
@@ -618,8 +653,8 @@ void BrowserView::OnCefFindResult(CefRefPtr<CefBrowser> browser, int count,
 void BrowserView::OnCefTitleChanged(CefRefPtr<CefBrowser> browser,
                                     const QString& title) {
   if (browser_ && browser_->IsSame(browser)) {
-    page_title_ = title;
-    emit TitleChanged(title);
+    page_title_ = NormalizeUiText(title, kMaxPageTitleCharacters);
+    emit TitleChanged(page_title_);
   }
 }
 
@@ -629,21 +664,14 @@ void BrowserView::OnCefFaviconURLChanged(
   ++favicon_request_generation_;
   favicon_url_.clear();
   emit FaviconChanged(QIcon());
-  QString icon_url;
-  for (const QString& candidate : icon_urls) {
-    const auto normalized = NormalizeFaviconUrl(candidate);
-    if (normalized) {
-      icon_url = *normalized;
-      break;
-    }
-  }
-  if (icon_url.isEmpty()) return;
-  favicon_url_ = icon_url;
+  const auto icon_url = SelectFaviconUrl(icon_urls);
+  if (!icon_url) return;
+  favicon_url_ = *icon_url;
   const quint64 generation = favicon_request_generation_;
-  const QByteArray encoded_url = icon_url.toUtf8();
+  const QByteArray encoded_url = icon_url->toUtf8();
   browser_->GetHost()->DownloadImage(
       std::string(encoded_url.constData(), encoded_url.size()), true, 32, false,
-      new FaviconDownloadCallback(this, browser_->GetIdentifier(), icon_url,
+      new FaviconDownloadCallback(this, browser_->GetIdentifier(), *icon_url,
                                   generation));
 }
 
@@ -675,7 +703,10 @@ void BrowserView::OnCefFullscreenChanged(CefRefPtr<CefBrowser> browser,
 
 void BrowserView::OnCefStatusMessage(CefRefPtr<CefBrowser> browser,
                                      const QString& value) {
-  if (browser_ && browser_->IsSame(browser)) emit StatusMessageChanged(value);
+  if (browser_ && browser_->IsSame(browser)) {
+    emit StatusMessageChanged(
+        NormalizeUiText(value, kMaxStatusMessageCharacters));
+  }
 }
 
 void BrowserView::OnCefLoadingProgressChanged(CefRefPtr<CefBrowser> browser,

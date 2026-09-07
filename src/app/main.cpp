@@ -1325,21 +1325,46 @@ void StartFaviconSmokeTest(MainWindow* window) {
       !BrowserView::IsAllowedFaviconUrlForTesting(
           QStringLiteral("https://example.test/icon?") +
           QString(64 * 1024, QLatin1Char('x')));
+  QStringList excessive_candidates(16, QStringLiteral("file:///tmp/icon"));
+  excessive_candidates.append(QStringLiteral("https://example.test/late.png"));
+  const auto selected_candidate = BrowserView::SelectFaviconUrlForTesting(
+      {QStringLiteral("file:///tmp/icon"),
+       QStringLiteral("HTTPS://example.test/icon.png")});
+  const bool candidates_bounded =
+      selected_candidate &&
+      *selected_candidate == QStringLiteral("https://example.test/icon.png") &&
+      !BrowserView::SelectFaviconUrlForTesting(excessive_candidates);
   const bool images_bounded =
       safe_png_written && oversized_png_written &&
       BrowserView::IsAllowedFaviconPngForTesting(safe_png) &&
       !BrowserView::IsAllowedFaviconPngForTesting(oversized_png) &&
       !BrowserView::IsAllowedFaviconPngForTesting(
           QByteArray(256 * 1024 + 1, '\0'));
+  const QString normalized_title = BrowserView::NormalizePageTitleForTesting(
+      QStringLiteral("  Page\nTitle  ") + QString(600, QLatin1Char('t')));
+  const QString normalized_status =
+      BrowserView::NormalizeStatusMessageForTesting(
+          QStringLiteral("  Link\r\nTarget  ") +
+          QString(2200, QLatin1Char('s')));
+  const bool metadata_bounded = normalized_title.size() == 512 &&
+                                normalized_title.startsWith(
+                                    QStringLiteral("Page Title ")) &&
+                                normalized_status.size() == 2048 &&
+                                normalized_status.startsWith(
+                                    QStringLiteral("Link Target "));
   if (window->current_tab_has_favicon_for_testing() && urls_bounded &&
-      images_bounded) {
-    *output << "FAVICON_SMOKE_OK tab_icon=visible inputs=bounded"
+      candidates_bounded && images_bounded && metadata_bounded) {
+    *output << "FAVICON_SMOKE_OK tab_icon=visible inputs=bounded "
+               "metadata=bounded"
             << Qt::endl;
     window->close();
   } else {
     *output << "FAVICON_SMOKE_FAILED tab_icon="
             << window->current_tab_has_favicon_for_testing()
-            << " urls=" << urls_bounded << " images=" << images_bounded
+            << " urls=" << urls_bounded
+            << " candidates=" << candidates_bounded
+            << " images=" << images_bounded
+            << " metadata=" << metadata_bounded
             << Qt::endl;
     QCoreApplication::exit(12);
   }

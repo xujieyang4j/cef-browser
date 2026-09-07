@@ -8,7 +8,8 @@ Current features include tabbed browsing, navigation controls, URL/search
 normalization, page titles, and pop-up routing based on the requested
 disposition. Pop-up targets are strictly revalidated and limited to HTTP(S) or
 a blank page before they can replace a page or create a tab. The browser also
-provides
+provides page-title and status-text sanitization so untrusted page metadata
+cannot grow the native UI without limit. It also provides
 recently closed tab recovery, F12 DevTools, persistent CEF cache, and orderly
 asynchronous browser shutdown. Downloads have a window-level manager with
 progress, speed, pause/resume, cancellation, completion actions, and a platform

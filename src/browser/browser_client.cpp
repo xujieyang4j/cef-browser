@@ -1,5 +1,6 @@
 #include "browser/browser_client.h"
 
+#include <algorithm>
 #include <utility>
 
 #include <QString>
@@ -9,6 +10,22 @@
 #include "ui/browser_view.h"
 
 namespace {
+
+constexpr size_t kMaxPageTitleCharacters = 512;
+constexpr size_t kMaxStatusMessageCharacters = 2048;
+constexpr size_t kMaxFaviconCandidates = 16;
+constexpr size_t kMaxFaviconUrlCharacters = 64 * 1024;
+
+QString BoundedString(const CefString& value, size_t max_characters) {
+  size_t length = std::min(value.length(), max_characters);
+  if (length == 0) return {};
+  if (length < value.length() &&
+      QChar::isHighSurrogate(
+          static_cast<char32_t>(value.c_str()[length - 1]))) {
+    --length;
+  }
+  return QString::fromUtf16(value.c_str(), static_cast<qsizetype>(length));
+}
 
 class ExternalProtocolTask final : public CefTask {
  public:
@@ -102,8 +119,8 @@ void BrowserClient::OnTitleChange(CefRefPtr<CefBrowser> browser,
                                   const CefString& title) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_) {
-    owner_->OnCefTitleChanged(browser,
-                              QString::fromStdString(title.ToString()));
+    owner_->OnCefTitleChanged(
+        browser, BoundedString(title, kMaxPageTitleCharacters));
   }
 }
 
@@ -113,9 +130,13 @@ void BrowserClient::OnFaviconURLChange(
   CEF_REQUIRE_UI_THREAD();
   if (!owner_) return;
   QStringList urls;
-  urls.reserve(static_cast<qsizetype>(icon_urls.size()));
-  for (const CefString& url : icon_urls) {
-    urls.append(QString::fromStdString(url.ToString()));
+  const size_t count = std::min(icon_urls.size(), kMaxFaviconCandidates);
+  urls.reserve(static_cast<qsizetype>(count));
+  for (size_t index = 0; index < count; ++index) {
+    if (icon_urls.at(index).length() <= kMaxFaviconUrlCharacters) {
+      urls.append(
+          BoundedString(icon_urls.at(index), kMaxFaviconUrlCharacters));
+    }
   }
   owner_->OnCefFaviconURLChanged(browser, urls);
 }
@@ -131,7 +152,7 @@ void BrowserClient::OnStatusMessage(CefRefPtr<CefBrowser> browser,
   CEF_REQUIRE_UI_THREAD();
   if (owner_) {
     owner_->OnCefStatusMessage(
-        browser, QString::fromStdString(value.ToString()));
+        browser, BoundedString(value, kMaxStatusMessageCharacters));
   }
 }
 
