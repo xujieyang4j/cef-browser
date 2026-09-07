@@ -12,6 +12,8 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path, PurePosixPath
 
@@ -19,6 +21,8 @@ INDEX_URL = "https://cef-builds.spotifycdn.com/index.json"
 DOWNLOAD_BASE_URL = "https://cef-builds.spotifycdn.com/"
 DEFAULT_DESTINATION = Path(__file__).resolve().parents[1] / "third_party" / "cef"
 INSTALL_MARKER = ".trail-browser-cef"
+DOWNLOAD_ATTEMPTS = 4
+RETRYABLE_HTTP_STATUS = {408, 425, 429, 500, 502, 503, 504}
 
 
 def detect_platform() -> str:
@@ -95,30 +99,94 @@ def select_download(
     return release, archive
 
 
-def download(url: str, destination: Path, expected_size: int) -> None:
-    request = urllib.request.Request(url, headers={"User-Agent": "TrailBrowser/fetch-cef"})
-    with urllib.request.urlopen(request, timeout=60) as response, destination.open("wb") as output:
-        downloaded = 0
-        while block := response.read(1024 * 1024):
-            output.write(block)
-            downloaded += len(block)
-            if expected_size:
-                percent = min(100, downloaded * 100 // expected_size)
-                print(
-                    f"\rDownloading: {percent:3d}% "
-                    f"({downloaded / 1024 / 1024:.1f} MiB)",
-                    end="",
-                    flush=True,
-                )
-    print()
-
-
 def sha1(path: Path) -> str:
     digest = hashlib.sha1()
     with path.open("rb") as source:
         while block := source.read(1024 * 1024):
             digest.update(block)
     return digest.hexdigest()
+
+
+def retry_delay(attempt: int) -> int:
+    return min(2 ** (attempt - 1), 8)
+
+
+def retry_notice(operation: str, error: BaseException, attempt: int) -> None:
+    delay = retry_delay(attempt)
+    print(
+        f"warning: {operation} failed ({error}); retrying in {delay}s "
+        f"[{attempt}/{DOWNLOAD_ATTEMPTS}]",
+        file=sys.stderr,
+    )
+    time.sleep(delay)
+
+
+def read_index() -> dict[str, object]:
+    request = urllib.request.Request(
+        INDEX_URL, headers={"User-Agent": "TrailBrowser/fetch-cef"}
+    )
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                value = json.load(response)
+            if not isinstance(value, dict):
+                raise ValueError("CEF index root is not an object")
+            return value
+        except urllib.error.HTTPError as error:
+            if error.code not in RETRYABLE_HTTP_STATUS or attempt == DOWNLOAD_ATTEMPTS:
+                raise
+            retry_notice("reading the CEF index", error, attempt)
+        except (OSError, TimeoutError, json.JSONDecodeError, ValueError) as error:
+            if attempt == DOWNLOAD_ATTEMPTS:
+                raise
+            retry_notice("reading the CEF index", error, attempt)
+    raise AssertionError("unreachable")
+
+
+def download(
+    url: str, destination: Path, expected_size: int, expected_sha1: str
+) -> None:
+    request = urllib.request.Request(url, headers={"User-Agent": "TrailBrowser/fetch-cef"})
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            downloaded = 0
+            with (
+                urllib.request.urlopen(request, timeout=60) as response,
+                destination.open("wb") as output,
+            ):
+                while block := response.read(1024 * 1024):
+                    output.write(block)
+                    downloaded += len(block)
+                    if expected_size:
+                        percent = min(100, downloaded * 100 // expected_size)
+                        print(
+                            f"\rDownloading: {percent:3d}% "
+                            f"({downloaded / 1024 / 1024:.1f} MiB)",
+                            end="",
+                            flush=True,
+                        )
+            print()
+            if expected_size and downloaded != expected_size:
+                raise OSError(
+                    f"size mismatch: expected {expected_size} bytes, got {downloaded}"
+                )
+            actual_sha1 = sha1(destination)
+            if actual_sha1.lower() != expected_sha1.lower():
+                raise OSError(
+                    f"SHA-1 mismatch: expected {expected_sha1}, got {actual_sha1}"
+                )
+            return
+        except urllib.error.HTTPError as error:
+            destination.unlink(missing_ok=True)
+            if error.code not in RETRYABLE_HTTP_STATUS or attempt == DOWNLOAD_ATTEMPTS:
+                raise
+            retry_notice("downloading CEF", error, attempt)
+        except (OSError, TimeoutError) as error:
+            destination.unlink(missing_ok=True)
+            if attempt == DOWNLOAD_ATTEMPTS:
+                raise
+            retry_notice("downloading CEF", error, attempt)
+    raise AssertionError("unreachable")
 
 
 def safe_extract(archive: Path, destination: Path) -> Path:
@@ -192,8 +260,7 @@ def main() -> int:
     args = parse_args()
     cef_platform = args.platform or detect_platform()
     print(f"Reading CEF build index for {cef_platform}...")
-    with urllib.request.urlopen(INDEX_URL, timeout=60) as response:
-        index = json.load(response)
+    index = read_index()
 
     release, archive = select_download(index, cef_platform, args.channel, args.version)
     archive_name = str(archive["name"])
@@ -216,10 +283,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="trail-cef-", dir=destination.parent) as temporary:
         temporary_path = Path(temporary)
         archive_path = temporary_path / archive_name
-        download(archive_url, archive_path, expected_size)
-        actual_sha1 = sha1(archive_path)
-        if actual_sha1.lower() != expected_sha1.lower():
-            raise RuntimeError(f"SHA-1 mismatch: expected {expected_sha1}, got {actual_sha1}")
+        download(archive_url, archive_path, expected_size, expected_sha1)
 
         print("Extracting...")
         extracted_root = safe_extract(archive_path, temporary_path / "extracted")
