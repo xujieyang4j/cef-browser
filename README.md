@@ -31,7 +31,9 @@ credentials are never stored by Trail Browser.
 The address bar suggests page titles alongside their URLs from bookmarks and
 recent history. Suggestions match either field, keep bookmarks ranked first,
 deduplicate shared URLs, and navigate to the underlying URL rather than the
-display label. The recently closed tab stack is part of the atomic
+display label. Its default search engine can be switched between Google,
+DuckDuckGo, and Bing from the Settings menu; the choice is stored atomically
+with the browser profile. The recently closed tab stack is part of the atomic
 session file, so Ctrl/Cmd+Shift+T continues to work after an application
 restart. Page favicons are loaded into their corresponding tabs with stale
 navigation results rejected. The History menu can clear history, recently
@@ -156,7 +158,8 @@ browsing-data cleanup, favicon
 mapping, audio/mute state, security-policy, and authentication-dialog checks.
 Keyboard-accessible browser surfaces and full-screen exit routing are also
 covered, along with numeric tab navigation, the all-tabs menu, and selective
-recent-tab restoration and native application-menu actions. All eighteen
+recent-tab restoration, native application-menu actions, and search-setting
+persistence. All nineteen
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.18.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.19.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -67,6 +67,8 @@ set(TRAIL_BROWSER_SOURCES
   src/profile/browsing_data_store.h
   src/session/session_store.cpp
   src/session/session_store.h
+  src/settings/browser_settings.cpp
+  src/settings/browser_settings.h
   src/ui/browser_view.cpp
   src/ui/browser_view.h
   src/ui/download_panel.cpp
@@ -272,6 +274,13 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_application_menu PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "APPLICATION_MENU_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_search_settings
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-search-settings)
+    set_tests_properties(trail_browser_search_settings PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "SEARCH_SETTINGS_SMOKE_OK"
     )
     add_test(NAME trail_browser_security
       COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>

@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QClipboard>
@@ -40,6 +41,7 @@
 #include "include/cef_cookie.h"
 #include "include/cef_request_context.h"
 #include "profile/browsing_data_store.h"
+#include "settings/browser_settings.h"
 #include "ui/browser_view.h"
 #include "ui/download_panel.h"
 
@@ -117,8 +119,14 @@ QKeySequence PrimaryShortcut(const QString& keys) {
 
 MainWindow::MainWindow(const BrowserSession& initial_session,
                        QString session_path, QString browsing_data_path,
-                       QWidget* parent)
+                       QString settings_path, QWidget* parent)
     : QMainWindow(parent), session_path_(std::move(session_path)) {
+  browser_settings_ = new BrowserSettings(std::move(settings_path));
+  QString settings_error;
+  if (!browser_settings_->Load(&settings_error)) {
+    qWarning("Unable to load browser settings: %s",
+             qPrintable(settings_error));
+  }
   setWindowTitle(QStringLiteral("Trail Browser"));
   resize(1280, 800);
   setMinimumSize(640, 480);
@@ -380,6 +388,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
 }
 
 MainWindow::~MainWindow() {
+  delete browser_settings_;
   delete browsing_data_;
 }
 
@@ -639,6 +648,28 @@ bool MainWindow::TriggerApplicationMenuActionForTesting(
   if (!action || !action->isEnabled()) return false;
   action->trigger();
   return true;
+}
+
+QString MainWindow::search_engine_for_testing() const {
+  return BrowserSettings::SearchEngineName(browser_settings_->search_engine());
+}
+
+bool MainWindow::SelectSearchEngineForTesting(const QString& name) {
+  const BrowserSettings::SearchEngine engines[] = {
+      BrowserSettings::SearchEngine::Google,
+      BrowserSettings::SearchEngine::DuckDuckGo,
+      BrowserSettings::SearchEngine::Bing};
+  for (BrowserSettings::SearchEngine engine : engines) {
+    if (BrowserSettings::SearchEngineName(engine) == name) {
+      SetSearchEngine(static_cast<int>(engine));
+      return browser_settings_->search_engine() == engine;
+    }
+  }
+  return false;
+}
+
+QString MainWindow::NormalizeUrlForTesting(const QString& input) const {
+  return NormalizeUrl(input);
 }
 
 void MainWindow::ActivateTabShortcutForTesting(int number) {
@@ -1700,6 +1731,27 @@ void MainWindow::CreateApplicationMenus() {
              PrimaryShortcut(QStringLiteral("Shift+B")),
              [this] { ShowBrowserUiSurface(BrowserUiSurface::Bookmarks); });
 
+  QMenu* settings = menuBar()->addMenu(QStringLiteral("Settings"));
+  QMenu* search_engine =
+      settings->addMenu(QStringLiteral("Default Search Engine"));
+  QActionGroup* search_group = new QActionGroup(search_engine);
+  search_group->setExclusive(true);
+  const BrowserSettings::SearchEngine engines[] = {
+      BrowserSettings::SearchEngine::Google,
+      BrowserSettings::SearchEngine::DuckDuckGo,
+      BrowserSettings::SearchEngine::Bing};
+  for (BrowserSettings::SearchEngine engine : engines) {
+    QAction* action = search_engine->addAction(
+        BrowserSettings::SearchEngineName(engine));
+    action->setCheckable(true);
+    action->setChecked(browser_settings_->search_engine() == engine);
+    action->setProperty("searchEngineAction", true);
+    action->setData(static_cast<int>(engine));
+    search_group->addAction(action);
+    connect(action, &QAction::triggered, this,
+            [this, engine] { SetSearchEngine(static_cast<int>(engine)); });
+  }
+
   QMenu* window = menuBar()->addMenu(QStringLiteral("Window"));
   add_action(window, QStringLiteral("Next Tab"), QKeySequence::NextChild,
              [this] {
@@ -1719,6 +1771,28 @@ void MainWindow::CreateApplicationMenus() {
   add_action(window, QStringLiteral("All Tabs"),
              PrimaryShortcut(QStringLiteral("Shift+A")),
              [this] { ShowBrowserUiSurface(BrowserUiSurface::AllTabs); });
+}
+
+void MainWindow::SetSearchEngine(int engine_value) {
+  const auto engine =
+      static_cast<BrowserSettings::SearchEngine>(engine_value);
+  browser_settings_->set_search_engine(engine);
+  for (QAction* action : findChildren<QAction*>()) {
+    if (action->property("searchEngineAction").toBool()) {
+      action->setChecked(action->data().toInt() == engine_value);
+    }
+  }
+  QString error;
+  if (!browser_settings_->Save(&error)) {
+    statusBar()->showMessage(
+        QStringLiteral("Unable to save browser settings: %1").arg(error),
+        8000);
+  } else {
+    statusBar()->showMessage(
+        QStringLiteral("Default search engine: %1")
+            .arg(BrowserSettings::SearchEngineName(engine)),
+        2500);
+  }
 }
 
 void MainWindow::ShowBrowserUiSurface(BrowserUiSurface surface) {
@@ -2100,13 +2174,19 @@ bool MainWindow::PersistSession(const BrowserSession& session) {
   return saved;
 }
 
-QString MainWindow::NormalizeUrl(QString input) {
+QString MainWindow::NormalizeUrl(QString input) const {
   input = input.trimmed();
   if (input.isEmpty()) return QStringLiteral("about:blank");
 
-  if (input.contains(QLatin1Char(' '))) {
-    return QStringLiteral("https://www.google.com/search?q=%1")
-        .arg(QString::fromLatin1(QUrl::toPercentEncoding(input)));
+  const QUrl literal(input);
+  const bool explicit_scheme = !literal.scheme().isEmpty();
+  const bool likely_address =
+      explicit_scheme || input.contains(QLatin1Char('.')) ||
+      input.contains(QLatin1Char(':')) ||
+      input.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0 ||
+      input.startsWith(QLatin1Char('/'));
+  if (input.contains(QLatin1Char(' ')) || !likely_address) {
+    return BrowserSettings::SearchUrl(browser_settings_->search_engine(), input);
   }
 
   const QUrl parsed = QUrl::fromUserInput(input);

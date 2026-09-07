@@ -27,6 +27,7 @@
 #include "include/wrapper/cef_helpers.h"
 #include "profile/browsing_data_store.h"
 #include "session/session_store.h"
+#include "settings/browser_settings.h"
 #include "ui/main_window.h"
 
 #if defined(OS_WIN)
@@ -401,6 +402,7 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-tab-navigation")) ||
          HasArgument(QStringLiteral("--smoke-test-recent-tabs")) ||
          HasArgument(QStringLiteral("--smoke-test-application-menu")) ||
+         HasArgument(QStringLiteral("--smoke-test-search-settings")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth"));
 }
@@ -931,6 +933,7 @@ void StartApplicationMenuSmokeTest(MainWindow* window) {
           menus == QStringList{QStringLiteral("File"), QStringLiteral("Edit"),
                                QStringLiteral("View"), QStringLiteral("History"),
                                QStringLiteral("Bookmarks"),
+                               QStringLiteral("Settings"),
                                QStringLiteral("Window")} &&
           file.contains(QStringLiteral("New Tab")) &&
           file.contains(QStringLiteral("Print…")) &&
@@ -968,7 +971,7 @@ void StartApplicationMenuSmokeTest(MainWindow* window) {
       *stage = 2;
     } else if (*stage == 2 && window->tab_count() == 1 &&
                window->current_title() == QStringLiteral("Smoke")) {
-      *output << "APPLICATION_MENU_SMOKE_OK menus=6 shortcuts=visible "
+      *output << "APPLICATION_MENU_SMOKE_OK menus=7 shortcuts=visible "
                  "actions=triggered"
               << Qt::endl;
       window->close();
@@ -983,6 +986,47 @@ void StartApplicationMenuSmokeTest(MainWindow* window) {
     QTimer::singleShot(50, window, [step] { (*step)(); });
   };
   QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
+void StartSearchSettingsSmokeTest(MainWindow* window,
+                                  const QString& settings_path) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  const bool default_ok =
+      window->search_engine_for_testing() == QStringLiteral("Google") &&
+      window->NormalizeUrlForTesting(QStringLiteral("trail browser")) ==
+          QStringLiteral("https://www.google.com/search?q=trail%20browser");
+  const bool selected =
+      window->SelectSearchEngineForTesting(QStringLiteral("DuckDuckGo"));
+  BrowserSettings restored(settings_path);
+  const bool loaded = restored.Load();
+  const bool persisted =
+      loaded && restored.search_engine() ==
+                    BrowserSettings::SearchEngine::DuckDuckGo;
+  const bool encoded =
+      window->NormalizeUrlForTesting(QString::fromUtf8("隐私 搜索")) ==
+      QStringLiteral("https://duckduckgo.com/?q=%E9%9A%90%E7%A7%81%20%E6%90%9C%E7%B4%A2");
+  const bool address_ok =
+      window->NormalizeUrlForTesting(QStringLiteral("example.com")) ==
+          QStringLiteral("http://example.com") &&
+      window->NormalizeUrlForTesting(QStringLiteral("localhost:8080")) ==
+          QStringLiteral("http://localhost:8080") &&
+      window->NormalizeUrlForTesting(QStringLiteral("intranet")) ==
+          QStringLiteral("https://duckduckgo.com/?q=intranet");
+  const bool menu_ok = window->application_menu_actions_for_testing(
+                                  QStringLiteral("Settings")) ==
+                              QStringList{QStringLiteral("Default Search Engine")};
+  if (default_ok && selected && persisted && encoded && address_ok && menu_ok) {
+    *output << "SEARCH_SETTINGS_SMOKE_OK default=google selected=duckduckgo "
+               "persisted=1 encoded=1"
+            << Qt::endl;
+    window->close();
+  } else {
+    *output << "SEARCH_SETTINGS_SMOKE_FAILED default=" << default_ok
+            << " selected=" << selected << " persisted=" << persisted
+            << " encoded=" << encoded << " address=" << address_ok
+            << " menu=" << menu_ok << Qt::endl;
+    QCoreApplication::exit(20);
+  }
 }
 
 void StartSecuritySmokeTest(MainWindow* window) {
@@ -1139,9 +1183,12 @@ int RunBrowser(int argc, char* argv[]) {
   {
     const QString session_path =
         QDir(data_path).filePath(QStringLiteral("session.json"));
+    const QString settings_path =
+        QDir(data_path).filePath(QStringLiteral("settings.json"));
     std::unique_ptr<QTemporaryDir> smoke_session_directory;
     std::unique_ptr<QTemporaryDir> smoke_profile_directory;
     QString active_session_path = session_path;
+    QString active_settings_path = settings_path;
     BrowserSession initial_session;
     if (HasArgument(QStringLiteral("--smoke-test-session"))) {
       smoke_session_directory = std::make_unique<QTemporaryDir>();
@@ -1173,6 +1220,8 @@ int RunBrowser(int argc, char* argv[]) {
       initial_session = DefaultSession(ExplicitStartupUrl().value_or(
           QStringLiteral("data:text/html,<title>Smoke</title>")));
       active_session_path.clear();
+      active_settings_path =
+          QDir(data_path).filePath(QStringLiteral("settings.json"));
     } else if (const auto startup_url = ExplicitStartupUrl()) {
       // A URL explicitly supplied by the caller always wins over restoration.
       initial_session = DefaultSession(*startup_url);
@@ -1207,7 +1256,7 @@ int RunBrowser(int argc, char* argv[]) {
       }
     }
     MainWindow main_window(initial_session, active_session_path,
-                           active_browsing_data_path);
+                           active_browsing_data_path, active_settings_path);
     main_window.show();
     message_pump.Schedule(0);
     if (HasArgument(QStringLiteral("--smoke-test-tabs"))) {
@@ -1257,6 +1306,12 @@ int RunBrowser(int argc, char* argv[]) {
       StartRecentlyClosedTabsSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-application-menu"))) {
       StartApplicationMenuSmokeTest(&main_window);
+    } else if (HasArgument(QStringLiteral("--smoke-test-search-settings"))) {
+      QTimer::singleShot(300, &main_window,
+                         [&main_window, active_settings_path] {
+                           StartSearchSettingsSmokeTest(&main_window,
+                                                        active_settings_path);
+                         });
     } else if (HasArgument(QStringLiteral("--smoke-test-security"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartSecuritySmokeTest(&main_window); });

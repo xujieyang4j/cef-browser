@@ -14,6 +14,7 @@
 #include "session/session_store.h"
 
 class BrowserView;
+class BrowserSettings;
 class BrowsingDataStore;
 class DownloadManager;
 class DownloadPanel;
@@ -37,7 +38,8 @@ class MainWindow final : public QMainWindow {
 
  public:
   MainWindow(const BrowserSession& initial_session, QString session_path,
-             QString browsing_data_path = {}, QWidget* parent = nullptr);
+             QString browsing_data_path = {}, QString settings_path = {},
+             QWidget* parent = nullptr);
   ~MainWindow() override;
   int tab_count() const;
   QString current_url() const;
@@ -88,6 +90,9 @@ class MainWindow final : public QMainWindow {
       const QString& menu_title, const QString& action_text) const;
   bool TriggerApplicationMenuActionForTesting(const QString& menu_title,
                                               const QString& action_text);
+  QString search_engine_for_testing() const;
+  bool SelectSearchEngineForTesting(const QString& name);
+  QString NormalizeUrlForTesting(const QString& input) const;
   void ActivateTabShortcutForTesting(int number);
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
@@ -165,7 +170,7 @@ class MainWindow final : public QMainWindow {
     ClearData
   };
 
-  static QString NormalizeUrl(QString input);
+  QString NormalizeUrl(QString input) const;
   BrowserView* AddTab(const QString& url, bool activate,
                       bool focus_address = false);
   BrowserView* CurrentBrowser() const;
@@ -198,6 +203,7 @@ class MainWindow final : public QMainWindow {
   void ScheduleSessionSave();
   BrowserSession CaptureSession(bool clean_exit) const;
   bool PersistSession(const BrowserSession& session);
+  void SetSearchEngine(int engine_value);
 
   QTabBar* tab_bar_ = nullptr;
   QStackedWidget* tab_stack_ = nullptr;
@@ -233,6 +239,7 @@ class MainWindow final : public QMainWindow {
   DownloadPanel* download_panel_ = nullptr;
   QTimer* session_save_timer_ = nullptr;
   BrowsingDataStore* browsing_data_ = nullptr;
+  BrowserSettings* browser_settings_ = nullptr;
   QSet<BrowserView*> closing_tabs_;
   QSet<BrowserView*> forgotten_closing_tabs_;
   QSet<BrowserView*> pinned_tabs_;
