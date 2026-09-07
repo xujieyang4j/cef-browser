@@ -21,11 +21,13 @@ namespace {
 
 constexpr int kHistoryVersion = 1;
 constexpr int kMaxHistoryItems = 200;
+constexpr int kMaxActiveDownloads = 32;
 constexpr int kMaxHistoryBytes = 2 * 1024 * 1024;
 constexpr int kMaxSourceUrlBytes = 64 * 1024;
 constexpr int kMaxLocalPathBytes = 32 * 1024;
 constexpr int kMaxFileNameCharacters = 512;
 constexpr int kMaxDetailCharacters = 1024;
+constexpr int kMaxRequestMethodCharacters = 16;
 
 void SetError(QString* error, const QString& value) {
   if (error) *error = value;
@@ -33,14 +35,38 @@ void SetError(QString* error, const QString& value) {
 
 std::optional<QString> NormalizeSourceUrl(QString value) {
   value = value.trimmed();
+  if (value.isEmpty() || value.size() > kMaxSourceUrlBytes ||
+      value.toUtf8().size() > kMaxSourceUrlBytes ||
+      value.contains(QChar::Null) || value.contains(QLatin1Char('\r')) ||
+      value.contains(QLatin1Char('\n'))) {
+    return std::nullopt;
+  }
   QUrl url(value, QUrl::StrictMode);
   const QString scheme = url.scheme().toLower();
-  if (!url.isValid() || url.host().isEmpty() ||
+  if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty() ||
       (scheme != QStringLiteral("http") &&
        scheme != QStringLiteral("https"))) {
     return std::nullopt;
   }
   url.setScheme(scheme);
+  const QString normalized = url.toString(QUrl::FullyEncoded);
+  if (normalized.toUtf8().size() > kMaxSourceUrlBytes) return std::nullopt;
+  return normalized;
+}
+
+std::optional<QString> NormalizeRuntimeSourceUrl(QString value) {
+  value = value.trimmed();
+  if (value.isEmpty() || value.size() > kMaxSourceUrlBytes ||
+      value.toUtf8().size() > kMaxSourceUrlBytes ||
+      value.contains(QChar::Null) || value.contains(QLatin1Char('\r')) ||
+      value.contains(QLatin1Char('\n'))) {
+    return std::nullopt;
+  }
+  QUrl url(value, QUrl::StrictMode);
+  if (!url.isValid() || url.isRelative() || url.scheme().isEmpty()) {
+    return std::nullopt;
+  }
+  if (!url.userInfo().isEmpty()) url.setUserInfo(QString());
   const QString normalized = url.toString(QUrl::FullyEncoded);
   if (normalized.toUtf8().size() > kMaxSourceUrlBytes) return std::nullopt;
   return normalized;
@@ -118,17 +144,46 @@ std::optional<DownloadManager::State> ParseState(const QString& value) {
   return std::nullopt;
 }
 
-DownloadManager::Item Snapshot(CefRefPtr<CefDownloadItem> download) {
+QString BoundedCefString(const CefString& value, int max_characters) {
+  size_t length =
+      std::min(value.length(), static_cast<size_t>(max_characters));
+  if (length == 0) return {};
+  if (length < value.length() &&
+      QChar::isHighSurrogate(
+          static_cast<char32_t>(value.c_str()[length - 1]))) {
+    --length;
+  }
+  return QString::fromUtf16(value.c_str(), static_cast<qsizetype>(length));
+}
+
+std::optional<QString> CheckedCefString(const CefString& value,
+                                        int max_bytes) {
+  if (value.length() > static_cast<size_t>(max_bytes)) return std::nullopt;
+  QString converted = BoundedCefString(value, max_bytes);
+  if (converted.toUtf8().size() > max_bytes) return std::nullopt;
+  return converted;
+}
+
+std::optional<DownloadManager::Item> Snapshot(
+    CefRefPtr<CefDownloadItem> download,
+    const CefString* suggested_name = nullptr) {
   DownloadManager::Item item;
   item.id = download->GetId();
-  item.full_path =
-      QString::fromStdString(download->GetFullPath().ToString());
-  item.file_name =
-      QString::fromStdString(download->GetSuggestedFileName().ToString());
+  const auto full_path =
+      CheckedCefString(download->GetFullPath(), kMaxLocalPathBytes);
+  const auto source_url =
+      CheckedCefString(download->GetURL(), kMaxSourceUrlBytes);
+  if (!source_url) return std::nullopt;
+  item.full_path = full_path.value_or(QString());
+  item.file_name = BoundedCefString(
+      suggested_name && !suggested_name->empty()
+          ? *suggested_name
+          : download->GetSuggestedFileName(),
+      kMaxFileNameCharacters);
   if (!item.full_path.isEmpty()) {
     item.file_name = QFileInfo(item.full_path).fileName();
   }
-  item.url = QString::fromStdString(download->GetURL().ToString());
+  item.url = *source_url;
   item.received_bytes = download->GetReceivedBytes();
   item.total_bytes = download->GetTotalBytes();
   item.bytes_per_second = download->GetCurrentSpeed();
@@ -158,19 +213,36 @@ class DownloadHandlerImpl final : public CefDownloadHandler {
  public:
   explicit DownloadHandlerImpl(DownloadManager* manager) : manager_(manager) {}
 
-  bool CanDownload(CefRefPtr<CefBrowser>, const CefString&,
-                   const CefString&) override {
+  bool CanDownload(CefRefPtr<CefBrowser>, const CefString& url,
+                   const CefString& request_method) override {
     CEF_REQUIRE_UI_THREAD();
-    return manager_ != nullptr;
+    if (!manager_) return false;
+    const auto safe_url = CheckedCefString(url, kMaxSourceUrlBytes);
+    const bool accepted =
+        manager_->CanAcceptDownload() && safe_url &&
+        NormalizeRuntimeSourceUrl(*safe_url).has_value() &&
+        request_method.length() <= kMaxRequestMethodCharacters;
+    if (!accepted) {
+      manager_->ReportRejectedDownload(
+          QStringLiteral("Download blocked by safety limits"));
+    }
+    return accepted;
   }
 
   bool OnBeforeDownload(
       CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> download_item,
-      const CefString&, CefRefPtr<CefBeforeDownloadCallback> callback) override {
+      const CefString& suggested_name,
+      CefRefPtr<CefBeforeDownloadCallback> callback) override {
     CEF_REQUIRE_UI_THREAD();
     if (!manager_ || !download_item || !download_item->IsValid()) return false;
 
-    manager_->UpdateDownload(Snapshot(download_item), nullptr);
+    const auto snapshot = Snapshot(download_item, &suggested_name);
+    if (!snapshot) {
+      manager_->ReportRejectedDownload(
+          QStringLiteral("Download blocked by safety limits"));
+      return false;
+    }
+    if (!manager_->UpdateDownload(*snapshot, nullptr)) return false;
     // Let CEF display the platform save dialog. Passing an empty path keeps the
     // server-provided filename while still allowing the user to choose exactly
     // where the file will be written.
@@ -183,7 +255,14 @@ class DownloadHandlerImpl final : public CefDownloadHandler {
       CefRefPtr<CefDownloadItemCallback> callback) override {
     CEF_REQUIRE_UI_THREAD();
     if (!manager_ || !download_item || !download_item->IsValid()) return;
-    manager_->UpdateDownload(Snapshot(download_item), std::move(callback));
+    const auto snapshot = Snapshot(download_item);
+    if (!snapshot) {
+      if (callback) callback->Cancel();
+      manager_->ReportRejectedDownload(
+          QStringLiteral("Download metadata exceeded safe limits"));
+      return;
+    }
+    manager_->UpdateDownload(*snapshot, std::move(callback));
   }
 
  private:
@@ -539,16 +618,39 @@ QString DownloadManager::StatusText(const Item& item) {
   return QString();
 }
 
-void DownloadManager::UpdateForTesting(const Item& item) {
-  UpdateDownload(item, nullptr);
+bool DownloadManager::UpdateForTesting(const Item& item) {
+  return UpdateDownload(item, nullptr);
 }
 
-void DownloadManager::UpdateDownload(
+int DownloadManager::MaxActiveDownloadsForTesting() {
+  return kMaxActiveDownloads;
+}
+
+bool DownloadManager::CanAcceptDownload(quint32 id) const {
+  return (id != 0 && items_.contains(id)) ||
+         active_count() < kMaxActiveDownloads;
+}
+
+bool DownloadManager::UpdateDownload(
     const Item& item, CefRefPtr<CefDownloadItemCallback> callback) {
   const int previous_active_count = active_count();
   const bool is_new = !items_.contains(item.id);
+  if (is_new && IsActive(item.state) && !CanAcceptDownload(item.id)) {
+    if (callback) callback->Cancel();
+    ReportRejectedDownload(
+        QStringLiteral("Too many downloads are already active"));
+    return false;
+  }
+  const auto source_url = NormalizeRuntimeSourceUrl(item.url);
+  if (!source_url) {
+    if (callback) callback->Cancel();
+    ReportRejectedDownload(
+        QStringLiteral("Download source metadata was invalid"));
+    return false;
+  }
   if (is_new) order_.prepend(item.id);
   Item normalized = item;
+  normalized.url = *source_url;
   const auto local_path = NormalizeLocalPath(item.full_path);
   normalized.full_path = local_path.value_or(QString());
   if (local_path) {
@@ -560,6 +662,10 @@ void DownloadManager::UpdateDownload(
     runtime_local_path_ids_.remove(item.id);
   }
   normalized.detail = NormalizeDetail(item.detail);
+  normalized.received_bytes = std::max<qint64>(0, item.received_bytes);
+  normalized.total_bytes = std::max<qint64>(0, item.total_bytes);
+  normalized.bytes_per_second = std::max<qint64>(0, item.bytes_per_second);
+  normalized.percent = std::clamp(item.percent, -1, 100);
   items_.insert(item.id, normalized);
 
   if (IsActive(normalized.state) && callback) {
@@ -578,6 +684,11 @@ void DownloadManager::UpdateDownload(
     QString error;
     if (!SaveHistory(&error)) emit PersistenceError(error);
   }
+  return true;
+}
+
+void DownloadManager::ReportRejectedDownload(const QString& reason) {
+  emit DownloadRejected(reason);
 }
 
 void DownloadManager::TrimFinishedHistory() {

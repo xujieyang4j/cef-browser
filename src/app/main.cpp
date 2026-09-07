@@ -527,14 +527,78 @@ void StartDownloadSmokeTest(MainWindow* window,
       bounded_download_items.first().file_name.size() == 512 &&
       bounded_download_items.first().detail.size() == 1024;
 
+  DownloadManager runtime_bounded;
+  int rejected_downloads = 0;
+  QObject::connect(&runtime_bounded, &DownloadManager::DownloadRejected,
+                   [&rejected_downloads](const QString&) {
+                     ++rejected_downloads;
+                   });
+  CefRefPtr<CefDownloadHandler> runtime_handler = runtime_bounded.handler();
+  const std::string oversized_source(64 * 1024 + 1, 'u');
+  const bool ingress_bounded =
+      runtime_handler->CanDownload(
+          nullptr, CefString("https://example.test/runtime.bin"),
+          CefString("GET")) &&
+      !runtime_handler->CanDownload(
+          nullptr, CefString(oversized_source), CefString("GET")) &&
+      !runtime_handler->CanDownload(nullptr, CefString("relative.bin"),
+                                    CefString("GET")) &&
+      !runtime_handler->CanDownload(
+          nullptr, CefString("https://example.test/runtime.bin"),
+          CefString(std::string(17, 'M')));
+  bool active_limit_enforced = true;
+  for (int index = 0;
+       index < DownloadManager::MaxActiveDownloadsForTesting(); ++index) {
+    DownloadManager::Item active_item;
+    active_item.id = 5000 + index;
+    active_item.file_name = QString(700, QLatin1Char('n'));
+    active_item.full_path = QStringLiteral("../unsafe.bin");
+    active_item.url =
+        QStringLiteral("https://user:secret@example.test/active/%1")
+            .arg(index);
+    active_item.detail = QString(1400, QLatin1Char('d'));
+    active_item.received_bytes = -1;
+    active_item.total_bytes = -1;
+    active_item.bytes_per_second = -1;
+    active_item.percent = 250;
+    active_item.state = DownloadManager::State::InProgress;
+    active_limit_enforced =
+        active_limit_enforced && runtime_bounded.UpdateForTesting(active_item);
+  }
+  DownloadManager::Item overflow_item;
+  overflow_item.id = 6000;
+  overflow_item.file_name = QStringLiteral("overflow.bin");
+  overflow_item.url = QStringLiteral("https://example.test/overflow.bin");
+  overflow_item.state = DownloadManager::State::InProgress;
+  active_limit_enforced =
+      active_limit_enforced && !runtime_bounded.UpdateForTesting(overflow_item) &&
+      runtime_bounded.active_count() ==
+          DownloadManager::MaxActiveDownloadsForTesting() &&
+      runtime_bounded.items().size() ==
+          DownloadManager::MaxActiveDownloadsForTesting() &&
+      !runtime_bounded.item(overflow_item.id);
+  const auto first_runtime_item = runtime_bounded.item(5000);
+  const bool runtime_metadata_bounded =
+      first_runtime_item &&
+      first_runtime_item->url ==
+          QStringLiteral("https://example.test/active/0") &&
+      first_runtime_item->full_path.isEmpty() &&
+      first_runtime_item->file_name.size() == 512 &&
+      first_runtime_item->detail.size() == 1024 &&
+      first_runtime_item->received_bytes == 0 &&
+      first_runtime_item->total_bytes == 0 &&
+      first_runtime_item->bytes_per_second == 0 &&
+      first_runtime_item->percent == 100 && rejected_downloads >= 3;
+
   if (started && paused && resumed && completed && persisted &&
       active_protected && empty_after_clear && tampered_filtered &&
       restored_actions_blocked && live_actions_validated &&
       missing_file_blocked && incomplete_file_blocked &&
-      relative_path_blocked && bounded_download_history) {
+      relative_path_blocked && bounded_download_history && ingress_bounded &&
+      active_limit_enforced && runtime_metadata_bounded) {
     *output << "DOWNLOAD_SMOKE_OK paused=1 resumed=1 status=Complete "
                "persisted=1 removed=1 untrusted=blocked local_paths=validated "
-               "bounded=reloadable"
+               "bounded=reloadable ingress=bounded active=limited"
             << Qt::endl;
     window->close();
   } else {
@@ -549,7 +613,11 @@ void StartDownloadSmokeTest(MainWindow* window,
             << " missing=" << missing_file_blocked
             << " incomplete=" << incomplete_file_blocked
             << " relative=" << relative_path_blocked
-            << " bounded=" << bounded_download_history << Qt::endl;
+            << " bounded=" << bounded_download_history
+            << " ingress=" << ingress_bounded
+            << " active_limit=" << active_limit_enforced
+            << " runtime_metadata=" << runtime_metadata_bounded
+            << " rejected=" << rejected_downloads << Qt::endl;
     QCoreApplication::exit(3);
   }
 }

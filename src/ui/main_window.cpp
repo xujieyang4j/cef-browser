@@ -347,6 +347,10 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
                     .arg(error),
                 8000);
           });
+  connect(download_manager_, &DownloadManager::DownloadRejected, this,
+          [this](const QString& reason) {
+            statusBar()->showMessage(reason, 8000);
+          });
 
   auto* close_find_shortcut =
       new QShortcut(QKeySequence(Qt::Key_Escape), find_bar_);

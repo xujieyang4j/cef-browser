@@ -17,7 +17,10 @@ save dialog; they continue when the originating tab closes, and quitting with
 active or paused downloads requires explicit confirmation. Finished download
 records survive application restarts and can be cleared without deleting the
 downloaded files. Individual finished records can also be removed from the
-download panel. Restored history is treated as untrusted profile data: source
+download panel. CEF download URLs, local paths, suggested names, and progress
+values are bounded before entering the Qt model, credentials are removed from
+displayed source URLs, and at most 32 downloads may remain active at once.
+Restored history is treated as untrusted profile data: source
 URLs and local paths are revalidated, filenames are derived from valid paths,
 and only paths delivered directly by CEF in the current process may invoke an
 operating-system open or reveal action. Main-frame load
@@ -211,7 +214,7 @@ closing, reopening, and finally shutting down multiple CEF browser instances.
 CTest also runs deterministic download-state, download-exit protection,
 tab-action, pinned-tab persistence, failure-page, atomic session restore,
 page-search/zoom, titled address suggestions, bookmark/history persistence,
-browsing-data cleanup, favicon
+browsing-data cleanup, download-ingress and active-count limits, favicon
 mapping, audio/mute state, security-policy, and authentication-dialog checks.
 JavaScript-dialog limits, concurrency suppression, navigation reset, and
 before-unload cancellation are checked as well.

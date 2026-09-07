@@ -66,19 +66,23 @@ class DownloadManager final : public QObject {
 
   // Keeps the download model and UI independently smoke-testable without
   // requiring an external HTTP server or writing a file to disk.
-  void UpdateForTesting(const Item& item);
+  bool UpdateForTesting(const Item& item);
+  static int MaxActiveDownloadsForTesting();
 
  signals:
   void DownloadChanged(quint32 id, bool is_new);
   void DownloadRemoved(quint32 id);
   void ActiveCountChanged(int active_count);
   void PersistenceError(const QString& error);
+  void DownloadRejected(const QString& reason);
 
  private:
   friend class DownloadHandlerImpl;
 
-  void UpdateDownload(const Item& item,
+  bool CanAcceptDownload(quint32 id = 0) const;
+  bool UpdateDownload(const Item& item,
                       CefRefPtr<CefDownloadItemCallback> callback);
+  void ReportRejectedDownload(const QString& reason);
   void TrimFinishedHistory();
   static bool IsActive(State state);
 
