@@ -765,6 +765,10 @@ std::optional<QString> MainWindow::NormalizeUrlForTesting(
   return NormalizeUrl(input);
 }
 
+bool MainWindow::OpenPopupForTesting(const QString& url, int disposition) {
+  return OpenPopup(CurrentBrowser(), url, disposition);
+}
+
 QString MainWindow::home_page_for_testing() const {
   return browser_settings_->home_page();
 }
@@ -1488,20 +1492,32 @@ void MainWindow::ContinueQueuedTabCloses() {
   }
 }
 
-void MainWindow::OpenPopup(BrowserView* source, const QString& url,
+bool MainWindow::OpenPopup(BrowserView* source, const QString& url,
                            int disposition_value) {
-  if (!source || closing_tabs_.contains(source)) return;
-  const QString target = url.isEmpty() ? QStringLiteral("about:blank") : url;
+  if (!source || IndexOf(source) < 0 || closing_tabs_.contains(source)) {
+    return false;
+  }
+  const auto normalized = BrowserSettings::NormalizeStoredUrl(
+      url.trimmed().isEmpty() ? QStringLiteral("about:blank") : url);
+  if (!normalized ||
+      (*normalized != QStringLiteral("about:blank") &&
+       QUrl(*normalized).scheme() != QStringLiteral("http") &&
+       QUrl(*normalized).scheme() != QStringLiteral("https"))) {
+    statusBar()->showMessage(QStringLiteral("Blocked an unsafe pop-up URL"),
+                             5000);
+    return false;
+  }
+  const QString& target = *normalized;
   const auto disposition =
       static_cast<cef_window_open_disposition_t>(disposition_value);
 
   if (disposition == CEF_WOD_CURRENT_TAB) {
     source->LoadUrl(target);
-    return;
+    return true;
   }
   if (disposition == CEF_WOD_NEW_BACKGROUND_TAB) {
     AddTab(target, false);
-    return;
+    return true;
   }
   if (disposition == CEF_WOD_SINGLETON_TAB ||
       disposition == CEF_WOD_SWITCH_TO_TAB) {
@@ -1510,14 +1526,32 @@ void MainWindow::OpenPopup(BrowserView* source, const QString& url,
           qvariant_cast<BrowserView*>(tab_bar_->tabData(index));
       if (candidate && candidate->current_url() == target) {
         tab_bar_->setCurrentIndex(index);
-        return;
+        return true;
       }
     }
   }
-  if (disposition != CEF_WOD_IGNORE_ACTION &&
-      disposition != CEF_WOD_SAVE_TO_DISK) {
-    AddTab(target, true);
+  switch (disposition) {
+    case CEF_WOD_SINGLETON_TAB:
+    case CEF_WOD_NEW_FOREGROUND_TAB:
+    case CEF_WOD_NEW_POPUP:
+    case CEF_WOD_NEW_WINDOW:
+    case CEF_WOD_OFF_THE_RECORD:
+    case CEF_WOD_SWITCH_TO_TAB:
+    case CEF_WOD_NEW_SPLIT_VIEW:
+      AddTab(target, true);
+      return true;
+    case CEF_WOD_UNKNOWN:
+    case CEF_WOD_CURRENT_TAB:
+    case CEF_WOD_NEW_BACKGROUND_TAB:
+    case CEF_WOD_SAVE_TO_DISK:
+    case CEF_WOD_IGNORE_ACTION:
+    case CEF_WOD_NEW_PICTURE_IN_PICTURE:
+    case CEF_WOD_NUM_VALUES:
+      statusBar()->showMessage(
+          QStringLiteral("Blocked an unsupported pop-up action"), 5000);
+      return false;
   }
+  return false;
 }
 
 void MainWindow::BeginTabClose(BrowserView* browser, bool remember_url) {

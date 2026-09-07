@@ -107,6 +107,7 @@ class MainWindow final : public QMainWindow {
   bool SetStartupBehaviorForTesting(const QString& name);
   QString startup_behavior_for_testing() const;
   std::optional<QString> NormalizeUrlForTesting(const QString& input) const;
+  bool OpenPopupForTesting(const QString& url, int disposition);
   void ActivateTabShortcutForTesting(int number);
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
@@ -215,7 +216,7 @@ class MainWindow final : public QMainWindow {
                       bool focus_address = false);
   BrowserView* CurrentBrowser() const;
   int IndexOf(const BrowserView* browser) const;
-  void OpenPopup(BrowserView* source, const QString& url, int disposition);
+  bool OpenPopup(BrowserView* source, const QString& url, int disposition);
   void ShowTabContextMenu(const QPoint& position);
   void DuplicateTab(int index);
   void SetTabPinned(int index, bool pinned);

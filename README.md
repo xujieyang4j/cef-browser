@@ -5,7 +5,10 @@ Chromium Embedded Framework (CEF). It embeds a windowed CEF browser in a Qt
 main window and integrates CEF's external message pump with Qt's event loop.
 
 Current features include tabbed browsing, navigation controls, URL/search
-normalization, page titles, pop-up routing based on the requested disposition,
+normalization, page titles, and pop-up routing based on the requested
+disposition. Pop-up targets are strictly revalidated and limited to HTTP(S) or
+a blank page before they can replace a page or create a tab. The browser also
+provides
 recently closed tab recovery, F12 DevTools, persistent CEF cache, and orderly
 asynchronous browser shutdown. Downloads have a window-level manager with
 progress, speed, pause/resume, cancellation, completion actions, and a platform

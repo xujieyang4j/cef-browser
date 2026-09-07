@@ -1664,15 +1664,35 @@ void StartSecuritySmokeTest(MainWindow* window) {
           QStringLiteral("webcal://user:password@calendar.example.test")) &&
       !window->external_scheme_allowed_for_testing(
           QStringLiteral("mailto:test@example.com\r\nX-Test: injected"));
-  if (media_ok && permissions_ok && schemes_ok) {
+  const int tabs_before_popups = window->tab_count();
+  const bool unsafe_popups_blocked =
+      !window->OpenPopupForTesting(QStringLiteral("javascript:alert(1)"),
+                                   CEF_WOD_NEW_FOREGROUND_TAB) &&
+      !window->OpenPopupForTesting(QStringLiteral("data:text/html,unsafe"),
+                                   CEF_WOD_NEW_BACKGROUND_TAB) &&
+      !window->OpenPopupForTesting(QStringLiteral("file:///tmp/private"),
+                                   CEF_WOD_CURRENT_TAB) &&
+      !window->OpenPopupForTesting(
+          QStringLiteral("https://example.test/download"),
+          CEF_WOD_SAVE_TO_DISK) &&
+      window->tab_count() == tabs_before_popups;
+  const bool safe_popup_opened = window->OpenPopupForTesting(
+      QStringLiteral(" HTTPS://example.test/popup "),
+      CEF_WOD_NEW_BACKGROUND_TAB);
+  const bool popup_ok = safe_popup_opened &&
+                        window->tab_count() == tabs_before_popups + 1;
+  if (media_ok && permissions_ok && schemes_ok && unsafe_popups_blocked &&
+      popup_ok) {
     *output << "SECURITY_SMOKE_OK media=2 permissions=2 "
-               "schemes=normalized"
+               "schemes=normalized popups=guarded"
             << Qt::endl;
     window->close();
   } else {
     *output << "SECURITY_SMOKE_FAILED media=" << media_ok
             << " permissions=" << permissions_ok
-            << " schemes=" << schemes_ok << Qt::endl;
+            << " schemes=" << schemes_ok
+            << " unsafe_popups=" << unsafe_popups_blocked
+            << " popup=" << popup_ok << Qt::endl;
     QCoreApplication::exit(8);
   }
 }
