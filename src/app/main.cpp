@@ -130,6 +130,58 @@ void StartTabSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
+void StartTabActionsSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
+  const QString initial_url = QStringLiteral("data:text/html,<title>Smoke</title>");
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, stage, step, initial_url] {
+    ++*attempts;
+    if (*stage == 0 && window->current_title() == QStringLiteral("Smoke")) {
+      window->DuplicateCurrentTabForTesting();
+      *stage = 1;
+    } else if (*stage == 1 && window->tab_count() == 2 &&
+               window->current_url() == initial_url) {
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Third</title>"));
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Fourth</title>"));
+      window->ActivateTabForTesting(1);
+      window->CloseTabsToRightForTesting();
+      *stage = 2;
+    } else if (*stage == 2 && window->tab_count() == 2 &&
+               window->current_url() == initial_url) {
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Right One</title>"));
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Right Two</title>"));
+      window->ActivateTabForTesting(1);
+      window->CloseOtherTabsForTesting();
+      *stage = 3;
+    } else if (*stage == 3 && window->tab_count() == 1 &&
+               window->current_url() == initial_url) {
+      window->ReopenClosedTabForTesting();
+      *stage = 4;
+    } else if (*stage == 4 && window->tab_count() == 2) {
+      *output << "TAB_ACTIONS_SMOKE_OK duplicate=1 close_right=2 "
+                 "close_others=3 reopened=1"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 200) {
+      *output << "TAB_ACTIONS_SMOKE_FAILED stage=" << *stage
+              << " count=" << window->tab_count()
+              << " url=" << window->current_url() << Qt::endl;
+      QCoreApplication::exit(13);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
 void StartDownloadSmokeTest(MainWindow* window) {
   auto output = std::make_shared<QTextStream>(stdout);
   window->UpdateDownloadForTesting(41, 25, false);
@@ -265,6 +317,7 @@ bool HasArgument(const QString& argument) {
 
 bool IsSmokeTest() {
   return HasArgument(QStringLiteral("--smoke-test-tabs")) ||
+         HasArgument(QStringLiteral("--smoke-test-tab-actions")) ||
          HasArgument(QStringLiteral("--smoke-test-downloads")) ||
          HasArgument(QStringLiteral("--smoke-test-exit-protection")) ||
          HasArgument(QStringLiteral("--smoke-test-failures")) ||
@@ -668,6 +721,8 @@ int RunBrowser(int argc, char* argv[]) {
     message_pump.Schedule(0);
     if (HasArgument(QStringLiteral("--smoke-test-tabs"))) {
       StartTabSmokeTest(&main_window);
+    } else if (HasArgument(QStringLiteral("--smoke-test-tab-actions"))) {
+      StartTabActionsSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-downloads"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartDownloadSmokeTest(&main_window); });

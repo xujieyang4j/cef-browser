@@ -4,7 +4,9 @@
 #include <functional>
 #include <utility>
 
+#include <QApplication>
 #include <QCloseEvent>
+#include <QClipboard>
 #include <QCompleter>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -128,6 +130,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   tab_bar_->setMovable(true);
   tab_bar_->setTabsClosable(true);
   tab_bar_->setUsesScrollButtons(true);
+  tab_bar_->setContextMenuPolicy(Qt::CustomContextMenu);
 
   auto* add_tab_button = new QToolButton(tab_strip_);
   add_tab_button->setText(QStringLiteral("+"));
@@ -236,6 +239,8 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   connect(add_tab_button, &QToolButton::clicked, this, &MainWindow::AddBlankTab);
   connect(tab_bar_, &QTabBar::currentChanged, this, &MainWindow::ActivateTab);
   connect(tab_bar_, &QTabBar::tabCloseRequested, this, &MainWindow::CloseTab);
+  connect(tab_bar_, &QTabBar::customContextMenuRequested, this,
+          &MainWindow::ShowTabContextMenu);
   connect(tab_bar_, &QTabBar::tabMoved, this, [this](int, int) {
     // The tab-to-page relationship is stored in tabData and therefore moves
     // with the visual tab. Keep the stacked page pointed at that object.
@@ -451,6 +456,24 @@ void MainWindow::ReopenClosedTabForTesting() {
   ReopenClosedTab();
 }
 
+void MainWindow::ActivateTabForTesting(int index) {
+  if (index >= 0 && index < tab_bar_->count()) {
+    tab_bar_->setCurrentIndex(index);
+  }
+}
+
+void MainWindow::DuplicateCurrentTabForTesting() {
+  DuplicateTab(tab_bar_->currentIndex());
+}
+
+void MainWindow::CloseOtherTabsForTesting() {
+  CloseOtherTabs(tab_bar_->currentIndex());
+}
+
+void MainWindow::CloseTabsToRightForTesting() {
+  CloseTabsToRight(tab_bar_->currentIndex());
+}
+
 void MainWindow::UpdateDownloadForTesting(quint32 id, int percent,
                                           bool complete) {
   DownloadManager::Item item;
@@ -655,6 +678,8 @@ void MainWindow::closeEvent(QCloseEvent* event) {
               download_exit_prompt_open_ = false;
               if (dialog->clickedButton() != quit_and_cancel) return;
               download_manager_->CancelAllActive();
+              queued_tab_closes_.clear();
+              active_queued_tab_close_.clear();
               window_close_requested_ = true;
               closing_session_ = CaptureSession(true);
               ContinueWindowClose();
@@ -663,6 +688,8 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     return;
   }
 
+  queued_tab_closes_.clear();
+  active_queued_tab_close_.clear();
   window_close_requested_ = true;
   closing_session_ = CaptureSession(true);
   ContinueWindowClose();
@@ -902,6 +929,120 @@ int MainWindow::IndexOf(const BrowserView* browser) const {
   return -1;
 }
 
+void MainWindow::ShowTabContextMenu(const QPoint& position) {
+  const int index = tab_bar_->tabAt(position);
+  auto* browser = index >= 0
+                      ? qvariant_cast<BrowserView*>(tab_bar_->tabData(index))
+                      : nullptr;
+  if (!browser || closing_tabs_.contains(browser)) return;
+  const QPointer<BrowserView> target(browser);
+
+  auto* menu = new QMenu(tab_bar_);
+  menu->setAttribute(Qt::WA_DeleteOnClose);
+  QAction* new_tab = menu->addAction(QStringLiteral("New tab"));
+  QAction* duplicate = menu->addAction(QStringLiteral("Duplicate tab"));
+  QAction* copy_address =
+      menu->addAction(QStringLiteral("Copy page address"));
+  menu->addSeparator();
+  QAction* close_tab = menu->addAction(QStringLiteral("Close tab"));
+  QAction* close_others =
+      menu->addAction(QStringLiteral("Close other tabs"));
+  QAction* close_right =
+      menu->addAction(QStringLiteral("Close tabs to the right"));
+  close_others->setEnabled(tab_bar_->count() > 1);
+  close_right->setEnabled(index + 1 < tab_bar_->count());
+
+  connect(new_tab, &QAction::triggered, this, &MainWindow::AddBlankTab);
+  connect(duplicate, &QAction::triggered, this,
+          [this, target] {
+            if (target) DuplicateTab(IndexOf(target));
+          });
+  connect(copy_address, &QAction::triggered, this, [target] {
+    if (target) QApplication::clipboard()->setText(target->current_url());
+  });
+  connect(close_tab, &QAction::triggered, this,
+          [this, target] {
+            if (target) CloseTab(IndexOf(target));
+          });
+  connect(close_others, &QAction::triggered, this,
+          [this, target] {
+            if (target) CloseOtherTabs(IndexOf(target));
+          });
+  connect(close_right, &QAction::triggered, this,
+          [this, target] {
+            if (target) CloseTabsToRight(IndexOf(target));
+          });
+  menu->popup(tab_bar_->mapToGlobal(position));
+}
+
+void MainWindow::DuplicateTab(int index) {
+  auto* source = index >= 0
+                     ? qvariant_cast<BrowserView*>(tab_bar_->tabData(index))
+                     : nullptr;
+  if (!source || closing_tabs_.contains(source)) return;
+  const QString url = source->current_url().isEmpty()
+                          ? QStringLiteral("about:blank")
+                          : source->current_url();
+  BrowserView* duplicate = AddTab(url, true);
+  const int duplicate_index = IndexOf(duplicate);
+  if (duplicate_index >= 0 && duplicate_index != index + 1) {
+    tab_bar_->moveTab(duplicate_index, index + 1);
+  }
+}
+
+void MainWindow::CloseOtherTabs(int index) {
+  if (index < 0 || index >= tab_bar_->count()) return;
+  QList<BrowserView*> targets;
+  for (int candidate = tab_bar_->count() - 1; candidate >= 0; --candidate) {
+    if (candidate == index) continue;
+    if (auto* browser = qvariant_cast<BrowserView*>(
+            tab_bar_->tabData(candidate))) {
+      targets.append(browser);
+    }
+  }
+  QueueTabCloses(targets);
+}
+
+void MainWindow::CloseTabsToRight(int index) {
+  if (index < 0 || index >= tab_bar_->count()) return;
+  QList<BrowserView*> targets;
+  for (int candidate = tab_bar_->count() - 1; candidate > index; --candidate) {
+    if (auto* browser = qvariant_cast<BrowserView*>(
+            tab_bar_->tabData(candidate))) {
+      targets.append(browser);
+    }
+  }
+  QueueTabCloses(targets);
+}
+
+void MainWindow::QueueTabCloses(const QList<BrowserView*>& browsers) {
+  if (window_close_requested_) return;
+  for (BrowserView* browser : browsers) {
+    if (!browser || closing_tabs_.contains(browser) ||
+        active_queued_tab_close_ == browser) {
+      continue;
+    }
+    const bool already_queued = std::any_of(
+        queued_tab_closes_.cbegin(), queued_tab_closes_.cend(),
+        [browser](const QPointer<BrowserView>& queued) {
+          return queued == browser;
+        });
+    if (!already_queued) queued_tab_closes_.append(browser);
+  }
+  ContinueQueuedTabCloses();
+}
+
+void MainWindow::ContinueQueuedTabCloses() {
+  if (window_close_requested_ || active_queued_tab_close_) return;
+  while (!queued_tab_closes_.isEmpty()) {
+    QPointer<BrowserView> next = queued_tab_closes_.takeFirst();
+    if (!next || IndexOf(next) < 0 || closing_tabs_.contains(next)) continue;
+    active_queued_tab_close_ = next;
+    BeginTabClose(next, true);
+    return;
+  }
+}
+
 void MainWindow::OpenPopup(BrowserView* source, const QString& url,
                            int disposition_value) {
   if (!source || closing_tabs_.contains(source)) return;
@@ -948,6 +1089,7 @@ void MainWindow::BeginTabClose(BrowserView* browser, bool remember_url) {
 
 void MainWindow::CompleteTabClose(BrowserView* browser) {
   if (!browser || !closing_tabs_.remove(browser)) return;
+  const bool queued_close = active_queued_tab_close_ == browser;
   browser->FinalizeClose();
 
   if (pending_closed_urls_.contains(browser)) {
@@ -961,17 +1103,24 @@ void MainWindow::CompleteTabClose(BrowserView* browser) {
     tab_bar_->removeTab(index);
   }
   browser->deleteLater();
+  if (queued_close) active_queued_tab_close_.clear();
 
   if (window_close_requested_) {
     ContinueWindowClose();
   } else {
     UpdateChrome();
     ScheduleSessionSave();
+    if (queued_close) {
+      QMetaObject::invokeMethod(
+          this, &MainWindow::ContinueQueuedTabCloses, Qt::QueuedConnection);
+    }
   }
 }
 
 void MainWindow::CancelTabClose(BrowserView* browser) {
   if (!browser || !closing_tabs_.remove(browser)) return;
+  const bool queued_close = active_queued_tab_close_ == browser;
+  if (queued_close) active_queued_tab_close_.clear();
   pending_closed_urls_.remove(browser);
   const int index = IndexOf(browser);
   if (index >= 0) {
@@ -982,6 +1131,10 @@ void MainWindow::CancelTabClose(BrowserView* browser) {
   closing_session_.reset();
   UpdateChrome();
   ScheduleSessionSave();
+  if (queued_close) {
+    QMetaObject::invokeMethod(
+        this, &MainWindow::ContinueQueuedTabCloses, Qt::QueuedConnection);
+  }
 }
 
 void MainWindow::ContinueWindowClose() {

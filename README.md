@@ -36,6 +36,10 @@ navigation results rejected. The History menu can clear history, HTTP cache,
 cookies, HTTP credentials, and certificate exceptions while preserving
 bookmarks; completion is reported only after every asynchronous CEF operation
 finishes.
+Tabs also have a context menu for opening a new tab, duplicating the selected
+tab, copying its address, closing it, closing other tabs, or closing tabs to
+its right. Multi-tab closes wait for each CEF browser to finish shutting down
+and preserve the order used by recently closed tab recovery.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -105,7 +109,8 @@ application builds automatically use the Release CEF runtime.
 - F12: open CEF DevTools
 
 Tabs can also be reordered by dragging and closed with either their close
-button or a middle click. Closing the final tab closes the browser window.
+button or a middle click. Right-click a tab for duplicate, copy-address, and
+bulk-close actions. Closing the final tab closes the browser window.
 
 ## Smoke test
 
@@ -120,9 +125,9 @@ timeout 20s xvfb-run -a ./build/trail-browser --smoke-test-tabs \
 A passing run prints `TAB_SMOKE_OK` and exits with status 0 after creating,
 closing, reopening, and finally shutting down multiple CEF browser instances.
 CTest also runs deterministic download-state, download-exit protection,
-failure-page, atomic session restore, page-search/zoom, bookmark/history
-persistence, browsing-data cleanup, favicon mapping, security-policy, and
-authentication-dialog checks. All eleven
+tab-action, failure-page, atomic session restore, page-search/zoom,
+bookmark/history persistence, browsing-data cleanup, favicon mapping,
+security-policy, and authentication-dialog checks. All twelve
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

@@ -3,7 +3,10 @@
 #include <optional>
 
 #include <QHash>
+#include <QList>
 #include <QMainWindow>
+#include <QPointer>
+#include <QPoint>
 #include <QSet>
 #include <QStringList>
 
@@ -41,6 +44,10 @@ class MainWindow final : public QMainWindow {
   void OpenTabForTesting(const QString& url);
   void CloseCurrentTabForTesting();
   void ReopenClosedTabForTesting();
+  void ActivateTabForTesting(int index);
+  void DuplicateCurrentTabForTesting();
+  void CloseOtherTabsForTesting();
+  void CloseTabsToRightForTesting();
   void UpdateDownloadForTesting(quint32 id, int percent, bool complete);
   void PauseDownloadForTesting(quint32 id);
   int download_count_for_testing() const;
@@ -118,6 +125,12 @@ class MainWindow final : public QMainWindow {
   BrowserView* CurrentBrowser() const;
   int IndexOf(const BrowserView* browser) const;
   void OpenPopup(BrowserView* source, const QString& url, int disposition);
+  void ShowTabContextMenu(const QPoint& position);
+  void DuplicateTab(int index);
+  void CloseOtherTabs(int index);
+  void CloseTabsToRight(int index);
+  void QueueTabCloses(const QList<BrowserView*>& browsers);
+  void ContinueQueuedTabCloses();
   void BeginTabClose(BrowserView* browser, bool remember_url);
   void CompleteTabClose(BrowserView* browser);
   void CancelTabClose(BrowserView* browser);
@@ -153,6 +166,8 @@ class MainWindow final : public QMainWindow {
   QTimer* session_save_timer_ = nullptr;
   BrowsingDataStore* browsing_data_ = nullptr;
   QSet<BrowserView*> closing_tabs_;
+  QList<QPointer<BrowserView>> queued_tab_closes_;
+  QPointer<BrowserView> active_queued_tab_close_;
   QHash<BrowserView*, QString> pending_closed_urls_;
   QStringList closed_tabs_;
   QString session_path_;

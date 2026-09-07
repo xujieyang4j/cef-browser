@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.8.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.9.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -165,6 +165,13 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_tabs PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "TAB_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_tab_actions
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-tab-actions)
+    set_tests_properties(trail_browser_tab_actions PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "TAB_ACTIONS_SMOKE_OK"
     )
     add_test(NAME trail_browser_downloads
       COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
