@@ -1376,7 +1376,8 @@ void MainWindow::OpenPopup(BrowserView* source, const QString& url,
 void MainWindow::BeginTabClose(BrowserView* browser, bool remember_url) {
   if (!browser || closing_tabs_.contains(browser)) return;
   closing_tabs_.insert(browser);
-  if (remember_url && !browser->current_url().isEmpty()) {
+  if (remember_url && !forgotten_closing_tabs_.contains(browser) &&
+      !browser->current_url().isEmpty()) {
     pending_closed_urls_.insert(browser, browser->current_url());
   }
   const int index = IndexOf(browser);
@@ -1391,10 +1392,12 @@ void MainWindow::CompleteTabClose(BrowserView* browser) {
   browser->FinalizeClose();
   pinned_tabs_.remove(browser);
 
-  if (pending_closed_urls_.contains(browser)) {
+  const bool forget_closed_tab = forgotten_closing_tabs_.remove(browser);
+  if (!forget_closed_tab && pending_closed_urls_.contains(browser)) {
     closed_tabs_.append(pending_closed_urls_.take(browser));
     while (closed_tabs_.size() > kMaxClosedTabs) closed_tabs_.removeFirst();
   }
+  pending_closed_urls_.remove(browser);
 
   const int index = IndexOf(browser);
   if (index >= 0) {
@@ -1421,6 +1424,7 @@ void MainWindow::CancelTabClose(BrowserView* browser) {
   const bool queued_close = active_queued_tab_close_ == browser;
   if (queued_close) active_queued_tab_close_.clear();
   pending_closed_urls_.remove(browser);
+  forgotten_closing_tabs_.remove(browser);
   const int index = IndexOf(browser);
   if (index >= 0) {
     tab_bar_->setTabEnabled(index, true);
@@ -1769,8 +1773,9 @@ void MainWindow::ShowClearBrowsingDataPrompt() {
   auto* dialog = new QMessageBox(
       QMessageBox::Warning, QStringLiteral("Clear browsing data?"),
       QStringLiteral(
-          "This removes browsing history, cached files, cookies, saved site "
-          "sessions, HTTP credentials, and certificate exceptions. "
+          "This removes browsing history, recently closed tabs, cached files, "
+          "cookies, saved site sessions, HTTP credentials, and certificate "
+          "exceptions. "
           "Bookmarks are kept."),
       QMessageBox::NoButton, this);
   auto* cancel = dialog->addButton(QStringLiteral("Cancel"),
@@ -1791,17 +1796,29 @@ void MainWindow::BeginClearBrowsingData(bool show_result_dialog) {
   if (browsing_data_clear_in_progress_) return;
   browsing_data_clear_in_progress_ = true;
   browsing_data_clear_show_result_ = show_result_dialog;
-  browsing_data_clear_pending_ = 5;
+  browsing_data_clear_pending_ = 6;
   browsing_data_clear_failures_.clear();
   browsing_data_clear_result_.clear();
   RebuildHistoryMenu();
   statusBar()->showMessage(QStringLiteral("Clearing browsing data…"));
 
   browsing_data_->ClearHistory();
+  closed_tabs_.clear();
+  for (BrowserView* browser : closing_tabs_) {
+    forgotten_closing_tabs_.insert(browser);
+  }
+  for (const QPointer<BrowserView>& browser : queued_tab_closes_) {
+    if (browser) forgotten_closing_tabs_.insert(browser);
+  }
+  pending_closed_urls_.clear();
   CompleteBrowsingDataClearTask(QStringLiteral("history"),
                                 SaveBrowsingData());
   RebuildHistoryMenu();
+  RebuildAllTabsMenu();
   RefreshAddressSuggestions();
+  CompleteBrowsingDataClearTask(
+      QStringLiteral("recently closed tabs"),
+      session_path_.isEmpty() || PersistSession(CaptureSession(false)));
 
   QPointer<MainWindow> owner(this);
   CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
@@ -1858,7 +1875,8 @@ void MainWindow::CompleteBrowsingDataClearTask(const QString& task,
   browsing_data_clear_in_progress_ = false;
   if (browsing_data_clear_failures_.isEmpty()) {
     browsing_data_clear_result_ = QStringLiteral(
-        "Browsing history, cache, cookies, and site credentials were cleared.");
+        "Browsing history, recently closed tabs, cache, cookies, and site "
+        "credentials were cleared.");
   } else {
     browsing_data_clear_result_ =
         QStringLiteral("Some browsing data could not be cleared: %1.")

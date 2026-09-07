@@ -216,6 +216,7 @@ class MainWindow final : public QMainWindow {
   QTimer* session_save_timer_ = nullptr;
   BrowsingDataStore* browsing_data_ = nullptr;
   QSet<BrowserView*> closing_tabs_;
+  QSet<BrowserView*> forgotten_closing_tabs_;
   QSet<BrowserView*> pinned_tabs_;
   QList<QPointer<BrowserView>> queued_tab_closes_;
   QPointer<BrowserView> active_queued_tab_close_;

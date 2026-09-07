@@ -34,10 +34,10 @@ deduplicate shared URLs, and navigate to the underlying URL rather than the
 display label. The recently closed tab stack is part of the atomic
 session file, so Ctrl/Cmd+Shift+T continues to work after an application
 restart. Page favicons are loaded into their corresponding tabs with stale
-navigation results rejected. The History menu can clear history, HTTP cache,
-cookies, HTTP credentials, and certificate exceptions while preserving
-bookmarks; completion is reported only after every asynchronous CEF operation
-finishes.
+navigation results rejected. The History menu can clear history, recently
+closed tabs, HTTP cache, cookies, HTTP credentials, and certificate exceptions
+while preserving bookmarks; the updated session is persisted immediately, and
+completion is reported only after every asynchronous CEF operation finishes.
 Tabs also have a context menu for opening a new tab, duplicating the selected
 tab, copying its address, closing it, closing other tabs, or closing tabs to
 its right. Multi-tab closes wait for each CEF browser to finish shutting down

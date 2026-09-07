@@ -562,47 +562,74 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
   QTimer::singleShot(50, window, [step] { (*step)(); });
 }
 
-void StartPrivacySmokeTest(MainWindow* window) {
+void StartPrivacySmokeTest(MainWindow* window, const QString& session_path) {
   auto output = std::make_shared<QTextStream>(stdout);
-  window->AddHistoryForTesting(QStringLiteral("https://example.test/private"),
-                               QStringLiteral("Private visit"));
-  const bool seeded = window->history_count_for_testing() == 1 &&
-                      window->address_suggestions_for_testing().contains(
-                          QStringLiteral("https://example.test/private"));
-  window->ClearBrowsingDataForTesting();
-
   auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
   auto step = std::make_shared<std::function<void()>>();
-  *step = [window, output, seeded, attempts, step] {
+  *step = [window, output, attempts, stage, step, session_path] {
     ++*attempts;
-    if (!window->browsing_data_clear_in_progress_for_testing()) {
+    if (*stage == 0 && window->current_title() == QStringLiteral("Smoke")) {
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Private closed tab</title>"));
+      *stage = 1;
+    } else if (*stage == 1 &&
+               window->current_title() ==
+                   QStringLiteral("Private closed tab")) {
+      window->CloseCurrentTabForTesting();
+      *stage = 2;
+    } else if (*stage == 2 && window->tab_count() == 1 &&
+               window->recently_closed_tab_count_for_testing() == 1) {
+      window->AddHistoryForTesting(
+          QStringLiteral("https://example.test/private"),
+          QStringLiteral("Private visit"));
+      const bool seeded =
+          window->history_count_for_testing() == 1 &&
+          window->address_suggestions_for_testing().contains(
+              QStringLiteral("https://example.test/private"));
+      if (!seeded) {
+        *output << "PRIVACY_SMOKE_FAILED seeded=0" << Qt::endl;
+        QCoreApplication::exit(11);
+        return;
+      }
+      window->ClearBrowsingDataForTesting();
+      *stage = 3;
+    } else if (*stage == 3 &&
+               !window->browsing_data_clear_in_progress_for_testing()) {
       const bool cleared = window->history_count_for_testing() == 0 &&
                            !window->address_suggestions_for_testing().contains(
-                               QStringLiteral("https://example.test/private"));
+                               QStringLiteral("https://example.test/private")) &&
+                           window->recently_closed_tab_count_for_testing() == 0;
+      const auto restored = SessionStore::Load(session_path);
+      const bool session_cleared =
+          restored && restored->recently_closed_urls.isEmpty();
       const bool completed =
           window->browsing_data_clear_result_for_testing().startsWith(
               QStringLiteral("Browsing history"));
-      if (seeded && cleared && completed) {
-        *output << "PRIVACY_SMOKE_OK history=cleared cef=completed"
+      if (cleared && session_cleared && completed) {
+        *output << "PRIVACY_SMOKE_OK history=cleared recent=cleared "
+                   "session=cleared cef=completed"
                 << Qt::endl;
         window->close();
       } else {
-        *output << "PRIVACY_SMOKE_FAILED seeded=" << seeded
-                << " cleared=" << cleared << " completed=" << completed
+        *output << "PRIVACY_SMOKE_FAILED cleared=" << cleared
+                << " session=" << session_cleared
+                << " completed=" << completed
                 << " result="
                 << window->browsing_data_clear_result_for_testing() << Qt::endl;
         QCoreApplication::exit(11);
       }
       return;
     }
-    if (*attempts > 160) {
-      *output << "PRIVACY_SMOKE_FAILED timeout=1" << Qt::endl;
+    if (*attempts > 200) {
+      *output << "PRIVACY_SMOKE_FAILED timeout=1 stage=" << *stage
+              << Qt::endl;
       QCoreApplication::exit(11);
       return;
     }
     QTimer::singleShot(50, window, [step] { (*step)(); });
   };
-  QTimer::singleShot(50, window, [step] { (*step)(); });
+  QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
 void StartFaviconSmokeTest(MainWindow* window) {
@@ -1049,6 +1076,10 @@ int RunBrowser(int argc, char* argv[]) {
       }
       active_browsing_data_path = smoke_profile_directory->filePath(
           QStringLiteral("browsing-data.json"));
+      if (HasArgument(QStringLiteral("--smoke-test-privacy"))) {
+        active_session_path = smoke_profile_directory->filePath(
+            QStringLiteral("session.json"));
+      }
     }
     MainWindow main_window(initial_session, active_session_path,
                            active_browsing_data_path);
@@ -1083,8 +1114,9 @@ int RunBrowser(int argc, char* argv[]) {
                                                  active_browsing_data_path);
                          });
     } else if (HasArgument(QStringLiteral("--smoke-test-privacy"))) {
-      QTimer::singleShot(300, &main_window,
-                         [&main_window] { StartPrivacySmokeTest(&main_window); });
+      QTimer::singleShot(300, &main_window, [&main_window, active_session_path] {
+        StartPrivacySmokeTest(&main_window, active_session_path);
+      });
     } else if (HasArgument(QStringLiteral("--smoke-test-favicon"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartFaviconSmokeTest(&main_window); });
