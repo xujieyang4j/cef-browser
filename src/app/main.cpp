@@ -1589,6 +1589,12 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
   const bool unsafe_rejected =
       !window->SetHomePageForTesting(QStringLiteral("javascript:alert(1)")) &&
       window->home_page_for_testing() == home_url;
+  const QString oversized_home =
+      QStringLiteral("https://example.test/") +
+      QString(20 * 1024, QLatin1Char('x'));
+  const bool oversized_home_rejected =
+      !window->SetHomePageForTesting(oversized_home) &&
+      window->home_page_for_testing() == home_url;
   const bool new_tab_setting = window->SetOpenHomeOnNewTabForTesting(true);
   BrowserSettings new_tab_restored(settings_path);
   const bool new_tab_loaded = new_tab_restored.Load();
@@ -1647,6 +1653,7 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
                               address_ok && safe_schemes &&
                               unsafe_navigation_rejected && menu_ok &&
                               home_saved && home_persisted && unsafe_rejected &&
+                              oversized_home_rejected &&
                               new_tab_setting && new_tab_persisted &&
                               startup_selected && startup_persisted &&
                               startup_decision;
@@ -1661,6 +1668,7 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
             << " unsafe_navigation=" << unsafe_navigation_rejected
             << " menu=" << menu_ok << " home=" << home_persisted
             << " unsafe=" << unsafe_rejected
+            << " oversized=" << oversized_home_rejected
             << " new_tab=" << new_tab_persisted
             << " startup=" << startup_persisted
             << " decision=" << startup_decision << Qt::endl;
@@ -1682,7 +1690,7 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
     ++*attempts;
     if (window->tab_count() == 2 && window->current_url() == home_url) {
       *output << "SEARCH_SETTINGS_SMOKE_OK default=google selected=duckduckgo "
-                 "persisted=1 encoded=1 home=new-tab startup=home"
+                 "persisted=1 encoded=1 home=new-tab startup=home bounded=1"
               << Qt::endl;
       window->close();
       return;

@@ -14,6 +14,7 @@ namespace {
 
 constexpr int kSettingsVersion = 1;
 constexpr int kMaxSettingsBytes = 64 * 1024;
+constexpr int kMaxHomePageBytes = 16 * 1024;
 
 void SetError(QString* error, const QString& value) {
   if (error) *error = value;
@@ -114,12 +115,18 @@ bool BrowserSettings::Save(QString* error) const {
       {QStringLiteral("startupBehavior"),
        StartupBehaviorId(startup_behavior_)},
   };
+  const QByteArray bytes =
+      QJsonDocument(root).toJson(QJsonDocument::Compact);
+  if (bytes.size() > kMaxSettingsBytes) {
+    SetError(error, QStringLiteral("Settings data exceeds the safe size limit"));
+    return false;
+  }
   QSaveFile file(path_);
   if (!file.open(QIODevice::WriteOnly)) {
     SetError(error, file.errorString());
     return false;
   }
-  if (file.write(QJsonDocument(root).toJson(QJsonDocument::Compact)) < 0) {
+  if (file.write(bytes) != bytes.size()) {
     SetError(error, file.errorString());
     file.cancelWriting();
     return false;
@@ -132,20 +139,22 @@ bool BrowserSettings::Save(QString* error) const {
 }
 
 bool BrowserSettings::set_home_page(const QString& url) {
-  const QString trimmed = url.trimmed();
-  if (trimmed.isEmpty()) return false;
-  if (trimmed == QStringLiteral("about:blank")) {
-    home_page_ = trimmed;
+  const auto normalized = NormalizeStoredUrl(url);
+  if (!normalized || normalized->toUtf8().size() > kMaxHomePageBytes) {
+    return false;
+  }
+  if (*normalized == QStringLiteral("about:blank")) {
+    home_page_ = *normalized;
     return true;
   }
-  const QUrl parsed(trimmed);
+  const QUrl parsed(*normalized, QUrl::StrictMode);
   const QString scheme = parsed.scheme().toLower();
   if (!parsed.isValid() || parsed.host().isEmpty() ||
       (scheme != QStringLiteral("http") &&
        scheme != QStringLiteral("https"))) {
     return false;
   }
-  home_page_ = parsed.toString();
+  home_page_ = parsed.toString(QUrl::FullyEncoded);
   return true;
 }
 
