@@ -629,6 +629,12 @@ void MainWindow::CancelCurrentFaviconRequestForTesting() {
   }
 }
 
+void MainWindow::ExpireCurrentFaviconRequestForTesting() {
+  if (BrowserView* browser = CurrentBrowser()) {
+    browser->ExpireFaviconRequestForTesting();
+  }
+}
+
 bool MainWindow::current_favicon_request_active_for_testing() const {
   BrowserView* browser = CurrentBrowser();
   return browser && browser->favicon_request_active_for_testing();
@@ -637,6 +643,16 @@ bool MainWindow::current_favicon_request_active_for_testing() const {
 bool MainWindow::current_favicon_request_pending_for_testing() const {
   BrowserView* browser = CurrentBrowser();
   return browser && browser->favicon_request_pending_for_testing();
+}
+
+bool MainWindow::current_favicon_request_timeout_active_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->favicon_request_timeout_active_for_testing();
+}
+
+QString MainWindow::current_favicon_request_url_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser ? browser->favicon_request_url_for_testing() : QString();
 }
 
 bool MainWindow::current_tab_has_favicon_for_testing() const {

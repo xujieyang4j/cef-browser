@@ -24,6 +24,7 @@ class QHideEvent;
 class QMessageBox;
 class QResizeEvent;
 class QShowEvent;
+class QTimer;
 
 class BrowserView final : public QWidget {
   Q_OBJECT
@@ -134,11 +135,16 @@ class BrowserView final : public QWidget {
   void SetFaviconForTesting(const QIcon& icon);
   void QueueFaviconUrlsForTesting(const QStringList& urls);
   void CancelFaviconRequestForTesting() { CancelFaviconRequest(); }
+  void ExpireFaviconRequestForTesting() { ExpireFaviconRequest(); }
   bool favicon_request_active_for_testing() const {
     return favicon_request_ != nullptr;
   }
   bool favicon_request_pending_for_testing() const {
     return !pending_favicon_url_.isEmpty();
+  }
+  bool favicon_request_timeout_active_for_testing() const;
+  const QString& favicon_request_url_for_testing() const {
+    return active_favicon_url_;
   }
   void SetAudioStateForTesting(bool playing, bool muted);
   void ToggleAudioMuted();
@@ -246,6 +252,7 @@ class BrowserView final : public QWidget {
   void StartFaviconRequest(const QString& url, quint64 generation);
   void StartPendingFaviconRequest();
   void CancelFaviconRequest();
+  void ExpireFaviconRequest();
   void ShowFailurePage(const QString& heading, const QString& summary,
                        const QString& detail, const QString& failed_url,
                        bool render_process_failed);
@@ -260,9 +267,11 @@ class BrowserView final : public QWidget {
   QString favicon_url_;
   quint64 favicon_request_generation_ = 0;
   quint64 active_favicon_request_generation_ = 0;
+  QString active_favicon_url_;
   QString pending_favicon_url_;
   quint64 pending_favicon_request_generation_ = 0;
   CefRefPtr<CefURLRequest> favicon_request_;
+  QTimer* favicon_request_timer_ = nullptr;
   CefRefPtr<CefDownloadHandler> download_handler_;
   CefRefPtr<BrowserClient> client_;
   CefRefPtr<CefBrowser> browser_;

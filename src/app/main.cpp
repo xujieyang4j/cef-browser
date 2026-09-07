@@ -1752,7 +1752,15 @@ void StartFaviconSmokeTest(MainWindow* window) {
       {QStringLiteral("https://favicon.invalid/latest.png")});
   const bool requests_coalesced =
       window->current_favicon_request_active_for_testing() &&
-      window->current_favicon_request_pending_for_testing();
+      window->current_favicon_request_pending_for_testing() &&
+      window->current_favicon_request_timeout_active_for_testing();
+  window->ExpireCurrentFaviconRequestForTesting();
+  const bool timeout_advanced =
+      window->current_favicon_request_active_for_testing() &&
+      !window->current_favicon_request_pending_for_testing() &&
+      window->current_favicon_request_timeout_active_for_testing() &&
+      window->current_favicon_request_url_for_testing() ==
+          QStringLiteral("https://favicon.invalid/latest.png");
   window->CancelCurrentFaviconRequestForTesting();
   const bool request_cancelled =
       !window->current_favicon_request_active_for_testing() &&
@@ -1772,9 +1780,11 @@ void StartFaviconSmokeTest(MainWindow* window) {
                                     QStringLiteral("Link Target "));
   if (window->current_tab_has_favicon_for_testing() && urls_bounded &&
       candidates_bounded && images_bounded && stream_bounded &&
-      requests_coalesced && request_cancelled && metadata_bounded) {
+      requests_coalesced && timeout_advanced && request_cancelled &&
+      metadata_bounded) {
     *output << "FAVICON_SMOKE_OK tab_icon=visible inputs=bounded "
-               "stream=bounded requests=single-flight metadata=bounded"
+               "stream=bounded requests=single-flight timeout=bounded "
+               "metadata=bounded"
             << Qt::endl;
     window->close();
   } else {
@@ -1785,6 +1795,7 @@ void StartFaviconSmokeTest(MainWindow* window) {
             << " images=" << images_bounded
             << " stream=" << stream_bounded
             << " single_flight=" << requests_coalesced
+            << " timeout=" << timeout_advanced
             << " cancelled=" << request_cancelled
             << " metadata=" << metadata_bounded
             << Qt::endl;

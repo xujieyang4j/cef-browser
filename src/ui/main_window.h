@@ -71,8 +71,11 @@ class MainWindow final : public QMainWindow {
   void SetCurrentFaviconForTesting();
   void QueueCurrentFaviconUrlsForTesting(const QStringList& urls);
   void CancelCurrentFaviconRequestForTesting();
+  void ExpireCurrentFaviconRequestForTesting();
   bool current_favicon_request_active_for_testing() const;
   bool current_favicon_request_pending_for_testing() const;
+  bool current_favicon_request_timeout_active_for_testing() const;
+  QString current_favicon_request_url_for_testing() const;
   bool current_tab_has_favicon_for_testing() const;
   void SetCurrentAudioStateForTesting(bool playing, bool muted);
   void ToggleCurrentAudioMutedForTesting();

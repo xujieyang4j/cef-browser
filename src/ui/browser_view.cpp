@@ -18,6 +18,7 @@
 #include <QPixmap>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QtMath>
@@ -42,6 +43,7 @@ constexpr int kMaxFaviconUrlBytes = 64 * 1024;
 constexpr int kMaxFaviconPngBytes = 256 * 1024;
 constexpr int kMaxFaviconDimension = 128;
 constexpr int kMaxFaviconCandidates = 16;
+constexpr int kFaviconRequestTimeoutMs = 10 * 1000;
 constexpr int kMaxPageTitleCharacters = 512;
 constexpr int kMaxStatusMessageCharacters = 2048;
 constexpr int kMaxActionUrlBytes = 64 * 1024;
@@ -263,6 +265,10 @@ BrowserView::BrowserView(QString initial_url,
       download_handler_(std::move(download_handler)) {
   setAttribute(Qt::WA_NativeWindow);
   setFocusPolicy(Qt::StrongFocus);
+  favicon_request_timer_ = new QTimer(this);
+  favicon_request_timer_->setSingleShot(true);
+  connect(favicon_request_timer_, &QTimer::timeout, this,
+          &BrowserView::ExpireFaviconRequest);
 }
 
 BrowserView::~BrowserView() {
@@ -316,6 +322,10 @@ void BrowserView::SetFaviconForTesting(const QIcon& icon) {
 
 void BrowserView::QueueFaviconUrlsForTesting(const QStringList& urls) {
   if (browser_) OnCefFaviconURLChanged(browser_, urls);
+}
+
+bool BrowserView::favicon_request_timeout_active_for_testing() const {
+  return favicon_request_timer_->isActive();
 }
 
 void BrowserView::SetAudioStateForTesting(bool playing, bool muted) {
@@ -877,12 +887,16 @@ void BrowserView::StartFaviconRequest(const QString& url, quint64 generation) {
   request->SetMethod("GET");
   request->SetFlags(UR_FLAG_NONE);
   active_favicon_request_generation_ = generation;
+  active_favicon_url_ = url;
   favicon_request_ = browser_->GetMainFrame()->CreateURLRequest(
       request, new FaviconRequestClient(this, browser_->GetIdentifier(), url,
                                         generation));
   if (!favicon_request_) {
     active_favicon_request_generation_ = 0;
+    active_favicon_url_.clear();
     StartPendingFaviconRequest();
+  } else {
+    favicon_request_timer_->start(kFaviconRequestTimeoutMs);
   }
 }
 
@@ -900,19 +914,34 @@ void BrowserView::StartPendingFaviconRequest() {
 
 void BrowserView::CancelFaviconRequest() {
   ++favicon_request_generation_;
+  favicon_request_timer_->stop();
   pending_favicon_url_.clear();
   pending_favicon_request_generation_ = 0;
   active_favicon_request_generation_ = 0;
+  active_favicon_url_.clear();
   if (favicon_request_) favicon_request_->Cancel();
   favicon_request_ = nullptr;
+}
+
+void BrowserView::ExpireFaviconRequest() {
+  if (!favicon_request_) return;
+  CefRefPtr<CefURLRequest> expired_request = favicon_request_;
+  favicon_request_ = nullptr;
+  active_favicon_request_generation_ = 0;
+  active_favicon_url_.clear();
+  favicon_request_timer_->stop();
+  expired_request->Cancel();
+  StartPendingFaviconRequest();
 }
 
 void BrowserView::OnCefFaviconRequestComplete(
     int browser_id, const QString& image_url, quint64 generation,
     const QByteArray& image_data) {
   if (generation != active_favicon_request_generation_) return;
+  favicon_request_timer_->stop();
   favicon_request_ = nullptr;
   active_favicon_request_generation_ = 0;
+  active_favicon_url_.clear();
   const bool current = browser_ && browser_->GetIdentifier() == browser_id &&
                        generation == favicon_request_generation_ &&
                        image_url == favicon_url_;
