@@ -7,8 +7,11 @@ main window and integrates CEF's external message pump with Qt's event loop.
 Current features include tabbed browsing, navigation controls, URL/search
 normalization, page titles, pop-up routing based on the requested disposition,
 recently closed tab recovery, F12 DevTools, persistent CEF cache, and orderly
-asynchronous browser shutdown. Linux, Windows, and macOS build paths are
-represented in the project.
+asynchronous browser shutdown. Downloads have a window-level manager with
+progress, speed, cancellation, completion actions, and a platform save dialog;
+they continue when the originating tab closes. Main-frame load failures and
+renderer crashes display a retry page while preserving the requested URL.
+Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
 
@@ -85,7 +88,8 @@ timeout 20s xvfb-run -a ./build/trail-browser --smoke-test-tabs \
 
 A passing run prints `TAB_SMOKE_OK` and exits with status 0 after creating,
 closing, reopening, and finally shutting down multiple CEF browser instances.
-The same check is registered with CTest when `xvfb-run` is available:
+CTest also runs deterministic download-state and failure-page checks. All three
+checks are registered when `xvfb-run` is available:
 
 ~~~sh
 ctest --test-dir build --output-on-failure

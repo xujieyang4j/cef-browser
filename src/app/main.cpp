@@ -102,6 +102,66 @@ void StartTabSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
+void StartDownloadSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  window->UpdateDownloadForTesting(41, 25, false);
+  const bool started = window->download_count_for_testing() == 1 &&
+                       window->active_download_count_for_testing() == 1 &&
+                       window->download_status_for_testing(41).startsWith(
+                           QStringLiteral("25%"));
+  window->UpdateDownloadForTesting(41, 100, true);
+  const bool completed = window->download_count_for_testing() == 1 &&
+                         window->active_download_count_for_testing() == 0 &&
+                         window->download_status_for_testing(41) ==
+                             QStringLiteral("Complete");
+  if (started && completed) {
+    *output << "DOWNLOAD_SMOKE_OK status=Complete" << Qt::endl;
+    window->close();
+  } else {
+    *output << "DOWNLOAD_SMOKE_FAILED started=" << started
+            << " completed=" << completed << Qt::endl;
+    QCoreApplication::exit(3);
+  }
+}
+
+void StartFailureSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  const QString original_url =
+      QStringLiteral("data:text/html,<title>Recovery</title>");
+  *step = [window, output, attempts, step, original_url] {
+    ++*attempts;
+    if (window->current_title() != QStringLiteral("Recovery")) {
+      if (*attempts > 120) {
+        *output << "FAILURE_SMOKE_FAILED stage=load" << Qt::endl;
+        QCoreApplication::exit(4);
+        return;
+      }
+      QTimer::singleShot(50, window, [step] { (*step)(); });
+      return;
+    }
+
+    window->ShowFailureForTesting(false);
+    const bool load_error = window->failure_page_active_for_testing() &&
+                            !window->render_process_failed_for_testing() &&
+                            window->current_url() == original_url;
+    window->ShowFailureForTesting(true);
+    const bool renderer_error = window->failure_page_active_for_testing() &&
+                                window->render_process_failed_for_testing() &&
+                                window->current_url() == original_url;
+    if (load_error && renderer_error) {
+      *output << "FAILURE_SMOKE_OK url=" << window->current_url() << Qt::endl;
+      window->close();
+    } else {
+      *output << "FAILURE_SMOKE_FAILED load=" << load_error
+              << " renderer=" << renderer_error << Qt::endl;
+      QCoreApplication::exit(4);
+    }
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
 QString InitialUrl() {
   const QStringList arguments = QCoreApplication::arguments();
   for (int index = 1; index < arguments.size(); ++index) {
@@ -194,6 +254,11 @@ int RunBrowser(int argc, char* argv[]) {
     message_pump.Schedule(0);
     if (HasArgument(QStringLiteral("--smoke-test-tabs"))) {
       StartTabSmokeTest(&main_window);
+    } else if (HasArgument(QStringLiteral("--smoke-test-downloads"))) {
+      QTimer::singleShot(300, &main_window,
+                         [&main_window] { StartDownloadSmokeTest(&main_window); });
+    } else if (HasArgument(QStringLiteral("--smoke-test-failures"))) {
+      StartFailureSmokeTest(&main_window);
     }
     exit_code = application.exec();
   }

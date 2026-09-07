@@ -1,11 +1,15 @@
 #include "browser/browser_client.h"
 
+#include <utility>
+
 #include <QString>
 
 #include "include/wrapper/cef_helpers.h"
 #include "ui/browser_view.h"
 
-BrowserClient::BrowserClient(BrowserView* owner) : owner_(owner) {}
+BrowserClient::BrowserClient(
+    BrowserView* owner, CefRefPtr<CefDownloadHandler> download_handler)
+    : owner_(owner), download_handler_(std::move(download_handler)) {}
 
 void BrowserClient::OnTitleChange(CefRefPtr<CefBrowser> browser,
                                   const CefString& title) {
@@ -34,6 +38,31 @@ void BrowserClient::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
   if (owner_) {
     owner_->OnCefLoadingStateChanged(browser, is_loading, can_go_back,
                                      can_go_forward);
+  }
+}
+
+void BrowserClient::OnLoadError(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame,
+                                ErrorCode error_code,
+                                const CefString& error_text,
+                                const CefString& failed_url) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_ && frame->IsMain() && error_code != ERR_ABORTED) {
+    owner_->OnCefLoadError(
+        browser, static_cast<int>(error_code),
+        QString::fromStdString(error_text.ToString()),
+        QString::fromStdString(failed_url.ToString()));
+  }
+}
+
+void BrowserClient::OnRenderProcessTerminated(
+    CefRefPtr<CefBrowser> browser, TerminationStatus status, int error_code,
+    const CefString& error_string) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) {
+    owner_->OnCefRenderProcessTerminated(
+        browser, static_cast<int>(status), error_code,
+        QString::fromStdString(error_string.ToString()));
   }
 }
 
@@ -73,7 +102,7 @@ void BrowserClient::OnDialogClosed(CefRefPtr<CefBrowser> browser) {
 bool BrowserClient::OnBeforePopup(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, int,
     const CefString& target_url, const CefString&,
-    WindowOpenDisposition target_disposition, bool,
+    cef_window_open_disposition_t target_disposition, bool,
     const CefPopupFeatures&, CefWindowInfo&, CefRefPtr<CefClient>&,
     CefBrowserSettings&, CefRefPtr<CefDictionaryValue>&, bool*) {
   CEF_REQUIRE_UI_THREAD();

@@ -61,8 +61,12 @@ set(TRAIL_BROWSER_SOURCES
   src/app/browser_app.h
   src/browser/browser_client.cpp
   src/browser/browser_client.h
+  src/download/download_manager.cpp
+  src/download/download_manager.h
   src/ui/browser_view.cpp
   src/ui/browser_view.h
+  src/ui/download_panel.cpp
+  src/ui/download_panel.h
   src/ui/main_window.cpp
   src/ui/main_window.h
 )
@@ -157,6 +161,21 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_tabs PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "TAB_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_downloads
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-downloads)
+    set_tests_properties(trail_browser_downloads PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "DOWNLOAD_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_failures
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-failures
+              "data:text/html,<title>Recovery</title>")
+    set_tests_properties(trail_browser_failures PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "FAILURE_SMOKE_OK"
     )
   endif()
 endif()

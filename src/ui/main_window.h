@@ -6,6 +6,8 @@
 #include <QStringList>
 
 class BrowserView;
+class DownloadManager;
+class DownloadPanel;
 class QCloseEvent;
 class QLineEdit;
 class QPushButton;
@@ -23,6 +25,13 @@ class MainWindow final : public QMainWindow {
   void OpenTabForTesting(const QString& url);
   void CloseCurrentTabForTesting();
   void ReopenClosedTabForTesting();
+  void UpdateDownloadForTesting(quint32 id, int percent, bool complete);
+  int download_count_for_testing() const;
+  int active_download_count_for_testing() const;
+  QString download_status_for_testing(quint32 id) const;
+  void ShowFailureForTesting(bool render_process_failed);
+  bool failure_page_active_for_testing() const;
+  bool render_process_failed_for_testing() const;
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -58,6 +67,8 @@ class MainWindow final : public QMainWindow {
   QPushButton* back_button_ = nullptr;
   QPushButton* forward_button_ = nullptr;
   QPushButton* reload_button_ = nullptr;
+  DownloadManager* download_manager_ = nullptr;
+  DownloadPanel* download_panel_ = nullptr;
   QSet<BrowserView*> closing_tabs_;
   QHash<BrowserView*, QString> pending_closed_urls_;
   QStringList closed_tabs_;

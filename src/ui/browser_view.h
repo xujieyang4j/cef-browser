@@ -4,6 +4,7 @@
 #include <QWidget>
 
 #include "include/cef_browser.h"
+#include "include/cef_download_handler.h"
 
 class BrowserClient;
 class QFocusEvent;
@@ -24,7 +25,9 @@ class BrowserView final : public QWidget {
     PreviousTab,
   };
 
-  explicit BrowserView(QString initial_url, QWidget* parent = nullptr);
+  BrowserView(QString initial_url,
+              CefRefPtr<CefDownloadHandler> download_handler,
+              QWidget* parent = nullptr);
   ~BrowserView() override;
 
   void LoadUrl(const QString& url);
@@ -39,6 +42,9 @@ class BrowserView final : public QWidget {
   bool is_loading() const { return is_loading_; }
   bool can_go_back() const { return can_go_back_; }
   bool can_go_forward() const { return can_go_forward_; }
+  bool failure_page_active() const { return failure_page_active_; }
+  bool render_process_failed() const { return render_process_failed_; }
+  void ShowFailureForTesting(bool render_process_failed);
 
   // Starts an asynchronous close and returns true if no browser exists.
   bool RequestClose();
@@ -54,6 +60,11 @@ class BrowserView final : public QWidget {
   void OnCefLoadingStateChanged(CefRefPtr<CefBrowser> browser, bool loading,
                                 bool can_go_back,
                                 bool can_go_forward);
+  void OnCefLoadError(CefRefPtr<CefBrowser> browser, int error_code,
+                      const QString& error_text, const QString& failed_url);
+  void OnCefRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                    int status, int error_code,
+                                    const QString& error_string);
   void OnCefPopupRequested(CefRefPtr<CefBrowser> browser, const QString& url,
                            cef_window_open_disposition_t disposition);
 
@@ -79,10 +90,18 @@ class BrowserView final : public QWidget {
   void CreateBrowserIfNeeded();
   void UpdateNativeVisibility();
   void ResizeBrowser();
+  void ShowFailurePage(const QString& heading, const QString& summary,
+                       const QString& detail, const QString& failed_url,
+                       bool render_process_failed);
+  static QString FailurePageUrl(const QString& heading,
+                                const QString& summary,
+                                const QString& detail,
+                                const QString& retry_url);
 
   QString initial_url_;
   QString current_url_;
   QString page_title_;
+  CefRefPtr<CefDownloadHandler> download_handler_;
   CefRefPtr<BrowserClient> client_;
   CefRefPtr<CefBrowser> browser_;
   QSet<int> browser_ids_;
@@ -93,6 +112,9 @@ class BrowserView final : public QWidget {
   bool is_loading_ = false;
   bool can_go_back_ = false;
   bool can_go_forward_ = false;
+  bool failure_page_active_ = false;
+  bool render_process_failed_ = false;
+  QString failure_page_url_;
 
   Q_DISABLE_COPY_MOVE(BrowserView)
 };

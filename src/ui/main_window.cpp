@@ -15,7 +15,9 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "download/download_manager.h"
 #include "ui/browser_view.h"
+#include "ui/download_panel.h"
 
 namespace {
 
@@ -88,6 +90,7 @@ MainWindow::MainWindow(const QString& initial_url, QWidget* parent)
   forward_button_ = new QPushButton(QStringLiteral("→"), toolbar);
   reload_button_ = new QPushButton(QStringLiteral("↻"), toolbar);
   address_bar_ = new QLineEdit(toolbar);
+  auto* downloads_button = new QPushButton(QStringLiteral("Downloads"), toolbar);
 
   back_button_->setToolTip(QStringLiteral("Back"));
   forward_button_->setToolTip(QStringLiteral("Forward"));
@@ -95,6 +98,7 @@ MainWindow::MainWindow(const QString& initial_url, QWidget* parent)
   address_bar_->setPlaceholderText(
       QStringLiteral("Search or enter an address"));
   address_bar_->setClearButtonEnabled(true);
+  downloads_button->setToolTip(QStringLiteral("Show downloads"));
   back_button_->setEnabled(false);
   forward_button_->setEnabled(false);
 
@@ -102,11 +106,15 @@ MainWindow::MainWindow(const QString& initial_url, QWidget* parent)
   toolbar_layout->addWidget(forward_button_);
   toolbar_layout->addWidget(reload_button_);
   toolbar_layout->addWidget(address_bar_, 1);
+  toolbar_layout->addWidget(downloads_button);
 
   tab_stack_ = new QStackedWidget(central);
+  download_manager_ = new DownloadManager(this);
+  download_panel_ = new DownloadPanel(download_manager_, central);
   page_layout->addWidget(tab_strip);
   page_layout->addWidget(toolbar);
   page_layout->addWidget(tab_stack_, 1);
+  page_layout->addWidget(download_panel_);
   setCentralWidget(central);
 
   connect(add_tab_button, &QToolButton::clicked, this, &MainWindow::AddBlankTab);
@@ -130,6 +138,14 @@ MainWindow::MainWindow(const QString& initial_url, QWidget* parent)
   });
   connect(address_bar_, &QLineEdit::returnPressed, this,
           &MainWindow::NavigateFromAddressBar);
+  connect(downloads_button, &QPushButton::clicked, download_panel_,
+          &DownloadPanel::ToggleVisibility);
+  connect(download_manager_, &DownloadManager::ActiveCountChanged, this,
+          [downloads_button](int count) {
+            downloads_button->setText(
+                count > 0 ? QStringLiteral("Downloads (%1)").arg(count)
+                          : QStringLiteral("Downloads"));
+          });
 
   auto* focus_address =
       new QShortcut(QKeySequence(QStringLiteral("Ctrl+L")), this);
@@ -201,6 +217,51 @@ void MainWindow::ReopenClosedTabForTesting() {
   ReopenClosedTab();
 }
 
+void MainWindow::UpdateDownloadForTesting(quint32 id, int percent,
+                                          bool complete) {
+  DownloadManager::Item item;
+  item.id = id;
+  item.file_name = QStringLiteral("trail-test.bin");
+  item.url = QStringLiteral("https://example.test/trail-test.bin");
+  item.total_bytes = 1024;
+  item.received_bytes = complete ? item.total_bytes
+                                 : item.total_bytes * percent / 100;
+  item.bytes_per_second = complete ? 0 : 256;
+  item.percent = complete ? 100 : percent;
+  item.state = complete ? DownloadManager::State::Complete
+                        : DownloadManager::State::InProgress;
+  download_manager_->UpdateForTesting(item);
+}
+
+int MainWindow::download_count_for_testing() const {
+  return download_manager_->items().size();
+}
+
+int MainWindow::active_download_count_for_testing() const {
+  return download_manager_->active_count();
+}
+
+QString MainWindow::download_status_for_testing(quint32 id) const {
+  const auto item = download_manager_->item(id);
+  return item ? DownloadManager::StatusText(*item) : QString();
+}
+
+void MainWindow::ShowFailureForTesting(bool render_process_failed) {
+  if (BrowserView* browser = CurrentBrowser()) {
+    browser->ShowFailureForTesting(render_process_failed);
+  }
+}
+
+bool MainWindow::failure_page_active_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->failure_page_active();
+}
+
+bool MainWindow::render_process_failed_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->render_process_failed();
+}
+
 void MainWindow::closeEvent(QCloseEvent* event) {
   if (allow_window_close_) {
     event->accept();
@@ -269,7 +330,7 @@ void MainWindow::UpdateAddress(const QString& url) {
 
 BrowserView* MainWindow::AddTab(const QString& url, bool activate,
                                 bool focus_address) {
-  auto* browser = new BrowserView(url, tab_stack_);
+  auto* browser = new BrowserView(url, download_manager_->handler(), tab_stack_);
   tab_stack_->addWidget(browser);
   const int tab_index = tab_bar_->addTab(TabText({}, url));
   tab_bar_->setTabData(tab_index, QVariant::fromValue(browser));

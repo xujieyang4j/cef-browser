@@ -11,15 +11,21 @@ class BrowserClient final : public CefClient,
                             public CefJSDialogHandler,
                             public CefKeyboardHandler,
                             public CefLifeSpanHandler,
-                            public CefLoadHandler {
+                            public CefLoadHandler,
+                            public CefRequestHandler {
  public:
-  explicit BrowserClient(BrowserView* owner);
+  BrowserClient(BrowserView* owner,
+                CefRefPtr<CefDownloadHandler> download_handler);
 
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override {
+    return download_handler_;
+  }
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
   CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+  CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
                      const CefString& title) override;
@@ -30,6 +36,13 @@ class BrowserClient final : public CefClient,
                             bool is_loading,
                             bool can_go_back,
                             bool can_go_forward) override;
+  void OnLoadError(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame, ErrorCode error_code,
+                   const CefString& error_text,
+                   const CefString& failed_url) override;
+  void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                 TerminationStatus status, int error_code,
+                                 const CefString& error_string) override;
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
   bool DoClose(CefRefPtr<CefBrowser> browser) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
@@ -42,7 +55,7 @@ class BrowserClient final : public CefClient,
                      int popup_id,
                      const CefString& target_url,
                      const CefString& target_frame_name,
-                     WindowOpenDisposition target_disposition,
+                     cef_window_open_disposition_t target_disposition,
                      bool user_gesture,
                      const CefPopupFeatures& popup_features,
                      CefWindowInfo& window_info,
@@ -55,6 +68,7 @@ class BrowserClient final : public CefClient,
 
  private:
   QPointer<BrowserView> owner_;
+  CefRefPtr<CefDownloadHandler> download_handler_;
 
   IMPLEMENT_REFCOUNTING(BrowserClient);
   DISALLOW_COPY_AND_ASSIGN(BrowserClient);

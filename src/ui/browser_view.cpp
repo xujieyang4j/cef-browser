@@ -9,6 +9,7 @@
 #include <QMetaObject>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QUrl>
 
 #include "browser/browser_client.h"
 #include "include/cef_browser.h"
@@ -22,10 +23,13 @@
 #import <AppKit/AppKit.h>
 #endif
 
-BrowserView::BrowserView(QString initial_url, QWidget* parent)
+BrowserView::BrowserView(QString initial_url,
+                         CefRefPtr<CefDownloadHandler> download_handler,
+                         QWidget* parent)
     : QWidget(parent),
       initial_url_(std::move(initial_url)),
-      current_url_(initial_url_) {
+      current_url_(initial_url_),
+      download_handler_(std::move(download_handler)) {
   setAttribute(Qt::WA_NativeWindow);
   setFocusPolicy(Qt::StrongFocus);
 }
@@ -41,6 +45,9 @@ BrowserView::~BrowserView() {
 }
 
 void BrowserView::LoadUrl(const QString& url) {
+  failure_page_active_ = false;
+  render_process_failed_ = false;
+  failure_page_url_.clear();
   if (browser_) {
     const QByteArray encoded_url = url.toUtf8();
     browser_->GetMainFrame()->LoadURL(
@@ -48,6 +55,20 @@ void BrowserView::LoadUrl(const QString& url) {
   } else {
     initial_url_ = url;
     CreateBrowserIfNeeded();
+  }
+}
+
+void BrowserView::ShowFailureForTesting(bool render_process_failed) {
+  if (render_process_failed) {
+    ShowFailurePage(QStringLiteral("This page crashed"),
+                    QStringLiteral("The page renderer stopped unexpectedly."),
+                    QStringLiteral("Test renderer termination"), current_url_,
+                    true);
+  } else {
+    ShowFailurePage(QStringLiteral("Page unavailable"),
+                    QStringLiteral("Trail Browser could not load this page."),
+                    QStringLiteral("ERR_TEST_FAILURE (-999)"), current_url_,
+                    false);
   }
 }
 
@@ -60,7 +81,12 @@ void BrowserView::GoForward() {
 }
 
 void BrowserView::Reload() {
-  if (browser_) browser_->Reload();
+  if (!browser_) return;
+  if (failure_page_active_) {
+    LoadUrl(current_url_);
+  } else {
+    browser_->Reload();
+  }
 }
 
 void BrowserView::Stop() {
@@ -189,6 +215,15 @@ void BrowserView::OnCefTitleChanged(CefRefPtr<CefBrowser> browser,
 void BrowserView::OnCefAddressChanged(CefRefPtr<CefBrowser> browser,
                                       const QString& url) {
   if (browser_ && browser_->IsSame(browser)) {
+    if (failure_page_active_ && url == failure_page_url_) {
+      // The data URL is only an implementation detail. Keep the attempted URL
+      // visible and available for session restore and manual retry.
+      emit AddressChanged(current_url_);
+      return;
+    }
+    failure_page_active_ = false;
+    render_process_failed_ = false;
+    failure_page_url_.clear();
     current_url_ = url;
     emit AddressChanged(url);
   }
@@ -205,12 +240,103 @@ void BrowserView::OnCefLoadingStateChanged(CefRefPtr<CefBrowser> browser,
   }
 }
 
+void BrowserView::OnCefLoadError(CefRefPtr<CefBrowser> browser, int error_code,
+                                 const QString& error_text,
+                                 const QString& failed_url) {
+  if (!browser_ || !browser_->IsSame(browser) || closing_ ||
+      failed_url == failure_page_url_) {
+    return;
+  }
+  const QString url = failed_url.isEmpty() ? current_url_ : failed_url;
+  ShowFailurePage(
+      QStringLiteral("Page unavailable"),
+      QStringLiteral("Trail Browser could not load this page."),
+      QStringLiteral("%1 (%2)").arg(error_text).arg(error_code), url, false);
+}
+
+void BrowserView::OnCefRenderProcessTerminated(
+    CefRefPtr<CefBrowser> browser, int status, int error_code,
+    const QString& error_string) {
+  if (!browser_ || !browser_->IsSame(browser) || closing_ ||
+      render_process_failed_) {
+    return;
+  }
+
+  QString reason;
+  switch (static_cast<cef_termination_status_t>(status)) {
+    case TS_PROCESS_WAS_KILLED:
+      reason = QStringLiteral("Renderer was terminated");
+      break;
+    case TS_PROCESS_CRASHED:
+      reason = QStringLiteral("Renderer crashed");
+      break;
+    case TS_PROCESS_OOM:
+      reason = QStringLiteral("Renderer ran out of memory");
+      break;
+    case TS_LAUNCH_FAILED:
+      reason = QStringLiteral("Renderer could not start");
+      break;
+    case TS_INTEGRITY_FAILURE:
+      reason = QStringLiteral("Renderer integrity check failed");
+      break;
+    case TS_ABNORMAL_TERMINATION:
+    default:
+      reason = QStringLiteral("Renderer stopped unexpectedly");
+      break;
+  }
+  if (!error_string.isEmpty()) reason += QStringLiteral(": %1").arg(error_string);
+  if (error_code != 0) reason += QStringLiteral(" (%1)").arg(error_code);
+  ShowFailurePage(QStringLiteral("This page crashed"),
+                  QStringLiteral("Your other tabs are still available."),
+                  reason, current_url_, true);
+}
+
 void BrowserView::OnCefPopupRequested(CefRefPtr<CefBrowser> browser,
                                       const QString& url,
                                       cef_window_open_disposition_t disposition) {
   if (browser_ && browser_->IsSame(browser)) {
     emit PopupRequested(url, static_cast<int>(disposition));
   }
+}
+
+void BrowserView::ShowFailurePage(const QString& heading,
+                                  const QString& summary,
+                                  const QString& detail,
+                                  const QString& failed_url,
+                                  bool render_process_failed) {
+  if (!browser_ || failed_url.isEmpty()) return;
+  current_url_ = failed_url;
+  failure_page_active_ = true;
+  render_process_failed_ = render_process_failed;
+  failure_page_url_ = FailurePageUrl(heading, summary, detail, failed_url);
+  emit AddressChanged(current_url_);
+  const QByteArray encoded = failure_page_url_.toUtf8();
+  browser_->GetMainFrame()->LoadURL(
+      std::string(encoded.constData(), encoded.size()));
+}
+
+QString BrowserView::FailurePageUrl(const QString& heading,
+                                    const QString& summary,
+                                    const QString& detail,
+                                    const QString& retry_url) {
+  const QString html = QStringLiteral(
+      "<!doctype html><meta charset=utf-8><meta name=viewport "
+      "content='width=device-width'><title>%1</title><style>"
+      ":root{color-scheme:light dark}body{font-family:system-ui,sans-serif;"
+      "margin:0;display:grid;min-height:100vh;place-items:center;background:#f5f6f8;"
+      "color:#202124}.card{max-width:620px;margin:32px;padding:36px;border-radius:18px;"
+      "background:white;box-shadow:0 12px 40px #00000018}h1{margin-top:0;font-size:30px}"
+      "p{line-height:1.55}.url{word-break:break-all;color:#5f6368}.detail{font-family:ui-monospace,"
+      "monospace;font-size:13px;color:#6b7280}a{display:inline-block;margin-top:14px;padding:10px 18px;"
+      "border-radius:9px;background:#2563eb;color:white;text-decoration:none}"
+      "@media(prefers-color-scheme:dark){body{background:#202124;color:#e8eaed}.card{background:#292a2d}"
+      ".url,.detail{color:#bdc1c6}}</style><main class=card><h1>%1</h1><p>%2</p>"
+      "<p class=url>%3</p><p class=detail>%4</p><a href=\"%5\">Try again</a></main>")
+                           .arg(heading.toHtmlEscaped(), summary.toHtmlEscaped(),
+                                retry_url.toHtmlEscaped(), detail.toHtmlEscaped(),
+                                retry_url.toHtmlEscaped());
+  return QStringLiteral("data:text/html;charset=utf-8,%1")
+      .arg(QString::fromLatin1(QUrl::toPercentEncoding(html)));
 }
 
 void BrowserView::showEvent(QShowEvent* event) {
@@ -238,7 +364,7 @@ void BrowserView::CreateBrowserIfNeeded() {
   if (create_requested_ || closing_ || !isVisible()) return;
 
   create_requested_ = true;
-  client_ = new BrowserClient(this);
+  client_ = new BrowserClient(this, download_handler_);
 
   CefWindowInfo window_info;
   const CefRect bounds(0, 0, std::max(1, width()), std::max(1, height()));
