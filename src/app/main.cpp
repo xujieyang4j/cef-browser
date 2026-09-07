@@ -1696,7 +1696,6 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path,
 
 void StartFaviconSmokeTest(MainWindow* window) {
   auto output = std::make_shared<QTextStream>(stdout);
-  window->SetCurrentFaviconForTesting();
   QImage safe_image(32, 32, QImage::Format_ARGB32);
   safe_image.fill(Qt::darkCyan);
   QByteArray safe_png;
@@ -1740,6 +1739,25 @@ void StartFaviconSmokeTest(MainWindow* window) {
       !BrowserView::IsAllowedFaviconPngForTesting(oversized_png) &&
       !BrowserView::IsAllowedFaviconPngForTesting(
           QByteArray(256 * 1024 + 1, '\0'));
+  const bool stream_bounded =
+      BrowserView::AcceptsFaviconChunksForTesting(
+          {QByteArray(128 * 1024, 'a'), QByteArray(),
+           QByteArray(128 * 1024, 'b')}) &&
+      !BrowserView::AcceptsFaviconChunksForTesting(
+          {QByteArray(128 * 1024, 'a'),
+           QByteArray(128 * 1024 + 1, 'b')});
+  window->QueueCurrentFaviconUrlsForTesting(
+      {QStringLiteral("https://favicon.invalid/first.png")});
+  window->QueueCurrentFaviconUrlsForTesting(
+      {QStringLiteral("https://favicon.invalid/latest.png")});
+  const bool requests_coalesced =
+      window->current_favicon_request_active_for_testing() &&
+      window->current_favicon_request_pending_for_testing();
+  window->CancelCurrentFaviconRequestForTesting();
+  const bool request_cancelled =
+      !window->current_favicon_request_active_for_testing() &&
+      !window->current_favicon_request_pending_for_testing();
+  window->SetCurrentFaviconForTesting();
   const QString normalized_title = BrowserView::NormalizePageTitleForTesting(
       QStringLiteral("  Page\nTitle  ") + QString(600, QLatin1Char('t')));
   const QString normalized_status =
@@ -1753,9 +1771,10 @@ void StartFaviconSmokeTest(MainWindow* window) {
                                 normalized_status.startsWith(
                                     QStringLiteral("Link Target "));
   if (window->current_tab_has_favicon_for_testing() && urls_bounded &&
-      candidates_bounded && images_bounded && metadata_bounded) {
+      candidates_bounded && images_bounded && stream_bounded &&
+      requests_coalesced && request_cancelled && metadata_bounded) {
     *output << "FAVICON_SMOKE_OK tab_icon=visible inputs=bounded "
-               "metadata=bounded"
+               "stream=bounded requests=single-flight metadata=bounded"
             << Qt::endl;
     window->close();
   } else {
@@ -1764,6 +1783,9 @@ void StartFaviconSmokeTest(MainWindow* window) {
             << " urls=" << urls_bounded
             << " candidates=" << candidates_bounded
             << " images=" << images_bounded
+            << " stream=" << stream_bounded
+            << " single_flight=" << requests_coalesced
+            << " cancelled=" << request_cancelled
             << " metadata=" << metadata_bounded
             << Qt::endl;
     QCoreApplication::exit(12);

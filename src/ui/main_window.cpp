@@ -617,6 +617,28 @@ void MainWindow::SetCurrentFaviconForTesting() {
   browser->SetFaviconForTesting(QIcon(image));
 }
 
+void MainWindow::QueueCurrentFaviconUrlsForTesting(const QStringList& urls) {
+  if (BrowserView* browser = CurrentBrowser()) {
+    browser->QueueFaviconUrlsForTesting(urls);
+  }
+}
+
+void MainWindow::CancelCurrentFaviconRequestForTesting() {
+  if (BrowserView* browser = CurrentBrowser()) {
+    browser->CancelFaviconRequestForTesting();
+  }
+}
+
+bool MainWindow::current_favicon_request_active_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->favicon_request_active_for_testing();
+}
+
+bool MainWindow::current_favicon_request_pending_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->favicon_request_pending_for_testing();
+}
+
 bool MainWindow::current_tab_has_favicon_for_testing() const {
   return !tab_bar_->tabIcon(tab_bar_->currentIndex()).isNull();
 }

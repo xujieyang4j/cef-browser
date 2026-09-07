@@ -24,6 +24,7 @@
 
 #include "browser/browser_client.h"
 #include "include/cef_browser.h"
+#include "include/cef_request.h"
 #include "include/wrapper/cef_helpers.h"
 
 #if defined(OS_WIN)
@@ -151,14 +152,28 @@ std::optional<QString> SelectFaviconUrl(const QStringList& urls) {
   return std::nullopt;
 }
 
-QImage DecodeFaviconPng(const QByteArray& png_data) {
-  if (png_data.isEmpty() || png_data.size() > kMaxFaviconPngBytes) {
+bool AppendFaviconData(QByteArray* target, const void* data,
+                       size_t data_length) {
+  if (!target || target->size() > kMaxFaviconPngBytes) return false;
+  if (data_length == 0) return true;
+  if (!data ||
+      data_length > static_cast<size_t>(kMaxFaviconPngBytes - target->size())) {
+    return false;
+  }
+  target->append(static_cast<const char*>(data),
+                 static_cast<qsizetype>(data_length));
+  return true;
+}
+
+QImage DecodeFaviconData(const QByteArray& image_data) {
+  if (image_data.isEmpty() || image_data.size() > kMaxFaviconPngBytes) {
     return {};
   }
   QBuffer buffer;
-  buffer.setData(png_data);
+  buffer.setData(image_data);
   if (!buffer.open(QIODevice::ReadOnly)) return {};
-  QImageReader reader(&buffer, "PNG");
+  QImageReader reader(&buffer);
+  reader.setDecideFormatFromContent(true);
   const QSize size = reader.size();
   if (!size.isValid() || size.width() > kMaxFaviconDimension ||
       size.height() > kMaxFaviconDimension) {
@@ -172,40 +187,57 @@ QImage DecodeFaviconPng(const QByteArray& png_data) {
   return image;
 }
 
-class FaviconDownloadCallback final : public CefDownloadImageCallback {
+class FaviconRequestClient final : public CefURLRequestClient {
  public:
-  FaviconDownloadCallback(QPointer<BrowserView> owner, int browser_id,
-                          QString requested_url, quint64 generation)
+  FaviconRequestClient(QPointer<BrowserView> owner, int browser_id,
+                       QString requested_url, quint64 generation)
       : owner_(std::move(owner)),
         browser_id_(browser_id),
         requested_url_(std::move(requested_url)),
         generation_(generation) {}
 
-  void OnDownloadImageFinished(const CefString& image_url, int,
-                               CefRefPtr<CefImage> image) override {
+  void OnRequestComplete(CefRefPtr<CefURLRequest> request) override {
     CEF_REQUIRE_UI_THREAD();
-    if (!owner_ || !image || image->IsEmpty()) return;
-    if (image->GetWidth() > kMaxFaviconDimension ||
-        image->GetHeight() > kMaxFaviconDimension) {
+    if (!owner_) return;
+    bool succeeded = !oversized_ && request &&
+                     request->GetRequestStatus() == UR_SUCCESS;
+    if (succeeded) {
+      const CefRefPtr<CefResponse> response = request->GetResponse();
+      const int status = response ? response->GetStatus() : 0;
+      succeeded = status == 0 || (status >= 200 && status < 300);
+    }
+    owner_->OnCefFaviconRequestComplete(
+        browser_id_, requested_url_, generation_,
+        succeeded ? data_ : QByteArray());
+  }
+
+  void OnUploadProgress(CefRefPtr<CefURLRequest>, int64_t, int64_t) override {}
+
+  void OnDownloadProgress(CefRefPtr<CefURLRequest> request, int64_t current,
+                          int64_t total) override {
+    if (oversized_ ||
+        (current <= kMaxFaviconPngBytes &&
+         (total < 0 || total <= kMaxFaviconPngBytes))) {
       return;
     }
-    int pixel_width = 0;
-    int pixel_height = 0;
-    CefRefPtr<CefBinaryValue> png =
-        image->GetAsPNG(1.0F, true, pixel_width, pixel_height);
-    if (!png || png->GetSize() == 0 ||
-        png->GetSize() > kMaxFaviconPngBytes || pixel_width <= 0 ||
-        pixel_height <= 0 || pixel_width > kMaxFaviconDimension ||
-        pixel_height > kMaxFaviconDimension) {
-      return;
+    oversized_ = true;
+    request->Cancel();
+  }
+
+  void OnDownloadData(CefRefPtr<CefURLRequest> request, const void* data,
+                      size_t data_length) override {
+    if (oversized_) return;
+    if (!AppendFaviconData(&data_, data, data_length)) {
+      oversized_ = true;
+      data_.clear();
+      request->Cancel();
     }
-    QByteArray data(static_cast<qsizetype>(png->GetSize()), '\0');
-    if (png->GetData(data.data(), static_cast<size_t>(data.size()), 0) !=
-        static_cast<size_t>(data.size())) {
-      return;
-    }
-    owner_->OnCefFaviconDownloaded(browser_id_, requested_url_, generation_,
-                                    data);
+  }
+
+  bool GetAuthCredentials(bool, const CefString&, int, const CefString&,
+                          const CefString&,
+                          CefRefPtr<CefAuthCallback>) override {
+    return false;
   }
 
  private:
@@ -213,9 +245,11 @@ class FaviconDownloadCallback final : public CefDownloadImageCallback {
   int browser_id_;
   QString requested_url_;
   quint64 generation_;
+  QByteArray data_;
+  bool oversized_ = false;
 
-  IMPLEMENT_REFCOUNTING(FaviconDownloadCallback);
-  DISALLOW_COPY_AND_ASSIGN(FaviconDownloadCallback);
+  IMPLEMENT_REFCOUNTING(FaviconRequestClient);
+  DISALLOW_COPY_AND_ASSIGN(FaviconRequestClient);
 };
 
 }  // namespace
@@ -232,6 +266,7 @@ BrowserView::BrowserView(QString initial_url,
 }
 
 BrowserView::~BrowserView() {
+  CancelFaviconRequest();
   DismissOpenDialogs();
   if (client_) {
     client_->DetachOwner();
@@ -277,6 +312,10 @@ void BrowserView::ShowFailureForTesting(bool render_process_failed) {
 
 void BrowserView::SetFaviconForTesting(const QIcon& icon) {
   emit FaviconChanged(icon);
+}
+
+void BrowserView::QueueFaviconUrlsForTesting(const QStringList& urls) {
+  if (browser_) OnCefFaviconURLChanged(browser_, urls);
 }
 
 void BrowserView::SetAudioStateForTesting(bool playing, bool muted) {
@@ -493,7 +532,19 @@ bool BrowserView::IsAllowedFaviconUrlForTesting(const QString& url) {
 
 bool BrowserView::IsAllowedFaviconPngForTesting(
     const QByteArray& png_data) {
-  return !DecodeFaviconPng(png_data).isNull();
+  return !DecodeFaviconData(png_data).isNull();
+}
+
+bool BrowserView::AcceptsFaviconChunksForTesting(
+    const QList<QByteArray>& chunks) {
+  QByteArray data;
+  for (const QByteArray& chunk : chunks) {
+    if (!AppendFaviconData(&data, chunk.constData(),
+                           static_cast<size_t>(chunk.size()))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 std::optional<QString> BrowserView::SelectFaviconUrlForTesting(
@@ -589,6 +640,7 @@ void BrowserView::ResetJavaScriptDialogForTesting() {
 }
 
 void BrowserView::FinalizeClose() {
+  CancelFaviconRequest();
   if (!browser_) return;
   browser_->GetHost()->CloseBrowser(true);
   browser_ = nullptr;
@@ -598,6 +650,7 @@ void BrowserView::FinalizeClose() {
 
 bool BrowserView::RequestClose() {
   closing_ = true;
+  CancelFaviconRequest();
   DismissOpenDialogs();
   if (browser_) {
     // A tab is not a top-level native window and cannot complete the regular
@@ -798,31 +851,74 @@ void BrowserView::OnCefTitleChanged(CefRefPtr<CefBrowser> browser,
 void BrowserView::OnCefFaviconURLChanged(
     CefRefPtr<CefBrowser> browser, const QStringList& icon_urls) {
   if (!browser_ || !browser_->IsSame(browser)) return;
-  ++favicon_request_generation_;
-  favicon_url_.clear();
-  emit FaviconChanged(QIcon());
   const auto icon_url = SelectFaviconUrl(icon_urls);
-  if (!icon_url) return;
-  favicon_url_ = *icon_url;
-  const quint64 generation = favicon_request_generation_;
-  const QByteArray encoded_url = icon_url->toUtf8();
-  browser_->GetHost()->DownloadImage(
-      std::string(encoded_url.constData(), encoded_url.size()), true, 32, false,
-      new FaviconDownloadCallback(this, browser_->GetIdentifier(), *icon_url,
-                                  generation));
-}
-
-void BrowserView::OnCefFaviconDownloaded(int browser_id,
-                                         const QString& image_url,
-                                         quint64 generation,
-                                         const QByteArray& png_data) {
-  if (!browser_ || browser_->GetIdentifier() != browser_id ||
-      generation != favicon_request_generation_ ||
-      image_url != favicon_url_) {
+  ++favicon_request_generation_;
+  favicon_url_ = icon_url.value_or(QString());
+  pending_favicon_url_.clear();
+  pending_favicon_request_generation_ = 0;
+  emit FaviconChanged(QIcon());
+  if (!icon_url) {
+    CancelFaviconRequest();
     return;
   }
-  const QImage image = DecodeFaviconPng(png_data);
+  if (favicon_request_) {
+    pending_favicon_url_ = *icon_url;
+    pending_favicon_request_generation_ = favicon_request_generation_;
+    return;
+  }
+  StartFaviconRequest(*icon_url, favicon_request_generation_);
+}
+
+void BrowserView::StartFaviconRequest(const QString& url, quint64 generation) {
+  if (!browser_ || closing_ || favicon_request_) return;
+  CefRefPtr<CefRequest> request = CefRequest::Create();
+  const QByteArray encoded_url = url.toUtf8();
+  request->SetURL(std::string(encoded_url.constData(), encoded_url.size()));
+  request->SetMethod("GET");
+  request->SetFlags(UR_FLAG_NONE);
+  active_favicon_request_generation_ = generation;
+  favicon_request_ = browser_->GetMainFrame()->CreateURLRequest(
+      request, new FaviconRequestClient(this, browser_->GetIdentifier(), url,
+                                        generation));
+  if (!favicon_request_) {
+    active_favicon_request_generation_ = 0;
+    StartPendingFaviconRequest();
+  }
+}
+
+void BrowserView::StartPendingFaviconRequest() {
+  if (favicon_request_ || pending_favicon_url_.isEmpty() || !browser_ ||
+      closing_) {
+    return;
+  }
+  const QString url = std::move(pending_favicon_url_);
+  const quint64 generation = pending_favicon_request_generation_;
+  pending_favicon_url_.clear();
+  pending_favicon_request_generation_ = 0;
+  StartFaviconRequest(url, generation);
+}
+
+void BrowserView::CancelFaviconRequest() {
+  ++favicon_request_generation_;
+  pending_favicon_url_.clear();
+  pending_favicon_request_generation_ = 0;
+  active_favicon_request_generation_ = 0;
+  if (favicon_request_) favicon_request_->Cancel();
+  favicon_request_ = nullptr;
+}
+
+void BrowserView::OnCefFaviconRequestComplete(
+    int browser_id, const QString& image_url, quint64 generation,
+    const QByteArray& image_data) {
+  if (generation != active_favicon_request_generation_) return;
+  favicon_request_ = nullptr;
+  active_favicon_request_generation_ = 0;
+  const bool current = browser_ && browser_->GetIdentifier() == browser_id &&
+                       generation == favicon_request_generation_ &&
+                       image_url == favicon_url_;
+  const QImage image = current ? DecodeFaviconData(image_data) : QImage();
   if (!image.isNull()) emit FaviconChanged(QIcon(QPixmap::fromImage(image)));
+  StartPendingFaviconRequest();
 }
 
 void BrowserView::OnCefAudioStateChanged(CefRefPtr<CefBrowser> browser,
@@ -867,7 +963,7 @@ void BrowserView::OnCefAddressChanged(CefRefPtr<CefBrowser> browser,
     render_process_failed_ = false;
     failure_page_url_.clear();
     certificate_failure_url_.clear();
-    ++favicon_request_generation_;
+    CancelFaviconRequest();
     favicon_url_.clear();
     emit FaviconChanged(QIcon());
     current_url_ = url;

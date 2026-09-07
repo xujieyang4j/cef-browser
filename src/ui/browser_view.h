@@ -3,6 +3,7 @@
 #include <optional>
 
 #include <QByteArray>
+#include <QList>
 #include <QSet>
 #include <QIcon>
 #include <QPointer>
@@ -15,6 +16,7 @@
 #include "include/cef_download_handler.h"
 #include "include/cef_jsdialog_handler.h"
 #include "include/cef_permission_handler.h"
+#include "include/cef_urlrequest.h"
 
 class BrowserClient;
 class QFocusEvent;
@@ -103,6 +105,8 @@ class BrowserView final : public QWidget {
   static bool IsAllowedExternalScheme(const QString& url);
   static bool IsAllowedFaviconUrlForTesting(const QString& url);
   static bool IsAllowedFaviconPngForTesting(const QByteArray& png_data);
+  static bool AcceptsFaviconChunksForTesting(
+      const QList<QByteArray>& chunks);
   static std::optional<QString> SelectFaviconUrlForTesting(
       const QStringList& urls);
   static QString NormalizePageTitleForTesting(QString title);
@@ -128,6 +132,14 @@ class BrowserView final : public QWidget {
   bool ShowBeforeUnloadForTesting(CefRefPtr<CefJSDialogCallback> callback);
   void ResetJavaScriptDialogForTesting();
   void SetFaviconForTesting(const QIcon& icon);
+  void QueueFaviconUrlsForTesting(const QStringList& urls);
+  void CancelFaviconRequestForTesting() { CancelFaviconRequest(); }
+  bool favicon_request_active_for_testing() const {
+    return favicon_request_ != nullptr;
+  }
+  bool favicon_request_pending_for_testing() const {
+    return !pending_favicon_url_.isEmpty();
+  }
   void SetAudioStateForTesting(bool playing, bool muted);
   void ToggleAudioMuted();
 
@@ -143,8 +155,10 @@ class BrowserView final : public QWidget {
   void OnCefTitleChanged(CefRefPtr<CefBrowser> browser, const QString& title);
   void OnCefFaviconURLChanged(CefRefPtr<CefBrowser> browser,
                               const QStringList& icon_urls);
-  void OnCefFaviconDownloaded(int browser_id, const QString& image_url,
-                              quint64 generation, const QByteArray& png_data);
+  void OnCefFaviconRequestComplete(int browser_id,
+                                   const QString& requested_url,
+                                   quint64 generation,
+                                   const QByteArray& image_data);
   void OnCefAudioStateChanged(CefRefPtr<CefBrowser> browser, bool playing);
   void OnCefFullscreenChanged(CefRefPtr<CefBrowser> browser, bool fullscreen);
   void OnCefStatusMessage(CefRefPtr<CefBrowser> browser,
@@ -229,6 +243,9 @@ class BrowserView final : public QWidget {
   void DismissOpenDialogs();
   void CompleteJavaScriptDialog(quint64 generation, bool success,
                                 const QString& user_input = {});
+  void StartFaviconRequest(const QString& url, quint64 generation);
+  void StartPendingFaviconRequest();
+  void CancelFaviconRequest();
   void ShowFailurePage(const QString& heading, const QString& summary,
                        const QString& detail, const QString& failed_url,
                        bool render_process_failed);
@@ -242,6 +259,10 @@ class BrowserView final : public QWidget {
   QString page_title_;
   QString favicon_url_;
   quint64 favicon_request_generation_ = 0;
+  quint64 active_favicon_request_generation_ = 0;
+  QString pending_favicon_url_;
+  quint64 pending_favicon_request_generation_ = 0;
+  CefRefPtr<CefURLRequest> favicon_request_;
   CefRefPtr<CefDownloadHandler> download_handler_;
   CefRefPtr<BrowserClient> client_;
   CefRefPtr<CefBrowser> browser_;

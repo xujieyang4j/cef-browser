@@ -110,8 +110,10 @@ command-line URL always takes priority. Home-page URLs are strictly normalized
 and bounded so saved settings always remain reloadable. The recently closed tab stack is part of the atomic
 session file, so Ctrl/Cmd+Shift+T continues to work after an application
 restart. Page favicons are loaded into their corresponding tabs with stale
-navigation results rejected; favicon URLs, encoded PNG bytes, and decoded
-dimensions are bounded before the image reaches the Qt UI. The History menu
+navigation results rejected. Each tab streams at most one favicon request at a
+time, keeps only the newest pending candidate, and cancels responses that grow
+beyond 256 KiB before decoding. Favicon URLs and decoded dimensions are also
+bounded before the image reaches the Qt UI. The History menu
 can selectively clear history,
 recently closed tabs, download history, or site data including HTTP cache,
 cookies, HTTP credentials, and certificate exceptions
@@ -238,7 +240,8 @@ tab-action, pinned-tab persistence, failure-page, atomic session restore,
 page-search/zoom, titled address suggestions, bookmark/history persistence,
 bounds for address, search, find, and bookmark-name input, browsing-data
 cleanup, download-ingress and active-count limits, favicon
-mapping, audio/mute state, security-policy, and authentication-dialog checks.
+mapping, streamed response limits, request coalescing and cancellation,
+audio/mute state, security-policy, and authentication-dialog checks.
 Oversized session, settings, download-history, browsing-data, and bookmark
 HTML files are also rejected using the bytes actually read, with existing
 in-memory settings and profile data preserved.
