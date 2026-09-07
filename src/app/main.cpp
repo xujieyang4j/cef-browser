@@ -22,6 +22,7 @@
 #include <QTimer>
 
 #include "app/browser_app.h"
+#include "app/single_instance.h"
 #include "download/download_manager.h"
 #include "include/cef_app.h"
 #include "include/cef_command_line.h"
@@ -422,6 +423,7 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-recent-tabs")) ||
          HasArgument(QStringLiteral("--smoke-test-application-menu")) ||
          HasArgument(QStringLiteral("--smoke-test-search-settings")) ||
+         HasArgument(QStringLiteral("--smoke-test-single-instance")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth"));
 }
@@ -1335,6 +1337,44 @@ void StartAuthSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
+void StartSingleInstanceSmokeTest(MainWindow* window,
+                                  const QString& data_path) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  const QString forwarded_url =
+      QStringLiteral("data:text/html,<title>Forwarded Instance</title>");
+  auto client = std::make_shared<SingleInstance>(data_path);
+  QString error;
+  const bool forwarded =
+      client->Start(forwarded_url, &error) ==
+      SingleInstance::StartResult::Forwarded;
+  if (!forwarded) {
+    *output << "SINGLE_INSTANCE_SMOKE_FAILED forwarded=0 error=" << error
+            << Qt::endl;
+    QCoreApplication::exit(21);
+    return;
+  }
+
+  auto attempts = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, step, client, forwarded_url] {
+    ++*attempts;
+    if (window->tab_count() == 2 && window->current_url() == forwarded_url) {
+      *output << "SINGLE_INSTANCE_SMOKE_OK forwarded=url tabs=2"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 120) {
+      *output << "SINGLE_INSTANCE_SMOKE_FAILED tabs=" << window->tab_count()
+              << " url=" << window->current_url() << Qt::endl;
+      QCoreApplication::exit(21);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(50, window, [step] { (*step)(); });
+}
+
 int RunBrowser(int argc, char* argv[]) {
 #if defined(OS_MAC)
   CefScopedLibraryLoader library_loader;
@@ -1393,6 +1433,16 @@ int RunBrowser(int argc, char* argv[]) {
   const QString data_path = canonical_data_path.isEmpty()
                                 ? QDir(requested_data_path).absolutePath()
                                 : canonical_data_path;
+  SingleInstance single_instance(data_path);
+  QString single_instance_error;
+  const SingleInstance::StartResult instance_result = single_instance.Start(
+      ExplicitStartupUrl().value_or(QString()), &single_instance_error);
+  if (instance_result == SingleInstance::StartResult::Forwarded) return 0;
+  if (instance_result == SingleInstance::StartResult::Error) {
+    qWarning("Unable to contact or start the primary browser instance: %s",
+             qPrintable(single_instance_error));
+    return 21;
+  }
   const QByteArray cache_path =
       QDir::toNativeSeparators(data_path + QStringLiteral("/cef-cache"))
           .toUtf8();
@@ -1503,6 +1553,10 @@ int RunBrowser(int argc, char* argv[]) {
     MainWindow main_window(initial_session, active_session_path,
                            active_browsing_data_path, active_settings_path,
                            download_history_path);
+    single_instance.SetActivationHandler(
+        [&main_window](const QString& url) {
+          main_window.HandleExternalOpenRequest(url);
+        });
     main_window.show();
     message_pump.Schedule(0);
     if (HasArgument(QStringLiteral("--smoke-test-tabs"))) {
@@ -1568,6 +1622,11 @@ int RunBrowser(int argc, char* argv[]) {
                          [&main_window] { StartSecuritySmokeTest(&main_window); });
     } else if (HasArgument(QStringLiteral("--smoke-test-auth"))) {
       StartAuthSmokeTest(&main_window);
+    } else if (HasArgument(
+                   QStringLiteral("--smoke-test-single-instance"))) {
+      QTimer::singleShot(300, &main_window, [&main_window, data_path] {
+        StartSingleInstanceSmokeTest(&main_window, data_path);
+      });
     }
     exit_code = application.exec();
   }

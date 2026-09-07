@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.27.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.28.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -35,7 +35,7 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
 find_package(CEF REQUIRED)
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Widgets)
 
 if(NOT EXISTS "${CEF_LIB_DEBUG}" AND EXISTS "${CEF_LIB_RELEASE}")
   message(STATUS "CEF Debug binaries not found; using Release runtime for Debug builds")
@@ -59,6 +59,8 @@ endif()
 set(TRAIL_BROWSER_SOURCES
   src/app/browser_app.cpp
   src/app/browser_app.h
+  src/app/single_instance.cpp
+  src/app/single_instance.h
   src/browser/browser_client.cpp
   src/browser/browser_client.h
   src/download/download_manager.cpp
@@ -96,6 +98,7 @@ target_link_libraries(trail-browser PRIVATE
   ${CEF_STANDARD_LIBS}
   Qt6::Core
   Qt6::Gui
+  Qt6::Network
   Qt6::Widgets
 )
 
@@ -295,6 +298,13 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_auth PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "AUTH_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_single_instance
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-single-instance)
+    set_tests_properties(trail_browser_single_instance PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "SINGLE_INSTANCE_SMOKE_OK"
     )
   endif()
 endif()

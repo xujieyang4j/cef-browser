@@ -441,6 +441,14 @@ void MainWindow::OpenTabForTesting(const QString& url) {
   AddTab(url, true);
 }
 
+void MainWindow::HandleExternalOpenRequest(const QString& url) {
+  if (!url.isEmpty()) AddTab(url, true);
+  if (isMinimized()) showNormal();
+  show();
+  raise();
+  activateWindow();
+}
+
 void MainWindow::CloseCurrentTabForTesting() {
   CloseTab(tab_bar_->currentIndex());
 }

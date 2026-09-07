@@ -46,6 +46,7 @@ class MainWindow final : public QMainWindow {
   QString current_url() const;
   QString current_title() const;
   void OpenTabForTesting(const QString& url);
+  void HandleExternalOpenRequest(const QString& url);
   void CloseCurrentTabForTesting();
   void ReopenClosedTabForTesting();
   void ActivateTabForTesting(int index);
