@@ -434,6 +434,15 @@ bool BrowserView::OnCefKeyEvent(CefRefPtr<CefBrowser> browser,
 #endif
   } else if (primary_modifier && shift && event.windows_key_code == 'B') {
     action = ShortcutAction::ShowBookmarks;
+  } else if (primary_modifier && shift && event.windows_key_code == 'A') {
+    action = ShortcutAction::ShowAllTabs;
+  } else if (primary_modifier && !shift && event.windows_key_code >= '1' &&
+             event.windows_key_code <= '8') {
+    action = static_cast<ShortcutAction>(
+        static_cast<int>(ShortcutAction::ActivateTab1) +
+        event.windows_key_code - '1');
+  } else if (primary_modifier && !shift && event.windows_key_code == '9') {
+    action = ShortcutAction::ActivateLastTab;
   } else if ((event.modifiers & EVENTFLAG_CONTROL_DOWN) &&
              event.windows_key_code == 0x09) {
     action = shift ? ShortcutAction::PreviousTab : ShortcutAction::NextTab;

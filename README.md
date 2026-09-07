@@ -46,6 +46,8 @@ browser so auxiliary DevTools windows cannot change the tab state.
 Tabs can be pinned from the context menu. Pinned tabs stay grouped at the left,
 survive session restoration, and are protected from "close other tabs" and
 "close tabs to the right"; explicitly closing a pinned tab still works.
+An all-tabs menu lists every open page with its current pin, audio, title, and
+selection state for quick navigation when the tab strip is crowded.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -105,6 +107,9 @@ application builds automatically use the Release CEF runtime.
 - Ctrl/Cmd+W: close the active tab
 - Ctrl/Cmd+Shift+T: reopen the most recently closed tab
 - Ctrl+Tab / Ctrl+Shift+Tab: switch tabs
+- Ctrl/Cmd+1 through Ctrl/Cmd+8: activate the corresponding tab
+- Ctrl/Cmd+9: activate the last tab
+- Ctrl/Cmd+Shift+A: show all open tabs
 - Ctrl/Cmd+L: focus and select the address bar
 - Ctrl/Cmd+F: find text in the active page
 - F3 / Shift+F3: move between page matches
@@ -140,7 +145,7 @@ tab-action, pinned-tab persistence, failure-page, atomic session restore,
 page-search/zoom, bookmark/history persistence, browsing-data cleanup, favicon
 mapping, audio/mute state, security-policy, and authentication-dialog checks.
 Keyboard-accessible browser surfaces and full-screen exit routing are also
-covered. All fifteen
+covered, along with numeric tab navigation and the all-tabs menu. All sixteen
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

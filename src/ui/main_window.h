@@ -73,6 +73,10 @@ class MainWindow final : public QMainWindow {
   bool bookmarks_visible_for_testing() const;
   bool history_visible_for_testing() const;
   bool clear_data_prompt_visible_for_testing() const;
+  void ShowAllTabsForTesting();
+  bool all_tabs_visible_for_testing() const;
+  int all_tabs_action_count_for_testing() const;
+  void ActivateTabShortcutForTesting(int number);
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
   bool render_process_failed_for_testing() const;
@@ -129,6 +133,7 @@ class MainWindow final : public QMainWindow {
   void ToggleCurrentBookmark();
   void RebuildBookmarksMenu();
   void RebuildHistoryMenu();
+  void RebuildAllTabsMenu();
   void ShowClearBrowsingDataPrompt();
   void BeginClearBrowsingData(bool show_result_dialog);
   void CompleteBrowsingDataClearTask(const QString& task, bool success);
@@ -137,7 +142,13 @@ class MainWindow final : public QMainWindow {
   void RefreshAddressSuggestions();
 
  private:
-  enum class BrowserUiSurface { Downloads, Bookmarks, History, ClearData };
+  enum class BrowserUiSurface {
+    Downloads,
+    Bookmarks,
+    History,
+    AllTabs,
+    ClearData
+  };
 
   static QString NormalizeUrl(QString input);
   BrowserView* AddTab(const QString& url, bool activate,
@@ -162,6 +173,7 @@ class MainWindow final : public QMainWindow {
   void UpdateChrome();
   void UpdateTabTitle(BrowserView* browser, const QString& title);
   void HandleBrowserShortcut(int action);
+  void ActivateTabByShortcut(int index);
   void ShowBrowserUiSurface(BrowserUiSurface surface);
   void PerformBrowserUiSurface(BrowserUiSurface surface);
   void ScheduleSessionSave();
@@ -186,8 +198,10 @@ class MainWindow final : public QMainWindow {
   QPushButton* bookmark_button_ = nullptr;
   QPushButton* bookmarks_button_ = nullptr;
   QPushButton* history_button_ = nullptr;
+  QPushButton* all_tabs_button_ = nullptr;
   QMenu* bookmarks_menu_ = nullptr;
   QMenu* history_menu_ = nullptr;
+  QMenu* all_tabs_menu_ = nullptr;
   DownloadManager* download_manager_ = nullptr;
   DownloadPanel* download_panel_ = nullptr;
   QTimer* session_save_timer_ = nullptr;

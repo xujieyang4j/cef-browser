@@ -394,6 +394,7 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-favicon")) ||
          HasArgument(QStringLiteral("--smoke-test-audio")) ||
          HasArgument(QStringLiteral("--smoke-test-browser-surfaces")) ||
+         HasArgument(QStringLiteral("--smoke-test-tab-navigation")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth"));
 }
@@ -679,6 +680,54 @@ void StartBrowserSurfacesSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
+void StartTabNavigationSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, stage, step] {
+    ++*attempts;
+    if (*stage == 0 && window->current_title() == QStringLiteral("Smoke")) {
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Second</title>"));
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Third</title>"));
+      window->ActivateTabShortcutForTesting(1);
+      *stage = 1;
+    } else if (*stage == 1 && window->current_tab_index_for_testing() == 0 &&
+               window->current_title() == QStringLiteral("Smoke")) {
+      window->ActivateTabShortcutForTesting(9);
+      *stage = 2;
+    } else if (*stage == 2 && window->current_tab_index_for_testing() == 2 &&
+               window->current_title() == QStringLiteral("Third")) {
+      window->SetWebFullscreenForTesting(true);
+      window->ShowAllTabsForTesting();
+      *stage = 3;
+    } else if (*stage == 3 && window->web_fullscreen_for_testing()) {
+      window->SetWebFullscreenForTesting(false);
+    } else if (*stage == 3 && !window->web_fullscreen_for_testing() &&
+               window->all_tabs_visible_for_testing() &&
+               window->all_tabs_action_count_for_testing() == 3) {
+      *output << "TAB_NAVIGATION_SMOKE_OK direct=first last=third "
+                 "list=3 fullscreen=exit"
+              << Qt::endl;
+      window->HideBrowserSurfacesForTesting();
+      window->close();
+      return;
+    }
+    if (*attempts > 180) {
+      *output << "TAB_NAVIGATION_SMOKE_FAILED stage=" << *stage
+              << " current=" << window->current_tab_index_for_testing()
+              << " list=" << window->all_tabs_action_count_for_testing()
+              << Qt::endl;
+      QCoreApplication::exit(17);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
 void StartSecuritySmokeTest(MainWindow* window) {
   auto output = std::make_shared<QTextStream>(stdout);
   const QString media = window->media_permission_description_for_testing(
@@ -938,6 +987,9 @@ int RunBrowser(int argc, char* argv[]) {
     } else if (HasArgument(
                    QStringLiteral("--smoke-test-browser-surfaces"))) {
       StartBrowserSurfacesSmokeTest(&main_window);
+    } else if (HasArgument(
+                   QStringLiteral("--smoke-test-tab-navigation"))) {
+      StartTabNavigationSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-security"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartSecuritySmokeTest(&main_window); });

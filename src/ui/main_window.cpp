@@ -151,10 +151,13 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   bookmark_button_ = new QPushButton(QStringLiteral("☆"), toolbar_);
   bookmarks_button_ = new QPushButton(QStringLiteral("Bookmarks"), toolbar_);
   history_button_ = new QPushButton(QStringLiteral("History"), toolbar_);
+  all_tabs_button_ = new QPushButton(QStringLiteral("⌄"), toolbar_);
   bookmarks_menu_ = new QMenu(bookmarks_button_);
   history_menu_ = new QMenu(history_button_);
+  all_tabs_menu_ = new QMenu(all_tabs_button_);
   bookmarks_button_->setMenu(bookmarks_menu_);
   history_button_->setMenu(history_menu_);
+  all_tabs_button_->setMenu(all_tabs_menu_);
 
   back_button_->setToolTip(QStringLiteral("Back"));
   forward_button_->setToolTip(QStringLiteral("Forward"));
@@ -171,6 +174,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   address_bar_->setCompleter(address_completer_);
   downloads_button_->setToolTip(QStringLiteral("Show downloads"));
   bookmark_button_->setToolTip(QStringLiteral("Bookmark this page"));
+  all_tabs_button_->setToolTip(QStringLiteral("All tabs (Ctrl+Shift+A)"));
   back_button_->setEnabled(false);
   forward_button_->setEnabled(false);
 
@@ -181,6 +185,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   toolbar_layout->addWidget(bookmark_button_);
   toolbar_layout->addWidget(bookmarks_button_);
   toolbar_layout->addWidget(history_button_);
+  toolbar_layout->addWidget(all_tabs_button_);
   toolbar_layout->addWidget(downloads_button_);
 
   find_bar_ = new QWidget(central);
@@ -279,6 +284,8 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
           &MainWindow::RebuildBookmarksMenu);
   connect(history_menu_, &QMenu::aboutToShow, this,
           &MainWindow::RebuildHistoryMenu);
+  connect(all_tabs_menu_, &QMenu::aboutToShow, this,
+          &MainWindow::RebuildAllTabsMenu);
   connect(download_manager_, &DownloadManager::ActiveCountChanged, this,
           [this](int count) {
             downloads_button_->setText(
@@ -428,6 +435,28 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   connect(show_bookmarks, &QShortcut::activated, this, [this] {
     ShowBrowserUiSurface(BrowserUiSurface::Bookmarks);
   });
+#if defined(OS_MAC)
+  auto* show_all_tabs =
+      new QShortcut(QKeySequence(QStringLiteral("Meta+Shift+A")), this);
+#else
+  auto* show_all_tabs =
+      new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+A")), this);
+#endif
+  connect(show_all_tabs, &QShortcut::activated, this, [this] {
+    ShowBrowserUiSurface(BrowserUiSurface::AllTabs);
+  });
+  for (int number = 1; number <= 9; ++number) {
+#if defined(OS_MAC)
+    const QString sequence = QStringLiteral("Meta+%1").arg(number);
+#else
+    const QString sequence = QStringLiteral("Ctrl+%1").arg(number);
+#endif
+    auto* activate_tab = new QShortcut(QKeySequence(sequence), this);
+    connect(activate_tab, &QShortcut::activated, this, [this, number] {
+      ActivateTabByShortcut(number == 9 ? tab_bar_->count() - 1
+                                        : number - 1);
+    });
+  }
 
   const QStringList initial_urls = initial_session.tab_urls.isEmpty()
                                        ? QStringList{QStringLiteral("https://www.example.com")}
@@ -634,6 +663,7 @@ void MainWindow::HideBrowserSurfacesForTesting() {
   download_panel_->hide();
   bookmarks_menu_->close();
   history_menu_->close();
+  all_tabs_menu_->close();
 }
 
 bool MainWindow::downloads_visible_for_testing() const {
@@ -656,6 +686,22 @@ bool MainWindow::clear_data_prompt_visible_for_testing() const {
     }
   }
   return false;
+}
+
+void MainWindow::ShowAllTabsForTesting() {
+  ShowBrowserUiSurface(BrowserUiSurface::AllTabs);
+}
+
+bool MainWindow::all_tabs_visible_for_testing() const {
+  return all_tabs_menu_->isVisible();
+}
+
+int MainWindow::all_tabs_action_count_for_testing() const {
+  return all_tabs_menu_->actions().size();
+}
+
+void MainWindow::ActivateTabShortcutForTesting(int number) {
+  ActivateTabByShortcut(number == 9 ? tab_bar_->count() - 1 : number - 1);
 }
 
 void MainWindow::ShowFailureForTesting(bool render_process_failed) {
@@ -1463,6 +1509,24 @@ void MainWindow::HandleBrowserShortcut(int action_value) {
     case BrowserView::ShortcutAction::ShowHistory:
       ShowBrowserUiSurface(BrowserUiSurface::History);
       break;
+    case BrowserView::ShortcutAction::ShowAllTabs:
+      ShowBrowserUiSurface(BrowserUiSurface::AllTabs);
+      break;
+    case BrowserView::ShortcutAction::ActivateTab1:
+    case BrowserView::ShortcutAction::ActivateTab2:
+    case BrowserView::ShortcutAction::ActivateTab3:
+    case BrowserView::ShortcutAction::ActivateTab4:
+    case BrowserView::ShortcutAction::ActivateTab5:
+    case BrowserView::ShortcutAction::ActivateTab6:
+    case BrowserView::ShortcutAction::ActivateTab7:
+    case BrowserView::ShortcutAction::ActivateTab8:
+      ActivateTabByShortcut(
+          static_cast<int>(action) -
+          static_cast<int>(BrowserView::ShortcutAction::ActivateTab1));
+      break;
+    case BrowserView::ShortcutAction::ActivateLastTab:
+      ActivateTabByShortcut(tab_bar_->count() - 1);
+      break;
     case BrowserView::ShortcutAction::ClearBrowsingData:
       ShowBrowserUiSurface(BrowserUiSurface::ClearData);
       break;
@@ -1480,6 +1544,12 @@ void MainWindow::HandleBrowserShortcut(int action_value) {
     case BrowserView::ShortcutAction::Reload:
       if (BrowserView* browser = CurrentBrowser()) browser->Reload();
       break;
+  }
+}
+
+void MainWindow::ActivateTabByShortcut(int index) {
+  if (index >= 0 && index < tab_bar_->count()) {
+    tab_bar_->setCurrentIndex(index);
   }
 }
 
@@ -1508,6 +1578,11 @@ void MainWindow::PerformBrowserUiSurface(BrowserUiSurface surface) {
       RebuildHistoryMenu();
       history_menu_->popup(history_button_->mapToGlobal(
           QPoint(0, history_button_->height())));
+      break;
+    case BrowserUiSurface::AllTabs:
+      RebuildAllTabsMenu();
+      all_tabs_menu_->popup(all_tabs_button_->mapToGlobal(
+          QPoint(0, all_tabs_button_->height())));
       break;
     case BrowserUiSurface::ClearData:
       ShowClearBrowsingDataPrompt();
@@ -1584,6 +1659,30 @@ void MainWindow::RebuildHistoryMenu() {
   clear->setEnabled(!browsing_data_clear_in_progress_);
   connect(clear, &QAction::triggered, this,
           &MainWindow::ShowClearBrowsingDataPrompt);
+}
+
+void MainWindow::RebuildAllTabsMenu() {
+  all_tabs_menu_->clear();
+  for (int index = 0; index < tab_bar_->count(); ++index) {
+    auto* browser =
+        qvariant_cast<BrowserView*>(tab_bar_->tabData(index));
+    if (!browser || closing_tabs_.contains(browser)) continue;
+    QString label = TabText(browser->page_title(), browser->current_url());
+    if (IsTabPinned(browser)) label.prepend(QStringLiteral("\U0001F4CC "));
+    if (browser->audio_muted()) {
+      label.prepend(QStringLiteral("\U0001F507 "));
+    } else if (browser->audio_playing()) {
+      label.prepend(QStringLiteral("\U0001F50A "));
+    }
+    QAction* action = all_tabs_menu_->addAction(label);
+    action->setCheckable(true);
+    action->setChecked(index == tab_bar_->currentIndex());
+    action->setToolTip(browser->current_url());
+    const QPointer<BrowserView> target(browser);
+    connect(action, &QAction::triggered, this, [this, target] {
+      if (target) ActivateTabByShortcut(IndexOf(target));
+    });
+  }
 }
 
 void MainWindow::ShowClearBrowsingDataPrompt() {
