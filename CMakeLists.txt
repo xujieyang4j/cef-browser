@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.6.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.7.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -198,7 +198,7 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     )
     add_test(NAME trail_browser_profile
       COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
-              --smoke-test-profile)
+              --smoke-test-profile "https://example.test/suggestion")
     set_tests_properties(trail_browser_profile PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "PROFILE_SMOKE_OK"

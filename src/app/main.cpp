@@ -235,7 +235,9 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
   const BrowserSession captured = window->session_for_testing(false);
   const bool captured_ok =
       captured.tab_urls.size() == 2 && captured.active_tab == 1 &&
-      !captured.window_geometry.isEmpty() && !captured.clean_exit;
+      !captured.window_geometry.isEmpty() && !captured.clean_exit &&
+      captured.recently_closed_urls == QStringList{QStringLiteral(
+                                               "https://example.test/closed")};
   const bool unclean_saved = window->save_session_for_testing(false);
   const auto unclean = SessionStore::Load(session_path);
   const bool unclean_ok =
@@ -245,7 +247,9 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
   const auto clean = SessionStore::Load(session_path);
   const bool clean_ok = clean && clean->clean_exit &&
                         clean->tab_urls == captured.tab_urls &&
-                        clean->active_tab == captured.active_tab;
+                        clean->active_tab == captured.active_tab &&
+                        clean->recently_closed_urls ==
+                            captured.recently_closed_urls;
   if (captured_ok && unclean_saved && unclean_ok && clean_saved && clean_ok) {
     *output << "SESSION_SMOKE_OK tabs=" << clean->tab_urls.size()
             << " active=" << clean->active_tab << Qt::endl;
@@ -326,14 +330,19 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       restored.history().first().visit_count == 2;
   const bool removed = restored.RemoveBookmark(first_url) &&
                        !restored.IsBookmarked(first_url);
+  window->ToggleBookmarkForTesting();
+  const bool suggestions_ok =
+      window->address_suggestions_for_testing().contains(window->current_url());
+  window->ToggleBookmarkForTesting();
   if (add_first && reject_duplicate && add_second && saved && bookmark_ok &&
-      history_ok && removed) {
-    *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2"
+      history_ok && removed && suggestions_ok) {
+    *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2 suggestions=1"
             << Qt::endl;
     window->close();
   } else {
     *output << "PROFILE_SMOKE_FAILED bookmark=" << bookmark_ok
             << " history=" << history_ok << " removed=" << removed
+            << " suggestions=" << suggestions_ok
             << Qt::endl;
     QCoreApplication::exit(7);
   }
@@ -510,6 +519,8 @@ int RunBrowser(int argc, char* argv[]) {
           QStringLiteral("data:text/html,<title>Session Two</title>")};
       initial_session.active_tab = 1;
       initial_session.clean_exit = false;
+      initial_session.recently_closed_urls = {
+          QStringLiteral("https://example.test/closed")};
     } else if (IsSmokeTest()) {
       initial_session = DefaultSession(ExplicitStartupUrl().value_or(
           QStringLiteral("data:text/html,<title>Smoke</title>")));

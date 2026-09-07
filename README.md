@@ -27,6 +27,10 @@ Navigation shows page-load progress and supports standard back, forward, and
 refresh shortcuts even while the embedded page owns keyboard focus. HTTP and
 proxy authentication use an in-memory, non-blocking credential prompt; entered
 credentials are never stored by Trail Browser.
+The address bar suggests unique URLs from bookmarks and recent history, with
+bookmarks ranked first. The recently closed tab stack is part of the atomic
+session file, so Ctrl/Cmd+Shift+T continues to work after an application
+restart.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites

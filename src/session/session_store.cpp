@@ -64,6 +64,14 @@ std::optional<BrowserSession> SessionStore::Load(const QString& path,
     SetError(error, QStringLiteral("Session contains no restorable tabs"));
     return std::nullopt;
   }
+  const QJsonArray recently_closed =
+      root.value(QStringLiteral("recentlyClosed")).toArray();
+  const int recently_closed_count =
+      std::min(static_cast<int>(recently_closed.size()), kMaxRestoredTabs);
+  for (int index = 0; index < recently_closed_count; ++index) {
+    const QString url = recently_closed.at(index).toString().trimmed();
+    if (!url.isEmpty()) session.recently_closed_urls.append(url);
+  }
 
   session.active_tab = std::clamp(
       root.value(QStringLiteral("activeTab")).toInt(), 0,
@@ -95,6 +103,11 @@ bool SessionStore::Save(const QString& path, const BrowserSession& session,
     SetError(error, QStringLiteral("Refusing to save an empty session"));
     return false;
   }
+  QJsonArray recently_closed;
+  for (const QString& url :
+       session.recently_closed_urls.mid(0, kMaxRestoredTabs)) {
+    if (!url.trimmed().isEmpty()) recently_closed.append(url);
+  }
 
   const QJsonObject root{
       {QStringLiteral("version"), kSessionVersion},
@@ -104,6 +117,7 @@ bool SessionStore::Save(const QString& path, const BrowserSession& session,
       {QStringLiteral("windowGeometry"),
        QString::fromLatin1(session.window_geometry.toBase64())},
       {QStringLiteral("tabs"), tabs},
+      {QStringLiteral("recentlyClosed"), recently_closed},
   };
 
   QSaveFile file(path);

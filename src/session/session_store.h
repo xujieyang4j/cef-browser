@@ -8,6 +8,7 @@
 
 struct BrowserSession {
   QStringList tab_urls;
+  QStringList recently_closed_urls;
   int active_tab = 0;
   QByteArray window_geometry;
   bool clean_exit = true;

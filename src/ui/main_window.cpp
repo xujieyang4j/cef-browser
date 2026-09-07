@@ -4,6 +4,7 @@
 #include <utility>
 
 #include <QCloseEvent>
+#include <QCompleter>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
@@ -17,6 +18,7 @@
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QStringListModel>
 #include <QTabBar>
 #include <QToolButton>
 #include <QTimer>
@@ -119,6 +121,13 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   address_bar_->setPlaceholderText(
       QStringLiteral("Search or enter an address"));
   address_bar_->setClearButtonEnabled(true);
+  address_suggestions_ = new QStringListModel(this);
+  address_completer_ = new QCompleter(address_suggestions_, this);
+  address_completer_->setCaseSensitivity(Qt::CaseInsensitive);
+  address_completer_->setCompletionMode(QCompleter::PopupCompletion);
+  address_completer_->setFilterMode(Qt::MatchContains);
+  address_completer_->setMaxVisibleItems(12);
+  address_bar_->setCompleter(address_completer_);
   downloads_button->setToolTip(QStringLiteral("Show downloads"));
   bookmark_button_->setToolTip(QStringLiteral("Bookmark this page"));
   back_button_->setEnabled(false);
@@ -344,6 +353,10 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   const QStringList initial_urls = initial_session.tab_urls.isEmpty()
                                        ? QStringList{QStringLiteral("https://www.example.com")}
                                        : initial_session.tab_urls;
+  const int closed_start = std::max(
+      0, static_cast<int>(initial_session.recently_closed_urls.size()) -
+             kMaxClosedTabs);
+  closed_tabs_ = initial_session.recently_closed_urls.mid(closed_start);
   for (const QString& url : initial_urls) AddTab(url, false);
   tab_bar_->setCurrentIndex(
       std::clamp(initial_session.active_tab, 0, tab_bar_->count() - 1));
@@ -357,6 +370,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   }
   RebuildBookmarksMenu();
   RebuildHistoryMenu();
+  RefreshAddressSuggestions();
 
   // Do not overwrite a known-good previous session until the window and CEF
   // event loop have had time to start successfully. After this gate, every
@@ -514,6 +528,10 @@ int MainWindow::current_url_visit_count_for_testing() const {
     if (entry.url == browser->current_url()) return entry.visit_count;
   }
   return 0;
+}
+
+QStringList MainWindow::address_suggestions_for_testing() const {
+  return address_suggestions_->stringList();
 }
 
 QString MainWindow::media_permission_description_for_testing(
@@ -1001,6 +1019,7 @@ void MainWindow::ToggleCurrentBookmark() {
   }
   SaveBrowsingData();
   RebuildBookmarksMenu();
+  RefreshAddressSuggestions();
   UpdateChrome();
 }
 
@@ -1055,6 +1074,7 @@ void MainWindow::RebuildHistoryMenu() {
     browsing_data_->ClearHistory();
     SaveBrowsingData();
     RebuildHistoryMenu();
+    RefreshAddressSuggestions();
   });
 }
 
@@ -1064,6 +1084,7 @@ void MainWindow::RecordVisit(BrowserView* browser) {
   if (url.isEmpty()) return;
   browsing_data_->RecordVisit(url, browser->page_title());
   SaveBrowsingData();
+  RefreshAddressSuggestions();
 }
 
 bool MainWindow::SaveBrowsingData() {
@@ -1074,6 +1095,26 @@ bool MainWindow::SaveBrowsingData() {
         QStringLiteral("Unable to save browsing data: %1").arg(error), 8000);
   }
   return saved;
+}
+
+void MainWindow::RefreshAddressSuggestions() {
+  QStringList suggestions;
+  QSet<QString> seen;
+  const auto add = [&suggestions, &seen](const QString& url) {
+    if (!url.isEmpty() && !seen.contains(url)) {
+      seen.insert(url);
+      suggestions.append(url);
+    }
+  };
+  for (const BrowsingDataStore::Bookmark& bookmark :
+       browsing_data_->bookmarks()) {
+    add(bookmark.url);
+  }
+  for (const BrowsingDataStore::HistoryEntry& entry : browsing_data_->history()) {
+    add(entry.url);
+    if (suggestions.size() >= 200) break;
+  }
+  address_suggestions_->setStringList(suggestions);
 }
 
 void MainWindow::ScheduleSessionSave() {
@@ -1090,6 +1131,7 @@ BrowserSession MainWindow::CaptureSession(bool clean_exit) const {
   session.clean_exit = clean_exit;
   session.active_tab = std::max(0, tab_bar_->currentIndex());
   session.window_geometry = saveGeometry();
+  session.recently_closed_urls = closed_tabs_;
   for (int index = 0; index < tab_bar_->count(); ++index) {
     BrowserView* browser =
         qvariant_cast<BrowserView*>(tab_bar_->tabData(index));
