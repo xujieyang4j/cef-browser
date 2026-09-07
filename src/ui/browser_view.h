@@ -72,6 +72,12 @@ class BrowserView final : public QWidget {
   void ShowDevTools();
   void Find(const QString& text, bool forward, bool find_next);
   void StopFinding(bool clear_selection = true);
+  void Undo();
+  void Redo();
+  void Cut();
+  void Copy();
+  void Paste();
+  void SelectAll();
   void ZoomIn();
   void ZoomOut();
   void ResetZoom();

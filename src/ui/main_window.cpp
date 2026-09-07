@@ -4,6 +4,7 @@
 #include <functional>
 #include <utility>
 
+#include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QClipboard>
@@ -14,6 +15,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPointer>
@@ -103,6 +105,14 @@ QString TabText(const QString& title, const QString& url) {
   return parsed.host().isEmpty() ? url : parsed.host();
 }
 
+QKeySequence PrimaryShortcut(const QString& keys) {
+#if defined(OS_MAC)
+  return QKeySequence(QStringLiteral("Meta+") + keys);
+#else
+  return QKeySequence(QStringLiteral("Ctrl+") + keys);
+#endif
+}
+
 }  // namespace
 
 MainWindow::MainWindow(const BrowserSession& initial_session,
@@ -112,6 +122,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   setWindowTitle(QStringLiteral("Trail Browser"));
   resize(1280, 800);
   setMinimumSize(640, 480);
+  CreateApplicationMenus();
 
   auto* central = new QWidget(this);
   auto* page_layout = new QVBoxLayout(central);
@@ -298,70 +309,6 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
                           : QStringLiteral("Downloads"));
           });
 
-  auto* focus_address =
-      new QShortcut(QKeySequence(QStringLiteral("Ctrl+L")), this);
-  connect(focus_address, &QShortcut::activated, address_bar_, [this] {
-    address_bar_->setFocus();
-    address_bar_->selectAll();
-  });
-  auto* new_tab = new QShortcut(QKeySequence::AddTab, this);
-  connect(new_tab, &QShortcut::activated, this, &MainWindow::AddBlankTab);
-  auto* close_tab = new QShortcut(QKeySequence::Close, this);
-  connect(close_tab, &QShortcut::activated, this,
-          [this] { CloseTab(tab_bar_->currentIndex()); });
-#if !defined(OS_MAC)
-  auto* close_tab_alternate =
-      new QShortcut(QKeySequence(QStringLiteral("Ctrl+W")), this);
-  connect(close_tab_alternate, &QShortcut::activated, this,
-          [this] { CloseTab(tab_bar_->currentIndex()); });
-#endif
-  auto* next_tab = new QShortcut(QKeySequence::NextChild, this);
-  connect(next_tab, &QShortcut::activated, this, [this] {
-    if (tab_bar_->count() > 1) {
-      tab_bar_->setCurrentIndex((tab_bar_->currentIndex() + 1) %
-                                tab_bar_->count());
-    }
-  });
-  auto* previous_tab = new QShortcut(QKeySequence::PreviousChild, this);
-  connect(previous_tab, &QShortcut::activated, this, [this] {
-    if (tab_bar_->count() > 1) {
-      tab_bar_->setCurrentIndex((tab_bar_->currentIndex() - 1 +
-                                 tab_bar_->count()) %
-                                tab_bar_->count());
-    }
-  });
-  auto* reopen_tab =
-      new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+T")), this);
-  connect(reopen_tab, &QShortcut::activated, this,
-          &MainWindow::ReopenClosedTab);
-  auto* dev_tools = new QShortcut(QKeySequence(Qt::Key_F12), this);
-  connect(dev_tools, &QShortcut::activated, this, [this] {
-    if (BrowserView* browser = CurrentBrowser()) browser->ShowDevTools();
-  });
-  auto* print_page = new QShortcut(QKeySequence::Print, this);
-  connect(print_page, &QShortcut::activated, this, [this] {
-    if (BrowserView* browser = CurrentBrowser()) browser->Print();
-  });
-  auto* go_back = new QShortcut(QKeySequence::Back, this);
-  connect(go_back, &QShortcut::activated, this, [this] {
-    if (BrowserView* browser = CurrentBrowser()) browser->GoBack();
-  });
-  auto* go_forward = new QShortcut(QKeySequence::Forward, this);
-  connect(go_forward, &QShortcut::activated, this, [this] {
-    if (BrowserView* browser = CurrentBrowser()) browser->GoForward();
-  });
-  auto* refresh = new QShortcut(QKeySequence::Refresh, this);
-  connect(refresh, &QShortcut::activated, this, [this] {
-    if (BrowserView* browser = CurrentBrowser()) browser->Reload();
-  });
-  auto* find_in_page = new QShortcut(QKeySequence::Find, this);
-  connect(find_in_page, &QShortcut::activated, this, &MainWindow::ShowFindBar);
-  auto* find_next = new QShortcut(QKeySequence::FindNext, this);
-  connect(find_next, &QShortcut::activated, this,
-          [this] { FindFromBar(true, true); });
-  auto* find_previous = new QShortcut(QKeySequence::FindPrevious, this);
-  connect(find_previous, &QShortcut::activated, this,
-          [this] { FindFromBar(false, true); });
   auto* close_find_shortcut =
       new QShortcut(QKeySequence(Qt::Key_Escape), find_bar_);
   close_find_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
@@ -379,84 +326,9 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   previous_match_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
   connect(previous_match_shortcut, &QShortcut::activated, this,
           [this] { FindFromBar(false, true); });
-  auto* zoom_in = new QShortcut(QKeySequence::ZoomIn, this);
-  connect(zoom_in, &QShortcut::activated, this, [this] {
-    if (BrowserView* browser = CurrentBrowser()) browser->ZoomIn();
-  });
-  auto* zoom_out = new QShortcut(QKeySequence::ZoomOut, this);
-  connect(zoom_out, &QShortcut::activated, this, [this] {
-    if (BrowserView* browser = CurrentBrowser()) browser->ZoomOut();
-  });
-#if defined(OS_MAC)
-  auto* reset_zoom =
-      new QShortcut(QKeySequence(Qt::META | Qt::Key_0), this);
-#else
-  auto* reset_zoom =
-      new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), this);
-#endif
-  connect(reset_zoom, &QShortcut::activated, this, [this] {
-    if (BrowserView* browser = CurrentBrowser()) browser->ResetZoom();
-  });
-#if defined(OS_MAC)
-  auto* toggle_bookmark =
-      new QShortcut(QKeySequence(Qt::META | Qt::Key_D), this);
-#else
-  auto* toggle_bookmark =
-      new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_D), this);
-#endif
-  connect(toggle_bookmark, &QShortcut::activated, this,
-          &MainWindow::ToggleCurrentBookmark);
-#if defined(OS_MAC)
-  auto* show_downloads =
-      new QShortcut(QKeySequence(QStringLiteral("Meta+Shift+J")), this);
-  auto* show_history =
-      new QShortcut(QKeySequence(QStringLiteral("Meta+Y")), this);
-  auto* clear_browsing_data = new QShortcut(
-      QKeySequence(QStringLiteral("Meta+Shift+Backspace")), this);
-#else
-  auto* show_downloads =
-      new QShortcut(QKeySequence(QStringLiteral("Ctrl+J")), this);
-  auto* show_history =
-      new QShortcut(QKeySequence(QStringLiteral("Ctrl+H")), this);
-  auto* clear_browsing_data =
-      new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+Delete")), this);
-#endif
-  connect(show_downloads, &QShortcut::activated, this, [this] {
-    ShowBrowserUiSurface(BrowserUiSurface::Downloads);
-  });
-  connect(show_history, &QShortcut::activated, this, [this] {
-    ShowBrowserUiSurface(BrowserUiSurface::History);
-  });
-  connect(clear_browsing_data, &QShortcut::activated, this, [this] {
-    ShowBrowserUiSurface(BrowserUiSurface::ClearData);
-  });
-#if defined(OS_MAC)
-  auto* show_bookmarks =
-      new QShortcut(QKeySequence(QStringLiteral("Meta+Shift+B")), this);
-#else
-  auto* show_bookmarks =
-      new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")), this);
-#endif
-  connect(show_bookmarks, &QShortcut::activated, this, [this] {
-    ShowBrowserUiSurface(BrowserUiSurface::Bookmarks);
-  });
-#if defined(OS_MAC)
-  auto* show_all_tabs =
-      new QShortcut(QKeySequence(QStringLiteral("Meta+Shift+A")), this);
-#else
-  auto* show_all_tabs =
-      new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+A")), this);
-#endif
-  connect(show_all_tabs, &QShortcut::activated, this, [this] {
-    ShowBrowserUiSurface(BrowserUiSurface::AllTabs);
-  });
   for (int number = 1; number <= 9; ++number) {
-#if defined(OS_MAC)
-    const QString sequence = QStringLiteral("Meta+%1").arg(number);
-#else
-    const QString sequence = QStringLiteral("Ctrl+%1").arg(number);
-#endif
-    auto* activate_tab = new QShortcut(QKeySequence(sequence), this);
+    auto* activate_tab =
+        new QShortcut(PrimaryShortcut(QString::number(number)), this);
     connect(activate_tab, &QShortcut::activated, this, [this, number] {
       ActivateTabByShortcut(number == 9 ? tab_bar_->count() - 1
                                         : number - 1);
@@ -735,6 +607,40 @@ bool MainWindow::TriggerRecentlyClosedForTesting(int recent_index) {
   return true;
 }
 
+QStringList MainWindow::application_menu_titles_for_testing() const {
+  QStringList titles;
+  for (QAction* action : menuBar()->actions()) titles.append(action->text());
+  return titles;
+}
+
+QStringList MainWindow::application_menu_actions_for_testing(
+    const QString& menu_title) const {
+  for (QAction* menu_action : menuBar()->actions()) {
+    if (menu_action->text() != menu_title || !menu_action->menu()) continue;
+    QStringList actions;
+    for (QAction* action : menu_action->menu()->actions()) {
+      if (!action->isSeparator()) actions.append(action->text());
+    }
+    return actions;
+  }
+  return {};
+}
+
+QString MainWindow::application_menu_shortcut_for_testing(
+    const QString& menu_title, const QString& action_text) const {
+  QAction* action = FindApplicationMenuAction(menu_title, action_text);
+  return action ? action->shortcut().toString(QKeySequence::PortableText)
+                : QString();
+}
+
+bool MainWindow::TriggerApplicationMenuActionForTesting(
+    const QString& menu_title, const QString& action_text) {
+  QAction* action = FindApplicationMenuAction(menu_title, action_text);
+  if (!action || !action->isEnabled()) return false;
+  action->trigger();
+  return true;
+}
+
 void MainWindow::ActivateTabShortcutForTesting(int number) {
   ActivateTabByShortcut(number == 9 ? tab_bar_->count() - 1 : number - 1);
 }
@@ -988,6 +894,8 @@ void MainWindow::UpdateLoadingState(bool loading, bool can_go_back,
   if (sender() != CurrentBrowser()) return;
   back_button_->setEnabled(can_go_back);
   forward_button_->setEnabled(can_go_forward);
+  if (back_action_) back_action_->setEnabled(can_go_back);
+  if (forward_action_) forward_action_->setEnabled(can_go_forward);
   reload_button_->setText(loading ? QStringLiteral("×")
                                   : QStringLiteral("↻"));
   reload_button_->setToolTip(loading ? QStringLiteral("Stop")
@@ -1479,6 +1387,20 @@ void MainWindow::UpdateChrome() {
   reload_button_->setEnabled(available);
   bookmark_button_->setEnabled(available && !browser->current_url().isEmpty() &&
                                browser->current_url() != QStringLiteral("about:blank"));
+  if (close_tab_action_) close_tab_action_->setEnabled(available);
+  if (reopen_closed_tab_action_) {
+    reopen_closed_tab_action_->setEnabled(!closed_tabs_.isEmpty());
+  }
+  if (back_action_) back_action_->setEnabled(available && browser->can_go_back());
+  if (forward_action_) {
+    forward_action_->setEnabled(available && browser->can_go_forward());
+  }
+  if (reload_action_) reload_action_->setEnabled(available);
+  if (toggle_bookmark_action_) {
+    toggle_bookmark_action_->setEnabled(
+        available && !browser->current_url().isEmpty() &&
+        browser->current_url() != QStringLiteral("about:blank"));
+  }
 
   if (!browser) {
     address_bar_->clear();
@@ -1490,6 +1412,12 @@ void MainWindow::UpdateChrome() {
   bookmark_button_->setText(browsing_data_->IsBookmarked(url)
                                 ? QStringLiteral("★")
                                 : QStringLiteral("☆"));
+  if (toggle_bookmark_action_) {
+    toggle_bookmark_action_->setText(
+        browsing_data_->IsBookmarked(url)
+            ? QStringLiteral("Remove Bookmark for This Page")
+            : QStringLiteral("Bookmark This Page"));
+  }
   address_bar_->setText(url == QStringLiteral("about:blank") ? QString()
                                                                : url);
   reload_button_->setText(browser->is_loading() ? QStringLiteral("×")
@@ -1617,6 +1545,180 @@ void MainWindow::ActivateTabByShortcut(int index) {
   if (index >= 0 && index < tab_bar_->count()) {
     tab_bar_->setCurrentIndex(index);
   }
+}
+
+QAction* MainWindow::FindApplicationMenuAction(
+    const QString& menu_title, const QString& action_text) const {
+  for (QAction* menu_action : menuBar()->actions()) {
+    if (menu_action->text() != menu_title || !menu_action->menu()) continue;
+    for (QAction* action : menu_action->menu()->actions()) {
+      if (action->text() == action_text) return action;
+    }
+  }
+  return nullptr;
+}
+
+void MainWindow::CreateApplicationMenus() {
+  const auto add_action = [this](QMenu* menu, const QString& text,
+                                 const QKeySequence& shortcut,
+                                 std::function<void()> callback) {
+    QAction* action = menu->addAction(text);
+    if (!shortcut.isEmpty()) action->setShortcut(shortcut);
+    connect(action, &QAction::triggered, this, std::move(callback));
+    return action;
+  };
+  const auto edit_target = [this](auto line_edit_action,
+                                  auto browser_action) {
+    if (auto* edit = qobject_cast<QLineEdit*>(QApplication::focusWidget())) {
+      (edit->*line_edit_action)();
+    } else if (BrowserView* browser = CurrentBrowser()) {
+      (browser->*browser_action)();
+    }
+  };
+
+  QMenu* file = menuBar()->addMenu(QStringLiteral("File"));
+  add_action(file, QStringLiteral("New Tab"), QKeySequence::AddTab,
+             [this] { AddBlankTab(); });
+  close_tab_action_ = add_action(
+      file, QStringLiteral("Close Tab"), QKeySequence::Close,
+      [this] { CloseTab(tab_bar_->currentIndex()); });
+  file->addSeparator();
+  add_action(file, QStringLiteral("Print…"), QKeySequence::Print, [this] {
+    if (BrowserView* browser = CurrentBrowser()) browser->Print();
+  });
+  file->addSeparator();
+  QAction* quit = add_action(file, QStringLiteral("Quit Trail Browser"),
+                             QKeySequence::Quit, [this] { close(); });
+  quit->setMenuRole(QAction::QuitRole);
+
+  QMenu* edit = menuBar()->addMenu(QStringLiteral("Edit"));
+  add_action(edit, QStringLiteral("Undo"), QKeySequence::Undo,
+             [edit_target] {
+               edit_target(&QLineEdit::undo, &BrowserView::Undo);
+             });
+  add_action(edit, QStringLiteral("Redo"), QKeySequence::Redo,
+             [edit_target] {
+               edit_target(&QLineEdit::redo, &BrowserView::Redo);
+             });
+  edit->addSeparator();
+  add_action(edit, QStringLiteral("Cut"), QKeySequence::Cut,
+             [edit_target] {
+               edit_target(&QLineEdit::cut, &BrowserView::Cut);
+             });
+  add_action(edit, QStringLiteral("Copy"), QKeySequence::Copy,
+             [edit_target] {
+               edit_target(&QLineEdit::copy, &BrowserView::Copy);
+             });
+  add_action(edit, QStringLiteral("Paste"), QKeySequence::Paste,
+             [edit_target] {
+               edit_target(&QLineEdit::paste, &BrowserView::Paste);
+             });
+  add_action(edit, QStringLiteral("Select All"), QKeySequence::SelectAll,
+             [edit_target] {
+               edit_target(&QLineEdit::selectAll, &BrowserView::SelectAll);
+             });
+  edit->addSeparator();
+  add_action(edit, QStringLiteral("Find in Page…"), QKeySequence::Find,
+             [this] { ShowFindBar(); });
+  add_action(edit, QStringLiteral("Find Next"), QKeySequence::FindNext,
+             [this] { FindFromBar(true, true); });
+  add_action(edit, QStringLiteral("Find Previous"),
+             QKeySequence::FindPrevious,
+             [this] { FindFromBar(false, true); });
+
+  QMenu* view = menuBar()->addMenu(QStringLiteral("View"));
+  add_action(view, QStringLiteral("Focus Address Bar"),
+             PrimaryShortcut(QStringLiteral("L")), [this] {
+               address_bar_->setFocus();
+               address_bar_->selectAll();
+             });
+  view->addSeparator();
+  back_action_ = add_action(view, QStringLiteral("Back"), QKeySequence::Back,
+                            [this] {
+                              if (BrowserView* browser = CurrentBrowser())
+                                browser->GoBack();
+                            });
+  forward_action_ = add_action(
+      view, QStringLiteral("Forward"), QKeySequence::Forward, [this] {
+        if (BrowserView* browser = CurrentBrowser()) browser->GoForward();
+      });
+  reload_action_ = add_action(
+      view, QStringLiteral("Reload"), QKeySequence::Refresh, [this] {
+        if (BrowserView* browser = CurrentBrowser()) browser->Reload();
+      });
+  view->addSeparator();
+  add_action(view, QStringLiteral("Zoom In"), QKeySequence::ZoomIn, [this] {
+    if (BrowserView* browser = CurrentBrowser()) browser->ZoomIn();
+  });
+  add_action(view, QStringLiteral("Zoom Out"), QKeySequence::ZoomOut,
+             [this] {
+               if (BrowserView* browser = CurrentBrowser()) browser->ZoomOut();
+             });
+  add_action(view, QStringLiteral("Actual Size"),
+             PrimaryShortcut(QStringLiteral("0")), [this] {
+               if (BrowserView* browser = CurrentBrowser())
+                 browser->ResetZoom();
+             });
+  view->addSeparator();
+  add_action(view, QStringLiteral("Developer Tools"),
+             QKeySequence(Qt::Key_F12), [this] {
+               if (BrowserView* browser = CurrentBrowser())
+                 browser->ShowDevTools();
+             });
+
+  QMenu* history = menuBar()->addMenu(QStringLiteral("History"));
+  reopen_closed_tab_action_ = add_action(
+      history, QStringLiteral("Reopen Closed Tab"),
+      PrimaryShortcut(QStringLiteral("Shift+T")),
+      [this] { ReopenClosedTab(); });
+#if defined(OS_MAC)
+  const QKeySequence history_shortcut(QStringLiteral("Meta+Y"));
+  const QKeySequence clear_shortcut(QStringLiteral("Meta+Shift+Backspace"));
+#else
+  const QKeySequence history_shortcut(QStringLiteral("Ctrl+H"));
+  const QKeySequence clear_shortcut(QStringLiteral("Ctrl+Shift+Delete"));
+#endif
+  add_action(history, QStringLiteral("Show History"), history_shortcut,
+             [this] { ShowBrowserUiSurface(BrowserUiSurface::History); });
+  add_action(history, QStringLiteral("Downloads"),
+#if defined(OS_MAC)
+             QKeySequence(QStringLiteral("Meta+Shift+J")),
+#else
+             QKeySequence(QStringLiteral("Ctrl+J")),
+#endif
+             [this] { ShowBrowserUiSurface(BrowserUiSurface::Downloads); });
+  history->addSeparator();
+  add_action(history, QStringLiteral("Clear Browsing Data…"), clear_shortcut,
+             [this] { ShowBrowserUiSurface(BrowserUiSurface::ClearData); });
+
+  QMenu* bookmarks = menuBar()->addMenu(QStringLiteral("Bookmarks"));
+  toggle_bookmark_action_ = add_action(
+      bookmarks, QStringLiteral("Bookmark This Page"),
+      PrimaryShortcut(QStringLiteral("D")),
+      [this] { ToggleCurrentBookmark(); });
+  add_action(bookmarks, QStringLiteral("Show Bookmarks"),
+             PrimaryShortcut(QStringLiteral("Shift+B")),
+             [this] { ShowBrowserUiSurface(BrowserUiSurface::Bookmarks); });
+
+  QMenu* window = menuBar()->addMenu(QStringLiteral("Window"));
+  add_action(window, QStringLiteral("Next Tab"), QKeySequence::NextChild,
+             [this] {
+               if (tab_bar_->count() > 1) {
+                 tab_bar_->setCurrentIndex((tab_bar_->currentIndex() + 1) %
+                                           tab_bar_->count());
+               }
+             });
+  add_action(window, QStringLiteral("Previous Tab"),
+             QKeySequence::PreviousChild, [this] {
+               if (tab_bar_->count() > 1) {
+                 tab_bar_->setCurrentIndex((tab_bar_->currentIndex() - 1 +
+                                            tab_bar_->count()) %
+                                           tab_bar_->count());
+               }
+             });
+  add_action(window, QStringLiteral("All Tabs"),
+             PrimaryShortcut(QStringLiteral("Shift+A")),
+             [this] { ShowBrowserUiSurface(BrowserUiSurface::AllTabs); });
 }
 
 void MainWindow::ShowBrowserUiSurface(BrowserUiSurface surface) {
@@ -1815,6 +1917,7 @@ void MainWindow::BeginClearBrowsingData(bool show_result_dialog) {
   RebuildHistoryMenu();
   RebuildAllTabsMenu();
   RefreshAddressSuggestions();
+  UpdateChrome();
   CompleteBrowsingDataClearTask(
       QStringLiteral("recently closed tabs"),
       session_path_.isEmpty() || PersistSession(CaptureSession(false)));

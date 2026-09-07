@@ -400,6 +400,7 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-browser-surfaces")) ||
          HasArgument(QStringLiteral("--smoke-test-tab-navigation")) ||
          HasArgument(QStringLiteral("--smoke-test-recent-tabs")) ||
+         HasArgument(QStringLiteral("--smoke-test-application-menu")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth"));
 }
@@ -904,6 +905,86 @@ void StartRecentlyClosedTabsSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
+void StartApplicationMenuSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, stage, step] {
+    ++*attempts;
+    if (*stage == 0 && window->current_title() == QStringLiteral("Smoke")) {
+      const QStringList menus = window->application_menu_titles_for_testing();
+      const QStringList file =
+          window->application_menu_actions_for_testing(QStringLiteral("File"));
+      const QStringList edit =
+          window->application_menu_actions_for_testing(QStringLiteral("Edit"));
+      const QStringList view =
+          window->application_menu_actions_for_testing(QStringLiteral("View"));
+      const QStringList history = window->application_menu_actions_for_testing(
+          QStringLiteral("History"));
+      const QStringList bookmarks =
+          window->application_menu_actions_for_testing(
+              QStringLiteral("Bookmarks"));
+      const QStringList window_menu =
+          window->application_menu_actions_for_testing(QStringLiteral("Window"));
+      const bool structure_ok =
+          menus == QStringList{QStringLiteral("File"), QStringLiteral("Edit"),
+                               QStringLiteral("View"), QStringLiteral("History"),
+                               QStringLiteral("Bookmarks"),
+                               QStringLiteral("Window")} &&
+          file.contains(QStringLiteral("New Tab")) &&
+          file.contains(QStringLiteral("Print…")) &&
+          edit.contains(QStringLiteral("Select All")) &&
+          view.contains(QStringLiteral("Developer Tools")) &&
+          history.contains(QStringLiteral("Clear Browsing Data…")) &&
+          bookmarks.contains(QStringLiteral("Show Bookmarks")) &&
+          window_menu.contains(QStringLiteral("All Tabs"));
+      const bool shortcuts_ok =
+          !window->application_menu_shortcut_for_testing(
+                     QStringLiteral("File"), QStringLiteral("New Tab"))
+               .isEmpty() &&
+          !window->application_menu_shortcut_for_testing(
+                     QStringLiteral("Edit"), QStringLiteral("Find in Page…"))
+               .isEmpty() &&
+          !window->application_menu_shortcut_for_testing(
+                     QStringLiteral("Window"), QStringLiteral("All Tabs"))
+               .isEmpty();
+      if (!structure_ok || !shortcuts_ok ||
+          !window->TriggerApplicationMenuActionForTesting(
+              QStringLiteral("File"), QStringLiteral("New Tab"))) {
+        *output << "APPLICATION_MENU_SMOKE_FAILED structure=" << structure_ok
+                << " shortcuts=" << shortcuts_ok << Qt::endl;
+        QCoreApplication::exit(19);
+        return;
+      }
+      *stage = 1;
+    } else if (*stage == 1 && window->tab_count() == 2) {
+      if (!window->TriggerApplicationMenuActionForTesting(
+              QStringLiteral("File"), QStringLiteral("Close Tab"))) {
+        *output << "APPLICATION_MENU_SMOKE_FAILED close=0" << Qt::endl;
+        QCoreApplication::exit(19);
+        return;
+      }
+      *stage = 2;
+    } else if (*stage == 2 && window->tab_count() == 1 &&
+               window->current_title() == QStringLiteral("Smoke")) {
+      *output << "APPLICATION_MENU_SMOKE_OK menus=6 shortcuts=visible "
+                 "actions=triggered"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 180) {
+      *output << "APPLICATION_MENU_SMOKE_FAILED stage=" << *stage
+              << " tabs=" << window->tab_count() << Qt::endl;
+      QCoreApplication::exit(19);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
 void StartSecuritySmokeTest(MainWindow* window) {
   auto output = std::make_shared<QTextStream>(stdout);
   const QString media = window->media_permission_description_for_testing(
@@ -1174,6 +1255,8 @@ int RunBrowser(int argc, char* argv[]) {
       StartTabNavigationSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-recent-tabs"))) {
       StartRecentlyClosedTabsSmokeTest(&main_window);
+    } else if (HasArgument(QStringLiteral("--smoke-test-application-menu"))) {
+      StartApplicationMenuSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-security"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartSecuritySmokeTest(&main_window); });

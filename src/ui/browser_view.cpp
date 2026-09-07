@@ -187,6 +187,30 @@ void BrowserView::StopFinding(bool clear_selection) {
   if (browser_) browser_->GetHost()->StopFinding(clear_selection);
 }
 
+void BrowserView::Undo() {
+  if (browser_) browser_->GetMainFrame()->Undo();
+}
+
+void BrowserView::Redo() {
+  if (browser_) browser_->GetMainFrame()->Redo();
+}
+
+void BrowserView::Cut() {
+  if (browser_) browser_->GetMainFrame()->Cut();
+}
+
+void BrowserView::Copy() {
+  if (browser_) browser_->GetMainFrame()->Copy();
+}
+
+void BrowserView::Paste() {
+  if (browser_) browser_->GetMainFrame()->Paste();
+}
+
+void BrowserView::SelectAll() {
+  if (browser_) browser_->GetMainFrame()->SelectAll();
+}
+
 void BrowserView::ZoomIn() {
   if (!browser_) return;
   browser_->GetHost()->Zoom(CEF_ZOOM_COMMAND_IN);

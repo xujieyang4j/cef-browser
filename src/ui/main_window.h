@@ -17,6 +17,7 @@ class BrowserView;
 class BrowsingDataStore;
 class DownloadManager;
 class DownloadPanel;
+class QAction;
 class QCloseEvent;
 class QMoveEvent;
 class QResizeEvent;
@@ -80,6 +81,13 @@ class MainWindow final : public QMainWindow {
   QStringList recently_closed_tabs_for_testing() const;
   QStringList recently_closed_menu_labels_for_testing();
   bool TriggerRecentlyClosedForTesting(int recent_index);
+  QStringList application_menu_titles_for_testing() const;
+  QStringList application_menu_actions_for_testing(
+      const QString& menu_title) const;
+  QString application_menu_shortcut_for_testing(
+      const QString& menu_title, const QString& action_text) const;
+  bool TriggerApplicationMenuActionForTesting(const QString& menu_title,
+                                              const QString& action_text);
   void ActivateTabShortcutForTesting(int number);
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
@@ -181,6 +189,9 @@ class MainWindow final : public QMainWindow {
   void UpdateTabTitle(BrowserView* browser, const QString& title);
   void HandleBrowserShortcut(int action);
   void ActivateTabByShortcut(int index);
+  void CreateApplicationMenus();
+  QAction* FindApplicationMenuAction(const QString& menu_title,
+                                     const QString& action_text) const;
   void ShowBrowserUiSurface(BrowserUiSurface surface);
   void PerformBrowserUiSurface(BrowserUiSurface surface);
   bool ReopenClosedTabAt(int recent_index);
@@ -196,6 +207,12 @@ class MainWindow final : public QMainWindow {
   QPushButton* reload_button_ = nullptr;
   QPushButton* downloads_button_ = nullptr;
   QProgressBar* loading_progress_ = nullptr;
+  QAction* close_tab_action_ = nullptr;
+  QAction* reopen_closed_tab_action_ = nullptr;
+  QAction* back_action_ = nullptr;
+  QAction* forward_action_ = nullptr;
+  QAction* reload_action_ = nullptr;
+  QAction* toggle_bookmark_action_ = nullptr;
   QCompleter* address_completer_ = nullptr;
   QStringListModel* address_suggestions_ = nullptr;
   QHash<QString, QString> address_suggestion_urls_;

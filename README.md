@@ -54,6 +54,9 @@ lists the ten most recently closed tabs in newest-first order, allowing any
 entry to be restored instead of only the latest one. Closed-tab titles are
 stored with the session, including across restarts and after history changes;
 sessions written by earlier Trail Browser versions remain compatible.
+Native File, Edit, View, History, Bookmarks, and Window menus expose the main
+browser commands and their keyboard shortcuts. Editing commands target Qt text
+fields or the active web page according to keyboard focus.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -153,7 +156,7 @@ browsing-data cleanup, favicon
 mapping, audio/mute state, security-policy, and authentication-dialog checks.
 Keyboard-accessible browser surfaces and full-screen exit routing are also
 covered, along with numeric tab navigation, the all-tabs menu, and selective
-recent-tab restoration. All seventeen
+recent-tab restoration and native application-menu actions. All eighteen
 checks are registered when `xvfb-run` is available:
 
 ~~~sh
