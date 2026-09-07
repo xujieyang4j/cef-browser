@@ -22,7 +22,7 @@ class BrowsingDataStore final {
   explicit BrowsingDataStore(QString path);
 
   bool Load(QString* error = nullptr);
-  bool Save(QString* error = nullptr) const;
+  bool Save(QString* error = nullptr);
   bool ImportBookmarksHtml(const QString& path, int* imported_count = nullptr,
                            QString* error = nullptr);
   bool ExportBookmarksHtml(const QString& path,

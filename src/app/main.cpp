@@ -1529,6 +1529,8 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
     newest_history_url = history_url;
   }
   const bool bounded_data_saved = bounded_data.Save();
+  const QList<BrowsingDataStore::HistoryEntry> bounded_live_history =
+      bounded_data.history();
   BrowsingDataStore bounded_data_restored(bounded_data_path);
   const bool bounded_data_loaded = bounded_data_restored.Load();
   const bool oldest_history_removed =
@@ -1547,8 +1549,30 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       bounded_data_restored.bookmarks().first().url == newest_bookmark_url &&
       !bounded_data_restored.history().isEmpty() &&
       bounded_data_restored.history().size() < kBoundedRecordCount &&
+      bounded_live_history.size() == bounded_data_restored.history().size() &&
+      bounded_live_history.first().url ==
+          bounded_data_restored.history().first().url &&
+      bounded_live_history.last().url ==
+          bounded_data_restored.history().last().url &&
       bounded_data_restored.history().first().url == newest_history_url &&
       oldest_history_removed;
+  const QString failed_data_path =
+      data_path + QStringLiteral(".blocked-target");
+  const bool failed_data_target_created = QDir().mkpath(failed_data_path);
+  BrowsingDataStore failed_data(failed_data_path);
+  constexpr int kFailedDataRecordCount = 50;
+  for (int index = 0; index < kFailedDataRecordCount; ++index) {
+    failed_data.RecordVisit(
+        QStringLiteral("https://example.test/failed-history/%1?payload=%2")
+            .arg(index)
+            .arg(long_record_payload),
+        long_record_title);
+  }
+  QString failed_data_error;
+  const bool failed_data_preserved =
+      failed_data_target_created && !failed_data.Save(&failed_data_error) &&
+      !failed_data_error.isEmpty() &&
+      failed_data.history().size() == kFailedDataRecordCount;
   const QString bookmark_budget_path =
       data_path + QStringLiteral(".bookmark-budget.json");
   BrowsingDataStore bookmark_budget(bookmark_budget_path);
@@ -1710,7 +1734,8 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
                           import_ok && oversized_import_rejected &&
                           round_trip_ok && oversized_export_rejected &&
                           bookmark_ok && history_ok && stored_data_sanitized &&
-                          bounded_browsing_data && oversized_data_rejected &&
+                          bounded_browsing_data && failed_data_preserved &&
+                          oversized_data_rejected &&
                           bookmark_budget_rejected &&
                           bookmark_budget_preserved &&
                           bookmark_rename_rejected &&
@@ -1726,6 +1751,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
             << " history=" << history_ok << " removed=" << removed
             << " stored_data=" << stored_data_sanitized
             << " bounded=" << bounded_browsing_data
+            << " failed_data=" << failed_data_preserved
             << " bookmark_budget=" << bookmark_budget_preserved
             << " rename_budget=" << bookmark_rename_rejected
             << " import_budget=" << bookmark_import_transactional

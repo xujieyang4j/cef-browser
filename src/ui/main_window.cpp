@@ -2738,9 +2738,11 @@ void MainWindow::BeginClearBrowsingData(
   statusBar()->showMessage(QStringLiteral("Clearing browsing data…"));
 
   if (selection.history) {
+    const BrowsingDataStore previous = *browsing_data_;
     browsing_data_->ClearHistory();
-    CompleteBrowsingDataClearTask(QStringLiteral("browsing history"),
-                                  SaveBrowsingData());
+    const bool saved = SaveBrowsingData();
+    if (!saved) *browsing_data_ = previous;
+    CompleteBrowsingDataClearTask(QStringLiteral("browsing history"), saved);
     RebuildHistoryMenu();
     RefreshAddressSuggestions();
   }
@@ -2853,8 +2855,9 @@ void MainWindow::RecordVisit(BrowserView* browser) {
   if (!browser || browser->is_loading()) return;
   const QString url = browser->current_url();
   if (url.isEmpty()) return;
+  const BrowsingDataStore previous = *browsing_data_;
   browsing_data_->RecordVisit(url, browser->page_title());
-  SaveBrowsingData();
+  if (!SaveBrowsingData()) *browsing_data_ = previous;
   RefreshAddressSuggestions();
 }
 

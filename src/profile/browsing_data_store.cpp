@@ -206,7 +206,7 @@ bool BrowsingDataStore::Load(QString* error) {
   return true;
 }
 
-bool BrowsingDataStore::Save(QString* error) const {
+bool BrowsingDataStore::Save(QString* error) {
   if (!QDir().mkpath(QFileInfo(path_).absolutePath())) {
     SetError(error, QStringLiteral("Unable to create profile directory"));
     return false;
@@ -218,22 +218,30 @@ bool BrowsingDataStore::Save(QString* error) const {
     return false;
   }
   QJsonArray history;
+  QList<HistoryEntry> persisted_history;
   for (const HistoryEntry& entry : history_) {
     const auto url = NormalizeRecordableUrl(entry.url);
     if (!url) continue;
+    HistoryEntry normalized_entry{
+        *url, NormalizeTitle(entry.title),
+        NormalizeDate(entry.last_visited_at),
+        std::max(1, entry.visit_count)};
     history.append(QJsonObject{
-        {QStringLiteral("url"), *url},
-        {QStringLiteral("title"), NormalizeTitle(entry.title)},
+        {QStringLiteral("url"), normalized_entry.url},
+        {QStringLiteral("title"), normalized_entry.title},
         {QStringLiteral("lastVisitedAt"),
-         NormalizeDate(entry.last_visited_at).toString(Qt::ISODateWithMs)},
-        {QStringLiteral("visitCount"), std::max(1, entry.visit_count)},
+         normalized_entry.last_visited_at.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("visitCount"), normalized_entry.visit_count},
     });
+    persisted_history.append(std::move(normalized_entry));
     if (history.size() >= kMaxHistoryEntries) break;
   }
 
   QByteArray bytes = SerializeData(bookmarks, history);
   if (bytes.size() > kMaxDataBytes) {
-    history = Prefix(history, LargestHistoryPrefix(bookmarks, history));
+    const int retained_history = LargestHistoryPrefix(bookmarks, history);
+    history = Prefix(history, retained_history);
+    persisted_history = persisted_history.mid(0, retained_history);
     bytes = SerializeData(bookmarks, history);
   }
   QSaveFile file(path_);
@@ -250,6 +258,7 @@ bool BrowsingDataStore::Save(QString* error) const {
     SetError(error, file.errorString());
     return false;
   }
+  history_ = std::move(persisted_history);
   return true;
 }
 

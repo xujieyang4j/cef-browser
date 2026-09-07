@@ -64,7 +64,9 @@ files share their read and write byte limits and retain the newest records
 when trimming is required. Download-history budget eviction is applied to the
 live model only after the atomic commit succeeds, so the visible finished list
 matches the next restart. Browsing data prioritizes bookmarks over older visit
-history so every saved profile remains reloadable. Session, settings,
+history so every saved profile remains reloadable; history trimmed by that
+budget is removed from the live menus only after the atomic save succeeds, and
+a failed history write restores the previous in-memory state. Session, settings,
 download-history, browsing-data, and bookmark
 HTML input is read through strict byte budgets rather than trusting an earlier
 file-size check, so files that grow while being opened cannot bypass the
