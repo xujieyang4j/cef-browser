@@ -64,6 +64,9 @@ reloadable. Session, settings, download-history, browsing-data, and bookmark
 HTML input is read through strict byte budgets rather than trusting an earlier
 file-size check, so files that grow while being opened cannot bypass the
 limits or replace the corresponding in-memory state.
+Bookmark HTML export is streamed through the same 5 MiB budget and committed
+atomically; an oversized export cannot consume a large assembly buffer or
+replace an existing destination file with partial output.
 Sensitive site capabilities use explicit one-time allow/block prompts, invalid
 HTTPS certificates are blocked with a dedicated error page, and only a small
 allowlist of external URL schemes can reach an OS application after user
@@ -78,6 +81,9 @@ requests use the same non-blocking per-tab gate. Their page-controlled display
 text and prompt values are bounded, navigation resets complete callbacks
 exactly once, and oversized address-change values are rejected before they can
 enter the native UI or persisted session state.
+Generated failure pages also enforce a final 2 MiB encoded-output ceiling, and
+load/certificate failure URLs must satisfy the same 64 KiB UTF-8 boundary as
+normal navigation before being reflected into the page or native UI.
 Web pages can enter native full screen, hovered-link destinations appear in the
 status bar, and Ctrl/Cmd+P opens the platform print flow.
 Navigation shows page-load progress and supports standard back, forward, and
@@ -231,6 +237,8 @@ mapping, audio/mute state, security-policy, and authentication-dialog checks.
 Oversized session, settings, download-history, browsing-data, and bookmark
 HTML files are also rejected using the bytes actually read, with existing
 in-memory settings and profile data preserved.
+Bookmark export checks additionally cover strict output limits and preservation
+of an existing destination when the generated document would be too large.
 JavaScript-dialog limits, concurrency suppression, navigation reset, and
 before-unload cancellation are checked as well.
 Keyboard-accessible browser surfaces and full-screen exit routing are also

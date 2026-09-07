@@ -313,33 +313,48 @@ bool BrowsingDataStore::ExportBookmarksHtml(const QString& path,
     SetError(error, QStringLiteral("Unable to create export directory"));
     return false;
   }
-  QByteArray html("<!DOCTYPE NETSCAPE-Bookmark-file-1>\n"
-                  "<META HTTP-EQUIV=\"Content-Type\" "
-                  "CONTENT=\"text/html; charset=UTF-8\">\n"
-                  "<TITLE>Trail Browser Bookmarks</TITLE>\n"
-                  "<H1>Trail Browser Bookmarks</H1>\n<DL><p>\n");
-  for (const Bookmark& bookmark : bookmarks_) {
-    const QString title = bookmark.title.isEmpty() ? bookmark.url
-                                                    : bookmark.title;
-    html += QStringLiteral(
-                "    <DT><A HREF=\"%1\" ADD_DATE=\"%2\">%3</A>\n")
-                .arg(bookmark.url.toHtmlEscaped())
-                .arg(bookmark.created_at.toSecsSinceEpoch())
-                .arg(title.toHtmlEscaped())
-                .toUtf8();
-  }
-  html += "</DL><p>\n";
-
   QSaveFile file(path);
   if (!file.open(QIODevice::WriteOnly)) {
     SetError(error, file.errorString());
     return false;
   }
-  if (file.write(html) != html.size()) {
-    SetError(error, file.errorString());
-    file.cancelWriting();
+  qint64 bytes_written = 0;
+  const auto write_chunk = [&](const QByteArray& bytes) {
+    if (bytes.size() > kMaxBookmarkHtmlBytes - bytes_written) {
+      SetError(error, QStringLiteral(
+                          "Bookmark export exceeds the safe size limit"));
+      file.cancelWriting();
+      return false;
+    }
+    if (file.write(bytes) != bytes.size()) {
+      SetError(error, file.errorString());
+      file.cancelWriting();
+      return false;
+    }
+    bytes_written += bytes.size();
+    return true;
+  };
+  if (!write_chunk(
+          QByteArray("<!DOCTYPE NETSCAPE-Bookmark-file-1>\n"
+                     "<META HTTP-EQUIV=\"Content-Type\" "
+                     "CONTENT=\"text/html; charset=UTF-8\">\n"
+                     "<TITLE>Trail Browser Bookmarks</TITLE>\n"
+                     "<H1>Trail Browser Bookmarks</H1>\n<DL><p>\n"))) {
     return false;
   }
+  for (const Bookmark& bookmark : bookmarks_) {
+    const QString title = bookmark.title.isEmpty() ? bookmark.url
+                                                    : bookmark.title;
+    const QByteArray entry =
+        QStringLiteral(
+            "    <DT><A HREF=\"%1\" ADD_DATE=\"%2\">%3</A>\n")
+            .arg(bookmark.url.toHtmlEscaped())
+            .arg(bookmark.created_at.toSecsSinceEpoch())
+            .arg(title.toHtmlEscaped())
+            .toUtf8();
+    if (!write_chunk(entry)) return false;
+  }
+  if (!write_chunk(QByteArray("</DL><p>\n"))) return false;
   if (!file.commit()) {
     SetError(error, file.errorString());
     return false;

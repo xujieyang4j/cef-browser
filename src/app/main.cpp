@@ -780,7 +780,19 @@ void StartFailureSmokeTest(MainWindow* window) {
   auto step = std::make_shared<std::function<void()>>();
   const QString original_url =
       QStringLiteral("data:text/html,<title>Recovery</title>");
-  *step = [window, output, attempts, step, original_url] {
+  const qsizetype max_failure_page_bytes =
+      BrowserView::MaxFailurePageUrlBytesForTesting();
+  const bool failure_output_bounded =
+      BrowserView::FailurePageUrlBytesForTesting(
+          QString(512, QChar(0x754C)),
+          QStringLiteral("https://example.test/?q=") +
+              QString(64 * 1024, QLatin1Char('&'))) <=
+          max_failure_page_bytes &&
+      BrowserView::FailurePageUrlBytesForTesting(
+          QString(8 * 1024, QChar(0x754C)),
+          QString(256 * 1024, QLatin1Char('&'))) <= max_failure_page_bytes;
+  *step = [window, output, attempts, step, original_url,
+           failure_output_bounded] {
     ++*attempts;
     if (window->current_title() != QStringLiteral("Recovery")) {
       if (*attempts > 120) {
@@ -800,12 +812,14 @@ void StartFailureSmokeTest(MainWindow* window) {
     const bool renderer_error = window->failure_page_active_for_testing() &&
                                 window->render_process_failed_for_testing() &&
                                 window->current_url() == original_url;
-    if (load_error && renderer_error) {
-      *output << "FAILURE_SMOKE_OK url=" << window->current_url() << Qt::endl;
+    if (load_error && renderer_error && failure_output_bounded) {
+      *output << "FAILURE_SMOKE_OK url=" << window->current_url()
+              << " output=bounded" << Qt::endl;
       window->close();
     } else {
       *output << "FAILURE_SMOKE_FAILED load=" << load_error
-              << " renderer=" << renderer_error << Qt::endl;
+              << " renderer=" << renderer_error
+              << " output=" << failure_output_bounded << Qt::endl;
       QCoreApplication::exit(4);
     }
   };
@@ -1204,6 +1218,44 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       round_trip.bookmarks().first().url == imported_url &&
       round_trip.bookmarks().first().title ==
           QStringLiteral("Imported & <Safe>");
+  const QString oversized_export_path =
+      data_path + QStringLiteral(".oversized-export.html");
+  QFile original_export(oversized_export_path);
+  const QByteArray original_export_bytes("preserve-existing-export");
+  const bool original_export_opened =
+      original_export.open(QIODevice::WriteOnly);
+  const bool original_export_written =
+      original_export_opened &&
+      original_export.write(original_export_bytes) ==
+          original_export_bytes.size();
+  original_export.close();
+  BrowsingDataStore oversized_export_data(
+      data_path + QStringLiteral(".oversized-export.json"));
+  const QString export_payload(60 * 1024, QLatin1Char('e'));
+  bool oversized_export_seeded = true;
+  for (int index = 0; index < 100; ++index) {
+    oversized_export_seeded =
+        oversized_export_seeded &&
+        oversized_export_data.AddBookmark(
+            QStringLiteral("https://example.test/export/%1?payload=%2")
+                .arg(index)
+                .arg(export_payload),
+            QStringLiteral("Large export"));
+  }
+  QString oversized_export_error;
+  const bool oversized_exported = oversized_export_data.ExportBookmarksHtml(
+      oversized_export_path, &oversized_export_error);
+  QFile preserved_export(oversized_export_path);
+  const bool preserved_export_opened =
+      preserved_export.open(QIODevice::ReadOnly);
+  const QByteArray preserved_export_bytes =
+      preserved_export_opened
+          ? preserved_export.read(original_export_bytes.size() + 1)
+          : QByteArray();
+  const bool oversized_export_rejected =
+      original_export_written && oversized_export_seeded &&
+      !oversized_exported && !oversized_export_error.isEmpty() &&
+      preserved_export_bytes == original_export_bytes;
   BrowsingDataStore data(data_path);
   const bool add_first = data.AddBookmark(first_url, QStringLiteral("First"));
   const bool reject_duplicate =
@@ -1408,7 +1460,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       after_single_remove.history().first().url == first_url;
   const bool profile_ok = add_first && reject_duplicate && add_second && saved &&
                           import_ok && oversized_import_rejected &&
-                          round_trip_ok &&
+                          round_trip_ok && oversized_export_rejected &&
                           bookmark_ok && history_ok && stored_data_sanitized &&
                           bounded_browsing_data && oversized_data_rejected &&
                           removed && suggestions_ok && !first_label.isEmpty() &&
@@ -1424,6 +1476,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
             << " bounded=" << bounded_browsing_data
             << " oversized_data=" << oversized_data_rejected
             << " oversized_import=" << oversized_import_rejected
+            << " oversized_export=" << oversized_export_rejected
             << " suggestions=" << suggestions_ok
             << " titled=" << !first_label.isEmpty()
             << " renamed=" << rename_persisted
@@ -1441,7 +1494,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
     ++*attempts;
     if (window->current_url() == first_url) {
       *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2 "
-                 "html=roundtrip "
+                 "html=roundtrip export=bounded "
                  "bounded=reloadable read=bounded "
                  "rename=persisted empty=url single-remove=persisted "
                  "suggestions=titled-navigation"

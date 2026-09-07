@@ -52,6 +52,7 @@ constexpr int kMaxJavaScriptMessageCharacters = 4 * 1024;
 constexpr int kMaxJavaScriptPromptCharacters = 1024;
 constexpr int kMaxFindTextCharacters = 4 * 1024;
 constexpr int kMaxFindTextBytes = 8 * 1024;
+constexpr qsizetype kMaxFailurePageUrlBytes = 2 * 1024 * 1024;
 
 QString NormalizeUiText(QString value, int max_characters) {
   for (qsizetype index = 0; index < value.size(); ++index) {
@@ -523,6 +524,19 @@ bool BrowserView::IsNavigationUrlWithinLimitForTesting(const QString& url) {
 
 bool BrowserView::IsFindTextWithinLimitForTesting(const QString& text) {
   return IsFindTextWithinLimit(text);
+}
+
+qsizetype BrowserView::FailurePageUrlBytesForTesting(
+    const QString& detail, const QString& retry_url) {
+  return FailurePageUrl(QStringLiteral("Page unavailable"),
+                        QStringLiteral("Trail Browser could not load this page."),
+                        detail, retry_url)
+      .toUtf8()
+      .size();
+}
+
+qsizetype BrowserView::MaxFailurePageUrlBytesForTesting() {
+  return kMaxFailurePageUrlBytes;
 }
 
 bool BrowserView::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
@@ -1012,15 +1026,15 @@ void BrowserView::OnCefLoadingStateChanged(CefRefPtr<CefBrowser> browser,
 void BrowserView::OnCefLoadError(CefRefPtr<CefBrowser> browser, int error_code,
                                  const QString& error_text,
                                  const QString& failed_url) {
+  const QString url = failed_url.isEmpty() ? current_url_ : failed_url;
   if (!certificate_failure_url_.isEmpty() &&
-      failed_url == certificate_failure_url_) {
+      url == certificate_failure_url_) {
     return;
   }
   if (!browser_ || !browser_->IsSame(browser) || closing_ ||
       failed_url == failure_page_url_) {
     return;
   }
-  const QString url = failed_url.isEmpty() ? current_url_ : failed_url;
   ShowFailurePage(
       QStringLiteral("Page unavailable"),
       QStringLiteral("Trail Browser could not load this page."),
@@ -1072,17 +1086,18 @@ void BrowserView::OnCefCertificateError(CefRefPtr<CefBrowser> browser,
     callback->Cancel();
     return;
   }
-  certificate_failure_url_ = request_url;
+  const QString url = request_url.isEmpty() ? current_url_ : request_url;
+  certificate_failure_url_ = url;
   callback->Cancel();
   QMetaObject::invokeMethod(
       this,
-      [this, request_url, error_code] {
+      [this, url, error_code] {
         ShowFailurePage(
             QStringLiteral("Your connection is not private"),
             QStringLiteral("Trail Browser blocked this connection because "
                            "the site's certificate is invalid."),
             QStringLiteral("Certificate error %1").arg(error_code),
-            request_url, false);
+            url, false);
         emit SecurityMessage(QStringLiteral("Unsafe HTTPS connection blocked"));
       },
       Qt::QueuedConnection);
@@ -1333,8 +1348,15 @@ QString BrowserView::FailurePageUrl(const QString& heading,
                            .arg(heading.toHtmlEscaped(), summary.toHtmlEscaped(),
                                 retry_url.toHtmlEscaped(), detail.toHtmlEscaped(),
                                 retry_url.toHtmlEscaped());
-  return QStringLiteral("data:text/html;charset=utf-8,%1")
-      .arg(QString::fromLatin1(QUrl::toPercentEncoding(html)));
+  const QByteArray prefix("data:text/html;charset=utf-8,");
+  const QByteArray encoded = QUrl::toPercentEncoding(html);
+  if (encoded.size() > kMaxFailurePageUrlBytes - prefix.size()) {
+    return QStringLiteral(
+        "data:text/html;charset=utf-8,"
+        "%3Cmeta%20charset%3Dutf-8%3E%3Ctitle%3EPage%20unavailable%3C%2Ftitle%3E"
+        "%3Ch1%3EPage%20unavailable%3C%2Fh1%3E");
+  }
+  return QString::fromLatin1(prefix + encoded);
 }
 
 void BrowserView::showEvent(QShowEvent* event) {

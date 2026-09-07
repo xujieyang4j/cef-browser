@@ -283,7 +283,8 @@ void BrowserClient::OnLoadError(CefRefPtr<CefBrowser> browser,
                                 const CefString& failed_url) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_ && frame->IsMain() && error_code != ERR_ABORTED) {
-    const auto safe_url = CheckedString(failed_url, kMaxActionUrlCharacters);
+    const auto safe_url =
+        CheckedUtf8String(failed_url, kMaxActionUrlCharacters);
     owner_->OnCefLoadError(
         browser, static_cast<int>(error_code),
         BoundedString(error_text, kMaxPromptFieldCharacters),
@@ -312,7 +313,8 @@ bool BrowserClient::OnCertificateError(CefRefPtr<CefBrowser> browser,
     callback->Cancel();
     return true;
   }
-  const auto safe_url = CheckedString(request_url, kMaxActionUrlCharacters);
+  const auto safe_url =
+      CheckedUtf8String(request_url, kMaxActionUrlCharacters);
   owner_->OnCefCertificateError(browser, static_cast<int>(cert_error),
                                 safe_url.value_or(QString()),
                                 std::move(callback));
