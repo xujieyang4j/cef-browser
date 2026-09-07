@@ -1,5 +1,8 @@
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <functional>
+#include <memory>
 #include <string>
 
 #include <QApplication>
@@ -7,6 +10,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QStandardPaths>
+#include <QTextStream>
 #include <QTimer>
 
 #include "app/browser_app.h"
@@ -58,10 +62,58 @@ class CefMessagePump final : public QObject {
   QTimer timer_;
 };
 
+struct TabSmokeState {
+  int stage = 0;
+  int attempts = 0;
+};
+
+void StartTabSmokeTest(MainWindow* window) {
+  auto state = std::make_shared<TabSmokeState>();
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, state, step, output] {
+    ++state->attempts;
+    if (state->stage == 0) {
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Second</title>"));
+      state->stage = 1;
+    } else if (state->stage == 1 && window->tab_count() == 2 &&
+               window->current_title() == QStringLiteral("Second")) {
+      window->CloseCurrentTabForTesting();
+      state->stage = 2;
+    } else if (state->stage == 2 && window->tab_count() == 1 &&
+               window->current_title() == QStringLiteral("First")) {
+      window->ReopenClosedTabForTesting();
+      state->stage = 3;
+    } else if (state->stage == 3 && window->tab_count() == 2 &&
+               window->current_title() == QStringLiteral("Second")) {
+      *output << "TAB_SMOKE_OK count=" << window->tab_count()
+              << " url=" << window->current_url() << Qt::endl;
+      window->close();
+      return;
+    } else if (state->attempts > 160) {
+      *output << "TAB_SMOKE_FAILED stage=" << state->stage
+              << " count=" << window->tab_count() << Qt::endl;
+      QCoreApplication::exit(2);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
 QString InitialUrl() {
   const QStringList arguments = QCoreApplication::arguments();
-  return arguments.size() > 1 ? arguments.at(1)
-                              : QStringLiteral("https://www.example.com");
+  for (int index = 1; index < arguments.size(); ++index) {
+    if (!arguments.at(index).startsWith(QLatin1Char('-'))) {
+      return arguments.at(index);
+    }
+  }
+  return QStringLiteral("https://www.example.com");
+}
+
+bool HasArgument(const QString& argument) {
+  return QCoreApplication::arguments().contains(argument);
 }
 
 int RunBrowser(int argc, char* argv[]) {
@@ -103,12 +155,16 @@ int RunBrowser(int argc, char* argv[]) {
   settings.no_sandbox = true;  // Development default; see README security note.
   settings.external_message_pump = true;
   settings.multi_threaded_message_loop = false;
-  const QString data_path =
+  const QString requested_data_path =
       QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
   const QString local_data_path =
       QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-  QDir().mkpath(data_path);
+  QDir().mkpath(requested_data_path);
   QDir().mkpath(local_data_path);
+  const QString canonical_data_path = QDir(requested_data_path).canonicalPath();
+  const QString data_path = canonical_data_path.isEmpty()
+                                ? QDir(requested_data_path).absolutePath()
+                                : canonical_data_path;
   const QByteArray cache_path =
       QDir::toNativeSeparators(data_path + QStringLiteral("/cef-cache"))
           .toUtf8();
@@ -136,6 +192,9 @@ int RunBrowser(int argc, char* argv[]) {
     MainWindow main_window(InitialUrl());
     main_window.show();
     message_pump.Schedule(0);
+    if (HasArgument(QStringLiteral("--smoke-test-tabs"))) {
+      StartTabSmokeTest(&main_window);
+    }
     exit_code = application.exec();
   }
 

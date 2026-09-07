@@ -4,10 +4,11 @@ Trail Browser is a small native browser shell built with Qt 6 Widgets and the
 Chromium Embedded Framework (CEF). It embeds a windowed CEF browser in a Qt
 main window and integrates CEF's external message pump with Qt's event loop.
 
-Current features include navigation controls, URL/search normalization, page
-titles, pop-up redirection into the active tab, F12 DevTools, persistent CEF
-cache, and orderly asynchronous browser shutdown. Linux, Windows, and macOS
-build paths are represented in the project.
+Current features include tabbed browsing, navigation controls, URL/search
+normalization, page titles, pop-up routing based on the requested disposition,
+recently closed tab recovery, F12 DevTools, persistent CEF cache, and orderly
+asynchronous browser shutdown. Linux, Windows, and macOS build paths are
+represented in the project.
 
 ## Prerequisites
 
@@ -62,8 +63,33 @@ application builds automatically use the Release CEF runtime.
 
 ## Shortcuts
 
-- Ctrl+L: focus and select the address bar
+- Ctrl/Cmd+T: open a new tab
+- Ctrl/Cmd+W: close the active tab
+- Ctrl/Cmd+Shift+T: reopen the most recently closed tab
+- Ctrl+Tab / Ctrl+Shift+Tab: switch tabs
+- Ctrl/Cmd+L: focus and select the address bar
 - F12: open CEF DevTools
+
+Tabs can also be reordered by dragging and closed with either their close
+button or a middle click. Closing the final tab closes the browser window.
+
+## Smoke test
+
+After building on Linux with Xvfb installed, run the deterministic tab and
+shutdown smoke test with:
+
+~~~sh
+timeout 20s xvfb-run -a ./build/trail-browser --smoke-test-tabs \
+  'data:text/html,<title>First</title>'
+~~~
+
+A passing run prints `TAB_SMOKE_OK` and exits with status 0 after creating,
+closing, reopening, and finally shutting down multiple CEF browser instances.
+The same check is registered with CTest when `xvfb-run` is available:
+
+~~~sh
+ctest --test-dir build --output-on-failure
+~~~
 
 ## Security and platform notes
 

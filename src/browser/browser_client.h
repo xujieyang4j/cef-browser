@@ -8,12 +8,16 @@ class BrowserView;
 
 class BrowserClient final : public CefClient,
                             public CefDisplayHandler,
+                            public CefJSDialogHandler,
+                            public CefKeyboardHandler,
                             public CefLifeSpanHandler,
                             public CefLoadHandler {
  public:
   explicit BrowserClient(BrowserView* owner);
 
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
+  CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
 
@@ -29,6 +33,10 @@ class BrowserClient final : public CefClient,
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
   bool DoClose(CefRefPtr<CefBrowser> browser) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
+  void OnDialogClosed(CefRefPtr<CefBrowser> browser) override;
+  bool OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
+                     const CefKeyEvent& event, CefEventHandle os_event,
+                     bool* is_keyboard_shortcut) override;
   bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
                      CefRefPtr<CefFrame> frame,
                      int popup_id,

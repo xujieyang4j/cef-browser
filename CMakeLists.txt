@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(TrailBrowser VERSION 0.1.0 LANGUAGES C CXX)
 
+include(CTest)
+
 if(APPLE)
   # Objective-C++ must be enabled before loading CEF or creating any targets.
   # Enabling it later can leave Ninja without CMAKE_OBJCXX_COMPILE_OBJECT.
@@ -145,4 +147,17 @@ endif()
 
 include(cmake/CopyCefRuntime.cmake)
 trail_copy_cef_runtime(trail-browser)
+
+if(BUILD_TESTING AND UNIX AND NOT APPLE)
+  find_program(XVFB_RUN_EXECUTABLE xvfb-run)
+  if(XVFB_RUN_EXECUTABLE)
+    add_test(NAME trail_browser_tabs
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-tabs "data:text/html,<title>First</title>")
+    set_tests_properties(trail_browser_tabs PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "TAB_SMOKE_OK"
+    )
+  endif()
+endif()
 

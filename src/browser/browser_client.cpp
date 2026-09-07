@@ -46,9 +46,16 @@ void BrowserClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   }
 }
 
-bool BrowserClient::DoClose(CefRefPtr<CefBrowser>) {
+bool BrowserClient::DoClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   return false;
+}
+
+bool BrowserClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
+                                  const CefKeyEvent& event, CefEventHandle,
+                                  bool*) {
+  CEF_REQUIRE_UI_THREAD();
+  return owner_ && owner_->OnCefKeyEvent(browser, event);
 }
 
 void BrowserClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
@@ -58,15 +65,21 @@ void BrowserClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   }
 }
 
+void BrowserClient::OnDialogClosed(CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) owner_->OnCefDialogClosed(browser);
+}
+
 bool BrowserClient::OnBeforePopup(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, int,
-    const CefString& target_url, const CefString&, WindowOpenDisposition, bool,
+    const CefString& target_url, const CefString&,
+    WindowOpenDisposition target_disposition, bool,
     const CefPopupFeatures&, CefWindowInfo&, CefRefPtr<CefClient>&,
     CefBrowserSettings&, CefRefPtr<CefDictionaryValue>&, bool*) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_) {
     owner_->OnCefPopupRequested(browser,
-        QString::fromStdString(target_url.ToString()));
+        QString::fromStdString(target_url.ToString()), target_disposition);
   }
   return true;
 }
