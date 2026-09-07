@@ -55,6 +55,8 @@ bool BrowserSettings::Load(QString* error) {
     search_engine_ = SearchEngine::Google;
   }
   set_home_page(root.value(QStringLiteral("homePage")).toString());
+  open_home_on_new_tab_ =
+      root.value(QStringLiteral("openHomeOnNewTab")).toBool(false);
   return true;
 }
 
@@ -67,6 +69,7 @@ bool BrowserSettings::Save(QString* error) const {
       {QStringLiteral("version"), kSettingsVersion},
       {QStringLiteral("searchEngine"), SearchEngineId(search_engine_)},
       {QStringLiteral("homePage"), home_page_},
+      {QStringLiteral("openHomeOnNewTab"), open_home_on_new_tab_},
   };
   QSaveFile file(path_);
   if (!file.open(QIODevice::WriteOnly)) {

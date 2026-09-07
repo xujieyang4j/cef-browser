@@ -36,7 +36,8 @@ DuckDuckGo, and Bing from the Settings menu; the choice is stored atomically
 with the browser profile. The same settings file stores a validated HTTP(S)
 home page. The toolbar Home button and Alt+Home (Cmd+Shift+H on macOS) navigate
 the active tab there, while the Settings menu can capture the current page or
-restore the default. The recently closed tab stack is part of the atomic
+restore the default. New tabs open blank by default, with a persistent option
+to open the configured home page instead. The recently closed tab stack is part of the atomic
 session file, so Ctrl/Cmd+Shift+T continues to work after an application
 restart. Page favicons are loaded into their corresponding tabs with stale
 navigation results rejected. The History menu can clear history, recently

@@ -26,6 +26,7 @@
 #include <QPixmap>
 #include <QResizeEvent>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QStringListModel>
@@ -688,6 +689,14 @@ void MainWindow::GoHomeForTesting() {
   GoHome();
 }
 
+bool MainWindow::SetOpenHomeOnNewTabForTesting(bool enabled) {
+  return SetOpenHomeOnNewTab(enabled);
+}
+
+bool MainWindow::open_home_on_new_tab_for_testing() const {
+  return browser_settings_->open_home_on_new_tab();
+}
+
 void MainWindow::ActivateTabShortcutForTesting(int number) {
   ActivateTabByShortcut(number == 9 ? tab_bar_->count() - 1 : number - 1);
 }
@@ -901,7 +910,10 @@ void MainWindow::NavigateFromAddressSuggestion(const QString& label) {
 }
 
 void MainWindow::AddBlankTab() {
-  AddTab(QStringLiteral("about:blank"), true, true);
+  const bool use_home = browser_settings_->open_home_on_new_tab();
+  AddTab(use_home ? browser_settings_->home_page()
+                  : QStringLiteral("about:blank"),
+         true, !use_home);
 }
 
 void MainWindow::ReopenClosedTab() {
@@ -1787,6 +1799,13 @@ void MainWindow::CreateApplicationMenus() {
   add_action(settings, QStringLiteral("Reset Home Page"), {}, [this] {
     SetHomePage(QStringLiteral("https://www.example.com"));
   });
+  QAction* open_home =
+      settings->addAction(QStringLiteral("Open Home Page in New Tabs"));
+  open_home->setCheckable(true);
+  open_home->setChecked(browser_settings_->open_home_on_new_tab());
+  open_home->setProperty("openHomeOnNewTabAction", true);
+  connect(open_home, &QAction::toggled, this,
+          [this](bool enabled) { SetOpenHomeOnNewTab(enabled); });
 
   QMenu* window = menuBar()->addMenu(QStringLiteral("Window"));
   add_action(window, QStringLiteral("Next Tab"), QKeySequence::NextChild,
@@ -1812,6 +1831,8 @@ void MainWindow::CreateApplicationMenus() {
 void MainWindow::SetSearchEngine(int engine_value) {
   const auto engine =
       static_cast<BrowserSettings::SearchEngine>(engine_value);
+  const BrowserSettings::SearchEngine previous =
+      browser_settings_->search_engine();
   browser_settings_->set_search_engine(engine);
   for (QAction* action : findChildren<QAction*>()) {
     if (action->property("searchEngineAction").toBool()) {
@@ -1820,6 +1841,14 @@ void MainWindow::SetSearchEngine(int engine_value) {
   }
   QString error;
   if (!browser_settings_->Save(&error)) {
+    browser_settings_->set_search_engine(previous);
+    for (QAction* action : findChildren<QAction*>()) {
+      if (action->property("searchEngineAction").toBool()) {
+        const QSignalBlocker blocker(action);
+        action->setChecked(
+            action->data().toInt() == static_cast<int>(previous));
+      }
+    }
     statusBar()->showMessage(
         QStringLiteral("Unable to save browser settings: %1").arg(error),
         8000);
@@ -1833,6 +1862,7 @@ void MainWindow::SetSearchEngine(int engine_value) {
 
 bool MainWindow::SetHomePage(const QString& value) {
   const QString normalized = NormalizeUrl(value);
+  const QString previous = browser_settings_->home_page();
   if (!browser_settings_->set_home_page(normalized)) {
     statusBar()->showMessage(QStringLiteral("This URL cannot be used as home"),
                              5000);
@@ -1840,6 +1870,7 @@ bool MainWindow::SetHomePage(const QString& value) {
   }
   QString error;
   if (!browser_settings_->Save(&error)) {
+    browser_settings_->set_home_page(previous);
     statusBar()->showMessage(
         QStringLiteral("Unable to save browser settings: %1").arg(error),
         8000);
@@ -1853,6 +1884,30 @@ void MainWindow::GoHome() {
   if (BrowserView* browser = CurrentBrowser()) {
     browser->LoadUrl(browser_settings_->home_page());
   }
+}
+
+bool MainWindow::SetOpenHomeOnNewTab(bool enabled) {
+  const bool previous = browser_settings_->open_home_on_new_tab();
+  browser_settings_->set_open_home_on_new_tab(enabled);
+  QString error;
+  if (!browser_settings_->Save(&error)) {
+    browser_settings_->set_open_home_on_new_tab(previous);
+    for (QAction* action : findChildren<QAction*>()) {
+      if (action->property("openHomeOnNewTabAction").toBool()) {
+        const QSignalBlocker blocker(action);
+        action->setChecked(previous);
+      }
+    }
+    statusBar()->showMessage(
+        QStringLiteral("Unable to save browser settings: %1").arg(error),
+        8000);
+    return false;
+  }
+  statusBar()->showMessage(
+      enabled ? QStringLiteral("New tabs will open the home page")
+              : QStringLiteral("New tabs will open a blank page"),
+      2500);
+  return true;
 }
 
 void MainWindow::ShowBrowserUiSurface(BrowserUiSurface surface) {

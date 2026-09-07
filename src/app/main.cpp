@@ -1017,7 +1017,8 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
                               QStringList{
                                   QStringLiteral("Default Search Engine"),
                                   QStringLiteral("Use Current Page as Home"),
-                                  QStringLiteral("Reset Home Page")};
+                                  QStringLiteral("Reset Home Page"),
+                                  QStringLiteral("Open Home Page in New Tabs")};
   const QString home_url = QStringLiteral("https://example.test/home");
   const bool home_saved = window->SetHomePageForTesting(home_url);
   BrowserSettings home_restored(settings_path);
@@ -1027,27 +1028,42 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
   const bool unsafe_rejected =
       !window->SetHomePageForTesting(QStringLiteral("javascript:alert(1)")) &&
       window->home_page_for_testing() == home_url;
+  const bool new_tab_setting = window->SetOpenHomeOnNewTabForTesting(true);
+  BrowserSettings new_tab_restored(settings_path);
+  const bool new_tab_loaded = new_tab_restored.Load();
+  const bool new_tab_persisted =
+      new_tab_loaded && new_tab_restored.open_home_on_new_tab() &&
+      window->open_home_on_new_tab_for_testing();
   const bool preliminary_ok = default_ok && selected && persisted && encoded &&
                               address_ok && menu_ok && home_saved &&
-                              home_persisted && unsafe_rejected;
+                              home_persisted && unsafe_rejected &&
+                              new_tab_setting && new_tab_persisted;
   if (!preliminary_ok) {
     *output << "SEARCH_SETTINGS_SMOKE_FAILED default=" << default_ok
             << " selected=" << selected << " persisted=" << persisted
             << " encoded=" << encoded << " address=" << address_ok
             << " menu=" << menu_ok << " home=" << home_persisted
-            << " unsafe=" << unsafe_rejected << Qt::endl;
+            << " unsafe=" << unsafe_rejected
+            << " new_tab=" << new_tab_persisted << Qt::endl;
     QCoreApplication::exit(20);
     return;
   }
 
-  window->GoHomeForTesting();
+  const bool new_tab_triggered =
+      window->TriggerApplicationMenuActionForTesting(
+          QStringLiteral("File"), QStringLiteral("New Tab"));
+  if (!new_tab_triggered) {
+    *output << "SEARCH_SETTINGS_SMOKE_FAILED new_tab_trigger=0" << Qt::endl;
+    QCoreApplication::exit(20);
+    return;
+  }
   auto attempts = std::make_shared<int>(0);
   auto step = std::make_shared<std::function<void()>>();
   *step = [window, output, attempts, step, home_url] {
     ++*attempts;
-    if (window->current_url() == home_url) {
+    if (window->tab_count() == 2 && window->current_url() == home_url) {
       *output << "SEARCH_SETTINGS_SMOKE_OK default=google selected=duckduckgo "
-                 "persisted=1 encoded=1 home=navigated"
+                 "persisted=1 encoded=1 home=new-tab"
               << Qt::endl;
       window->close();
       return;
