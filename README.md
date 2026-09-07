@@ -33,7 +33,10 @@ search.
 Window geometry, open tab URLs, and the active tab are saved atomically and
 restored on the next regular launch. A previous unclean exit is detected and
 reported after its tabs are recovered. An explicit startup URL takes priority
-over the saved session. Restored tabs, recently closed tabs, bookmarks, and
+over the saved session. Session fields and total output are bounded so even a
+page-generated extreme URL or title cannot create a file the next launch will
+refuse to restore; the active tab is retained when trimming is necessary.
+Restored tabs, recently closed tabs, bookmarks, and
 history are revalidated before they can navigate, so a damaged or modified
 profile cannot reintroduce blocked URL schemes. Bookmark and history recovery
 also removes duplicate URLs, bounds display text and visit counters, and

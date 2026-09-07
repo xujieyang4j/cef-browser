@@ -783,12 +783,39 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
           QList<RecentlyClosedTab>{
               {QStringLiteral("https://example.test/saved-recent"),
                QStringLiteral("Safe")}};
+
+  BrowserSession oversized;
+  const QString long_path(60000, QLatin1Char('a'));
+  for (int index = 0; index < 20; ++index) {
+    oversized.tab_urls.append(
+        QStringLiteral("https://example.test/%1/%2")
+            .arg(index)
+            .arg(long_path));
+    oversized.tab_pinned.append(index % 2 == 0);
+  }
+  oversized.active_tab = 10;
+  const QString active_oversized_url = oversized.tab_urls.at(10);
+  oversized.window_geometry = QByteArray(100 * 1024, 'g');
+  oversized.recently_closed_tabs = {
+      {QStringLiteral("https://example.test/closed-long"),
+       QString(700, QLatin1Char('t')) + QStringLiteral("\nignored")}};
+  const QString bounded_path = session_path + QStringLiteral(".bounded");
+  const bool bounded_saved = SessionStore::Save(bounded_path, oversized);
+  const auto bounded = SessionStore::Load(bounded_path);
+  const bool bounded_round_trip =
+      bounded_saved && QFileInfo(bounded_path).size() <= 1024 * 1024 && bounded &&
+      !bounded->tab_urls.isEmpty() && bounded->tab_urls.size() < 20 &&
+      bounded->tab_urls.contains(active_oversized_url) &&
+      bounded->tab_urls.at(bounded->active_tab) == active_oversized_url &&
+      bounded->window_geometry.isEmpty() &&
+      bounded->recently_closed_tabs.isEmpty();
   if (captured_ok && unclean_saved && unclean_ok && clean_saved && clean_ok &&
       legacy_ok && untrusted_filtered && all_unsafe_rejected &&
-      unsafe_not_saved) {
+      unsafe_not_saved && bounded_round_trip) {
     *output << "SESSION_SMOKE_OK tabs=" << clean->tab_urls.size()
             << " active=" << clean->active_tab
-            << " recent_title=persisted legacy=migrated unsafe=filtered"
+            << " recent_title=persisted legacy=migrated unsafe=filtered "
+               "size=bounded"
             << Qt::endl;
     window->close();
   } else {
@@ -798,6 +825,7 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
             << " untrusted=" << untrusted_filtered
             << " rejected=" << all_unsafe_rejected
             << " sanitized=" << unsafe_not_saved
+            << " bounded=" << bounded_round_trip
             << Qt::endl;
     QCoreApplication::exit(5);
   }
