@@ -18,6 +18,7 @@
 #include "include/cef_app.h"
 #include "include/cef_command_line.h"
 #include "include/wrapper/cef_helpers.h"
+#include "profile/browsing_data_store.h"
 #include "session/session_store.h"
 #include "ui/main_window.h"
 
@@ -182,7 +183,9 @@ bool IsSmokeTest() {
   return HasArgument(QStringLiteral("--smoke-test-tabs")) ||
          HasArgument(QStringLiteral("--smoke-test-downloads")) ||
          HasArgument(QStringLiteral("--smoke-test-failures")) ||
-         HasArgument(QStringLiteral("--smoke-test-session"));
+         HasArgument(QStringLiteral("--smoke-test-session")) ||
+         HasArgument(QStringLiteral("--smoke-test-page-tools")) ||
+         HasArgument(QStringLiteral("--smoke-test-profile"));
 }
 
 BrowserSession DefaultSession(const QString& url) {
@@ -216,6 +219,81 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
             << " unclean=" << unclean_ok << " clean=" << clean_ok
             << Qt::endl;
     QCoreApplication::exit(5);
+  }
+}
+
+void StartPageToolsSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, stage, step] {
+    ++*attempts;
+    if (*stage == 0 &&
+        window->current_title() == QStringLiteral("Page Tools")) {
+      window->FindForTesting(QStringLiteral("trail"));
+      window->ZoomInForTesting();
+      *stage = 1;
+    } else if (*stage == 1 && window->find_bar_visible_for_testing() &&
+               window->find_result_for_testing().endsWith(
+                   QStringLiteral("/ 3")) &&
+               window->zoom_percent_for_testing() > 100) {
+      window->ResetZoomForTesting();
+      window->HideFindBarForTesting();
+      *stage = 2;
+    } else if (*stage == 2 && !window->find_bar_visible_for_testing() &&
+               window->zoom_percent_for_testing() == 100) {
+      *output << "PAGE_TOOLS_SMOKE_OK matches=3 zoom=100" << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 160) {
+      *output << "PAGE_TOOLS_SMOKE_FAILED stage=" << *stage
+              << " result=" << window->find_result_for_testing()
+              << " zoom=" << window->zoom_percent_for_testing() << Qt::endl;
+      QCoreApplication::exit(6);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
+void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  const QString first_url = QStringLiteral("https://example.test/first");
+  const QString second_url = QStringLiteral("https://example.test/second");
+  BrowsingDataStore data(data_path);
+  const bool add_first = data.AddBookmark(first_url, QStringLiteral("First"));
+  const bool reject_duplicate =
+      !data.AddBookmark(first_url, QStringLiteral("Duplicate"));
+  const bool add_second =
+      data.AddBookmark(second_url, QStringLiteral("Second"));
+  data.RecordVisit(first_url, QStringLiteral("First"));
+  data.RecordVisit(second_url, QStringLiteral("Second"));
+  data.RecordVisit(first_url, QStringLiteral("First again"));
+  const bool saved = data.Save();
+
+  BrowsingDataStore restored(data_path);
+  const bool loaded = restored.Load();
+  const bool bookmark_ok = loaded && restored.bookmarks().size() == 2 &&
+                           restored.IsBookmarked(first_url);
+  const bool history_ok =
+      loaded && restored.history().size() == 2 &&
+      restored.history().first().url == first_url &&
+      restored.history().first().visit_count == 2;
+  const bool removed = restored.RemoveBookmark(first_url) &&
+                       !restored.IsBookmarked(first_url);
+  if (add_first && reject_duplicate && add_second && saved && bookmark_ok &&
+      history_ok && removed) {
+    *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2"
+            << Qt::endl;
+    window->close();
+  } else {
+    *output << "PROFILE_SMOKE_FAILED bookmark=" << bookmark_ok
+            << " history=" << history_ok << " removed=" << removed
+            << Qt::endl;
+    QCoreApplication::exit(7);
   }
 }
 
@@ -258,10 +336,19 @@ int RunBrowser(int argc, char* argv[]) {
   settings.no_sandbox = true;  // Development default; see README security note.
   settings.external_message_pump = true;
   settings.multi_threaded_message_loop = false;
-  const QString requested_data_path =
-      QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-  const QString local_data_path =
-      QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+  std::unique_ptr<QTemporaryDir> smoke_cef_directory;
+  if (IsSmokeTest()) {
+    smoke_cef_directory = std::make_unique<QTemporaryDir>();
+    if (!smoke_cef_directory->isValid()) return 8;
+  }
+  const QString requested_data_path = smoke_cef_directory
+                                          ? smoke_cef_directory->path()
+                                          : QStandardPaths::writableLocation(
+                                                QStandardPaths::AppDataLocation);
+  const QString local_data_path = smoke_cef_directory
+                                      ? smoke_cef_directory->path()
+                                      : QStandardPaths::writableLocation(
+                                            QStandardPaths::AppLocalDataLocation);
   QDir().mkpath(requested_data_path);
   QDir().mkpath(local_data_path);
   const QString canonical_data_path = QDir(requested_data_path).canonicalPath();
@@ -295,6 +382,7 @@ int RunBrowser(int argc, char* argv[]) {
     const QString session_path =
         QDir(data_path).filePath(QStringLiteral("session.json"));
     std::unique_ptr<QTemporaryDir> smoke_session_directory;
+    std::unique_ptr<QTemporaryDir> smoke_profile_directory;
     QString active_session_path = session_path;
     BrowserSession initial_session;
     if (HasArgument(QStringLiteral("--smoke-test-session"))) {
@@ -328,7 +416,22 @@ int RunBrowser(int argc, char* argv[]) {
       }
     }
 
-    MainWindow main_window(initial_session, active_session_path);
+    const QString browsing_data_path =
+        IsSmokeTest() ? QString()
+                      : QDir(data_path).filePath(
+                            QStringLiteral("browsing-data.json"));
+    QString active_browsing_data_path = browsing_data_path;
+    if (HasArgument(QStringLiteral("--smoke-test-profile"))) {
+      smoke_profile_directory = std::make_unique<QTemporaryDir>();
+      if (!smoke_profile_directory->isValid()) {
+        CefShutdown();
+        return 7;
+      }
+      active_browsing_data_path = smoke_profile_directory->filePath(
+          QStringLiteral("browsing-data.json"));
+    }
+    MainWindow main_window(initial_session, active_session_path,
+                           active_browsing_data_path);
     main_window.show();
     message_pump.Schedule(0);
     if (HasArgument(QStringLiteral("--smoke-test-tabs"))) {
@@ -342,6 +445,14 @@ int RunBrowser(int argc, char* argv[]) {
       QTimer::singleShot(300, &main_window, [&main_window, active_session_path] {
         StartSessionSmokeTest(&main_window, active_session_path);
       });
+    } else if (HasArgument(QStringLiteral("--smoke-test-page-tools"))) {
+      StartPageToolsSmokeTest(&main_window);
+    } else if (HasArgument(QStringLiteral("--smoke-test-profile"))) {
+      QTimer::singleShot(300, &main_window,
+                         [&main_window, active_browsing_data_path] {
+                           StartProfileSmokeTest(&main_window,
+                                                 active_browsing_data_path);
+                         });
     }
     exit_code = application.exec();
   }

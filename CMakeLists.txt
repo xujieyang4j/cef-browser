@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.2.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.3.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -63,6 +63,8 @@ set(TRAIL_BROWSER_SOURCES
   src/browser/browser_client.h
   src/download/download_manager.cpp
   src/download/download_manager.h
+  src/profile/browsing_data_store.cpp
+  src/profile/browsing_data_store.h
   src/session/session_store.cpp
   src/session/session_store.h
   src/ui/browser_view.cpp
@@ -185,6 +187,21 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_session PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "SESSION_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_page_tools
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-page-tools
+              "data:text/html,<title>Page Tools</title><p>trail trail trail</p>")
+    set_tests_properties(trail_browser_page_tools PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "PAGE_TOOLS_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_profile
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-profile)
+    set_tests_properties(trail_browser_profile PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "PROFILE_SMOKE_OK"
     )
   endif()
 endif()

@@ -20,6 +20,15 @@ void BrowserClient::OnTitleChange(CefRefPtr<CefBrowser> browser,
   }
 }
 
+void BrowserClient::OnFindResult(CefRefPtr<CefBrowser> browser, int, int count,
+                                 const CefRect&, int active_match_ordinal,
+                                 bool final_update) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) {
+    owner_->OnCefFindResult(browser, count, active_match_ordinal, final_update);
+  }
+}
+
 void BrowserClient::OnAddressChange(CefRefPtr<CefBrowser> browser,
                                     CefRefPtr<CefFrame> frame,
                                     const CefString& url) {

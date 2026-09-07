@@ -1,6 +1,7 @@
 #include "ui/browser_view.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include <QByteArray>
@@ -8,6 +9,7 @@
 #include <QHideEvent>
 #include <QMetaObject>
 #include <QResizeEvent>
+#include <QtMath>
 #include <QShowEvent>
 #include <QUrl>
 
@@ -106,6 +108,45 @@ void BrowserView::ShowDevTools() {
                                     CefPoint());
 }
 
+void BrowserView::Find(const QString& text, bool forward, bool find_next) {
+  if (!browser_) return;
+  const QByteArray encoded = text.toUtf8();
+  browser_->GetHost()->Find(
+      std::string(encoded.constData(), encoded.size()), forward, false,
+      find_next);
+}
+
+void BrowserView::StopFinding(bool clear_selection) {
+  if (browser_) browser_->GetHost()->StopFinding(clear_selection);
+}
+
+void BrowserView::ZoomIn() {
+  if (!browser_) return;
+  browser_->GetHost()->Zoom(CEF_ZOOM_COMMAND_IN);
+  emit ZoomChanged(
+      qRound(100.0 * std::pow(1.2, browser_->GetHost()->GetZoomLevel())));
+}
+
+void BrowserView::ZoomOut() {
+  if (!browser_) return;
+  browser_->GetHost()->Zoom(CEF_ZOOM_COMMAND_OUT);
+  emit ZoomChanged(
+      qRound(100.0 * std::pow(1.2, browser_->GetHost()->GetZoomLevel())));
+}
+
+void BrowserView::ResetZoom() {
+  if (!browser_) return;
+  browser_->GetHost()->Zoom(CEF_ZOOM_COMMAND_RESET);
+  emit ZoomChanged(100);
+}
+
+int BrowserView::zoom_percent() const {
+  return browser_
+             ? qRound(100.0 *
+                      std::pow(1.2, browser_->GetHost()->GetZoomLevel()))
+             : 100;
+}
+
 void BrowserView::FinalizeClose() {
   if (!browser_) return;
   browser_->GetHost()->CloseBrowser(true);
@@ -187,12 +228,29 @@ bool BrowserView::OnCefKeyEvent(CefRefPtr<CefBrowser> browser,
 #endif
   const bool shift = event.modifiers & EVENTFLAG_SHIFT_DOWN;
   ShortcutAction action;
-  if (primary_modifier && event.windows_key_code == 'T') {
+  if (event.windows_key_code == 0x72) {
+    action = shift ? ShortcutAction::FindPrevious : ShortcutAction::FindNext;
+  } else if (primary_modifier && event.windows_key_code == 'T') {
     action = shift ? ShortcutAction::ReopenClosedTab : ShortcutAction::NewTab;
   } else if (primary_modifier && !shift && event.windows_key_code == 'W') {
     action = ShortcutAction::CloseTab;
   } else if (primary_modifier && !shift && event.windows_key_code == 'L') {
     action = ShortcutAction::FocusAddress;
+  } else if (primary_modifier && !shift && event.windows_key_code == 'F') {
+    action = ShortcutAction::FindInPage;
+  } else if (primary_modifier &&
+             (event.windows_key_code == '+' ||
+              event.windows_key_code == '=' ||
+              event.windows_key_code == 0xBB)) {
+    action = ShortcutAction::ZoomIn;
+  } else if (primary_modifier &&
+             (event.windows_key_code == '-' ||
+              event.windows_key_code == 0xBD)) {
+    action = ShortcutAction::ZoomOut;
+  } else if (primary_modifier && event.windows_key_code == '0') {
+    action = ShortcutAction::ResetZoom;
+  } else if (primary_modifier && !shift && event.windows_key_code == 'D') {
+    action = ShortcutAction::ToggleBookmark;
   } else if ((event.modifiers & EVENTFLAG_CONTROL_DOWN) &&
              event.windows_key_code == 0x09) {
     action = shift ? ShortcutAction::PreviousTab : ShortcutAction::NextTab;
@@ -202,6 +260,14 @@ bool BrowserView::OnCefKeyEvent(CefRefPtr<CefBrowser> browser,
 
   emit ShortcutRequested(static_cast<int>(action));
   return true;
+}
+
+void BrowserView::OnCefFindResult(CefRefPtr<CefBrowser> browser, int count,
+                                  int active_match_ordinal,
+                                  bool final_update) {
+  if (browser_ && browser_->IsSame(browser)) {
+    emit FindResultChanged(count, active_match_ordinal, final_update);
+  }
 }
 
 void BrowserView::OnCefTitleChanged(CefRefPtr<CefBrowser> browser,
@@ -233,10 +299,13 @@ void BrowserView::OnCefLoadingStateChanged(CefRefPtr<CefBrowser> browser,
                                            bool loading, bool can_go_back,
                                            bool can_go_forward) {
   if (browser_ && browser_->IsSame(browser)) {
+    const bool completed_navigation = is_loading_ && !loading &&
+                                      !failure_page_active_;
     is_loading_ = loading;
     can_go_back_ = can_go_back;
     can_go_forward_ = can_go_forward;
     emit LoadingStateChanged(loading, can_go_back, can_go_forward);
+    if (completed_navigation) emit NavigationCompleted();
   }
 }
 

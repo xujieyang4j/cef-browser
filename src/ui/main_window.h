@@ -10,12 +10,15 @@
 #include "session/session_store.h"
 
 class BrowserView;
+class BrowsingDataStore;
 class DownloadManager;
 class DownloadPanel;
 class QCloseEvent;
 class QMoveEvent;
 class QResizeEvent;
 class QLineEdit;
+class QLabel;
+class QMenu;
 class QPushButton;
 class QStackedWidget;
 class QTabBar;
@@ -26,7 +29,8 @@ class MainWindow final : public QMainWindow {
 
  public:
   MainWindow(const BrowserSession& initial_session, QString session_path,
-             QWidget* parent = nullptr);
+             QString browsing_data_path = {}, QWidget* parent = nullptr);
+  ~MainWindow() override;
   int tab_count() const;
   QString current_url() const;
   QString current_title() const;
@@ -42,6 +46,18 @@ class MainWindow final : public QMainWindow {
   bool render_process_failed_for_testing() const;
   BrowserSession session_for_testing(bool clean_exit) const;
   bool save_session_for_testing(bool clean_exit);
+  bool find_bar_visible_for_testing() const;
+  void ShowFindBarForTesting();
+  void HideFindBarForTesting();
+  void FindForTesting(const QString& text);
+  QString find_result_for_testing() const;
+  void ZoomInForTesting();
+  void ResetZoomForTesting();
+  int zoom_percent_for_testing() const;
+  void ToggleBookmarkForTesting();
+  bool current_page_bookmarked_for_testing() const;
+  int history_count_for_testing() const;
+  int current_url_visit_count_for_testing() const;
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -57,6 +73,14 @@ class MainWindow final : public QMainWindow {
   void UpdateLoadingState(bool loading, bool can_go_back,
                           bool can_go_forward);
   void UpdateAddress(const QString& url);
+  void ShowFindBar();
+  void HideFindBar();
+  void FindFromBar(bool forward, bool find_next);
+  void ToggleCurrentBookmark();
+  void RebuildBookmarksMenu();
+  void RebuildHistoryMenu();
+  void RecordVisit(BrowserView* browser);
+  bool SaveBrowsingData();
 
  private:
   static QString NormalizeUrl(QString input);
@@ -82,9 +106,18 @@ class MainWindow final : public QMainWindow {
   QPushButton* back_button_ = nullptr;
   QPushButton* forward_button_ = nullptr;
   QPushButton* reload_button_ = nullptr;
+  QWidget* find_bar_ = nullptr;
+  QLineEdit* find_edit_ = nullptr;
+  QLabel* find_result_label_ = nullptr;
+  QPushButton* bookmark_button_ = nullptr;
+  QPushButton* bookmarks_button_ = nullptr;
+  QPushButton* history_button_ = nullptr;
+  QMenu* bookmarks_menu_ = nullptr;
+  QMenu* history_menu_ = nullptr;
   DownloadManager* download_manager_ = nullptr;
   DownloadPanel* download_panel_ = nullptr;
   QTimer* session_save_timer_ = nullptr;
+  BrowsingDataStore* browsing_data_ = nullptr;
   QSet<BrowserView*> closing_tabs_;
   QHash<BrowserView*, QString> pending_closed_urls_;
   QStringList closed_tabs_;

@@ -23,6 +23,13 @@ class BrowserView final : public QWidget {
     FocusAddress,
     NextTab,
     PreviousTab,
+    FindInPage,
+    FindNext,
+    FindPrevious,
+    ZoomIn,
+    ZoomOut,
+    ResetZoom,
+    ToggleBookmark,
   };
 
   BrowserView(QString initial_url,
@@ -36,6 +43,11 @@ class BrowserView final : public QWidget {
   void Reload();
   void Stop();
   void ShowDevTools();
+  void Find(const QString& text, bool forward, bool find_next);
+  void StopFinding(bool clear_selection = true);
+  void ZoomIn();
+  void ZoomOut();
+  void ResetZoom();
   void FinalizeClose();
   const QString& current_url() const { return current_url_; }
   const QString& page_title() const { return page_title_; }
@@ -44,6 +56,7 @@ class BrowserView final : public QWidget {
   bool can_go_forward() const { return can_go_forward_; }
   bool failure_page_active() const { return failure_page_active_; }
   bool render_process_failed() const { return render_process_failed_; }
+  int zoom_percent() const;
   void ShowFailureForTesting(bool render_process_failed);
 
   // Starts an asynchronous close and returns true if no browser exists.
@@ -56,6 +69,8 @@ class BrowserView final : public QWidget {
   void OnCefDialogClosed(CefRefPtr<CefBrowser> browser);
   bool OnCefKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event);
   void OnCefTitleChanged(CefRefPtr<CefBrowser> browser, const QString& title);
+  void OnCefFindResult(CefRefPtr<CefBrowser> browser, int count,
+                       int active_match_ordinal, bool final_update);
   void OnCefAddressChanged(CefRefPtr<CefBrowser> browser, const QString& url);
   void OnCefLoadingStateChanged(CefRefPtr<CefBrowser> browser, bool loading,
                                 bool can_go_back,
@@ -73,6 +88,10 @@ class BrowserView final : public QWidget {
   void AddressChanged(const QString& url);
   void LoadingStateChanged(bool loading, bool can_go_back,
                            bool can_go_forward);
+  void FindResultChanged(int count, int active_match_ordinal,
+                         bool final_update);
+  void ZoomChanged(int percent);
+  void NavigationCompleted();
   void PopupRequested(const QString& url, int disposition);
   void ShortcutRequested(int action);
   void BrowserClosed();

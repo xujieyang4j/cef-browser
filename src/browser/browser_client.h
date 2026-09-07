@@ -8,6 +8,7 @@ class BrowserView;
 
 class BrowserClient final : public CefClient,
                             public CefDisplayHandler,
+                            public CefFindHandler,
                             public CefJSDialogHandler,
                             public CefKeyboardHandler,
                             public CefLifeSpanHandler,
@@ -22,6 +23,7 @@ class BrowserClient final : public CefClient,
     return download_handler_;
   }
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
+  CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
   CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -29,6 +31,9 @@ class BrowserClient final : public CefClient,
 
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
                      const CefString& title) override;
+  void OnFindResult(CefRefPtr<CefBrowser> browser, int identifier, int count,
+                    const CefRect& selection_rect, int active_match_ordinal,
+                    bool final_update) override;
   void OnAddressChange(CefRefPtr<CefBrowser> browser,
                        CefRefPtr<CefFrame> frame,
                        const CefString& url) override;

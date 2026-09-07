@@ -6,7 +6,9 @@
 #include <QCloseEvent>
 #include <QHBoxLayout>
 #include <QKeySequence>
+#include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QMoveEvent>
 #include <QPushButton>
@@ -23,6 +25,7 @@
 #include <QWidget>
 
 #include "download/download_manager.h"
+#include "profile/browsing_data_store.h"
 #include "ui/browser_view.h"
 #include "ui/download_panel.h"
 
@@ -58,7 +61,8 @@ QString TabText(const QString& title, const QString& url) {
 }  // namespace
 
 MainWindow::MainWindow(const BrowserSession& initial_session,
-                       QString session_path, QWidget* parent)
+                       QString session_path, QString browsing_data_path,
+                       QWidget* parent)
     : QMainWindow(parent), session_path_(std::move(session_path)) {
   setWindowTitle(QStringLiteral("Trail Browser"));
   resize(1280, 800);
@@ -99,6 +103,13 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   reload_button_ = new QPushButton(QStringLiteral("↻"), toolbar);
   address_bar_ = new QLineEdit(toolbar);
   auto* downloads_button = new QPushButton(QStringLiteral("Downloads"), toolbar);
+  bookmark_button_ = new QPushButton(QStringLiteral("☆"), toolbar);
+  bookmarks_button_ = new QPushButton(QStringLiteral("Bookmarks"), toolbar);
+  history_button_ = new QPushButton(QStringLiteral("History"), toolbar);
+  bookmarks_menu_ = new QMenu(bookmarks_button_);
+  history_menu_ = new QMenu(history_button_);
+  bookmarks_button_->setMenu(bookmarks_menu_);
+  history_button_->setMenu(history_menu_);
 
   back_button_->setToolTip(QStringLiteral("Back"));
   forward_button_->setToolTip(QStringLiteral("Forward"));
@@ -107,6 +118,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
       QStringLiteral("Search or enter an address"));
   address_bar_->setClearButtonEnabled(true);
   downloads_button->setToolTip(QStringLiteral("Show downloads"));
+  bookmark_button_->setToolTip(QStringLiteral("Bookmark this page"));
   back_button_->setEnabled(false);
   forward_button_->setEnabled(false);
 
@@ -114,10 +126,42 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   toolbar_layout->addWidget(forward_button_);
   toolbar_layout->addWidget(reload_button_);
   toolbar_layout->addWidget(address_bar_, 1);
+  toolbar_layout->addWidget(bookmark_button_);
+  toolbar_layout->addWidget(bookmarks_button_);
+  toolbar_layout->addWidget(history_button_);
   toolbar_layout->addWidget(downloads_button);
+
+  find_bar_ = new QWidget(central);
+  auto* find_layout = new QHBoxLayout(find_bar_);
+  find_layout->setContentsMargins(8, 4, 8, 6);
+  find_layout->setSpacing(5);
+  find_edit_ = new QLineEdit(find_bar_);
+  find_result_label_ = new QLabel(find_bar_);
+  auto* previous_match = new QPushButton(QStringLiteral("↑"), find_bar_);
+  auto* next_match = new QPushButton(QStringLiteral("↓"), find_bar_);
+  auto* close_find = new QPushButton(QStringLiteral("×"), find_bar_);
+  find_edit_->setPlaceholderText(QStringLiteral("Find in page"));
+  find_result_label_->setMinimumWidth(70);
+  find_result_label_->setAlignment(Qt::AlignCenter);
+  previous_match->setToolTip(QStringLiteral("Previous match (Shift+Enter)"));
+  next_match->setToolTip(QStringLiteral("Next match (Enter)"));
+  close_find->setToolTip(QStringLiteral("Close (Esc)"));
+  find_layout->addStretch();
+  find_layout->addWidget(find_edit_);
+  find_layout->addWidget(find_result_label_);
+  find_layout->addWidget(previous_match);
+  find_layout->addWidget(next_match);
+  find_layout->addWidget(close_find);
+  find_bar_->hide();
 
   tab_stack_ = new QStackedWidget(central);
   download_manager_ = new DownloadManager(this);
+  browsing_data_ = new BrowsingDataStore(std::move(browsing_data_path));
+  QString browsing_data_error;
+  if (!browsing_data_->Load(&browsing_data_error)) {
+    qWarning("Unable to load browsing data: %s",
+             qPrintable(browsing_data_error));
+  }
   download_panel_ = new DownloadPanel(download_manager_, central);
   session_save_timer_ = new QTimer(this);
   session_save_timer_->setSingleShot(true);
@@ -128,6 +172,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   });
   page_layout->addWidget(tab_strip);
   page_layout->addWidget(toolbar);
+  page_layout->addWidget(find_bar_);
   page_layout->addWidget(tab_stack_, 1);
   page_layout->addWidget(download_panel_);
   setCentralWidget(central);
@@ -154,8 +199,24 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   });
   connect(address_bar_, &QLineEdit::returnPressed, this,
           &MainWindow::NavigateFromAddressBar);
+  connect(find_edit_, &QLineEdit::textChanged, this, [this] {
+    FindFromBar(true, false);
+  });
+  connect(find_edit_, &QLineEdit::returnPressed, this,
+          [this] { FindFromBar(true, true); });
+  connect(previous_match, &QPushButton::clicked, this,
+          [this] { FindFromBar(false, true); });
+  connect(next_match, &QPushButton::clicked, this,
+          [this] { FindFromBar(true, true); });
+  connect(close_find, &QPushButton::clicked, this, &MainWindow::HideFindBar);
   connect(downloads_button, &QPushButton::clicked, download_panel_,
           &DownloadPanel::ToggleVisibility);
+  connect(bookmark_button_, &QPushButton::clicked, this,
+          &MainWindow::ToggleCurrentBookmark);
+  connect(bookmarks_menu_, &QMenu::aboutToShow, this,
+          &MainWindow::RebuildBookmarksMenu);
+  connect(history_menu_, &QMenu::aboutToShow, this,
+          &MainWindow::RebuildHistoryMenu);
   connect(download_manager_, &DownloadManager::ActiveCountChanged, this,
           [downloads_button](int count) {
             downloads_button->setText(
@@ -203,6 +264,51 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   connect(dev_tools, &QShortcut::activated, this, [this] {
     if (BrowserView* browser = CurrentBrowser()) browser->ShowDevTools();
   });
+  auto* find_in_page = new QShortcut(QKeySequence::Find, this);
+  connect(find_in_page, &QShortcut::activated, this, &MainWindow::ShowFindBar);
+  auto* find_next = new QShortcut(QKeySequence::FindNext, this);
+  connect(find_next, &QShortcut::activated, this,
+          [this] { FindFromBar(true, true); });
+  auto* find_previous = new QShortcut(QKeySequence::FindPrevious, this);
+  connect(find_previous, &QShortcut::activated, this,
+          [this] { FindFromBar(false, true); });
+  auto* close_find_shortcut =
+      new QShortcut(QKeySequence(Qt::Key_Escape), find_bar_);
+  close_find_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  connect(close_find_shortcut, &QShortcut::activated, this,
+          &MainWindow::HideFindBar);
+  auto* previous_match_shortcut = new QShortcut(
+      QKeySequence(Qt::SHIFT | Qt::Key_Return), find_bar_);
+  previous_match_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  connect(previous_match_shortcut, &QShortcut::activated, this,
+          [this] { FindFromBar(false, true); });
+  auto* zoom_in = new QShortcut(QKeySequence::ZoomIn, this);
+  connect(zoom_in, &QShortcut::activated, this, [this] {
+    if (BrowserView* browser = CurrentBrowser()) browser->ZoomIn();
+  });
+  auto* zoom_out = new QShortcut(QKeySequence::ZoomOut, this);
+  connect(zoom_out, &QShortcut::activated, this, [this] {
+    if (BrowserView* browser = CurrentBrowser()) browser->ZoomOut();
+  });
+#if defined(OS_MAC)
+  auto* reset_zoom =
+      new QShortcut(QKeySequence(Qt::META | Qt::Key_0), this);
+#else
+  auto* reset_zoom =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), this);
+#endif
+  connect(reset_zoom, &QShortcut::activated, this, [this] {
+    if (BrowserView* browser = CurrentBrowser()) browser->ResetZoom();
+  });
+#if defined(OS_MAC)
+  auto* toggle_bookmark =
+      new QShortcut(QKeySequence(Qt::META | Qt::Key_D), this);
+#else
+  auto* toggle_bookmark =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_D), this);
+#endif
+  connect(toggle_bookmark, &QShortcut::activated, this,
+          &MainWindow::ToggleCurrentBookmark);
 
   const QStringList initial_urls = initial_session.tab_urls.isEmpty()
                                        ? QStringList{QStringLiteral("https://www.example.com")}
@@ -218,6 +324,8 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
     statusBar()->showMessage(
         QStringLiteral("Restored tabs after an unexpected shutdown"), 8000);
   }
+  RebuildBookmarksMenu();
+  RebuildHistoryMenu();
 
   // Do not overwrite a known-good previous session until the window and CEF
   // event loop have had time to start successfully. After this gate, every
@@ -227,6 +335,10 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
     session_persistence_ready_ = true;
     PersistSession(CaptureSession(false));
   });
+}
+
+MainWindow::~MainWindow() {
+  delete browsing_data_;
 }
 
 int MainWindow::tab_count() const {
@@ -308,6 +420,62 @@ bool MainWindow::save_session_for_testing(bool clean_exit) {
   return PersistSession(CaptureSession(clean_exit));
 }
 
+bool MainWindow::find_bar_visible_for_testing() const {
+  return find_bar_->isVisible();
+}
+
+void MainWindow::ShowFindBarForTesting() {
+  ShowFindBar();
+}
+
+void MainWindow::HideFindBarForTesting() {
+  HideFindBar();
+}
+
+void MainWindow::FindForTesting(const QString& text) {
+  ShowFindBar();
+  find_edit_->setText(text);
+}
+
+QString MainWindow::find_result_for_testing() const {
+  return find_result_label_->text();
+}
+
+void MainWindow::ZoomInForTesting() {
+  if (BrowserView* browser = CurrentBrowser()) browser->ZoomIn();
+}
+
+void MainWindow::ResetZoomForTesting() {
+  if (BrowserView* browser = CurrentBrowser()) browser->ResetZoom();
+}
+
+int MainWindow::zoom_percent_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser ? browser->zoom_percent() : 100;
+}
+
+void MainWindow::ToggleBookmarkForTesting() {
+  ToggleCurrentBookmark();
+}
+
+bool MainWindow::current_page_bookmarked_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browsing_data_->IsBookmarked(browser->current_url());
+}
+
+int MainWindow::history_count_for_testing() const {
+  return browsing_data_->history().size();
+}
+
+int MainWindow::current_url_visit_count_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  if (!browser) return 0;
+  for (const BrowsingDataStore::HistoryEntry& entry : browsing_data_->history()) {
+    if (entry.url == browser->current_url()) return entry.visit_count;
+  }
+  return 0;
+}
+
 void MainWindow::closeEvent(QCloseEvent* event) {
   if (allow_window_close_) {
     if (closing_session_) PersistSession(*closing_session_);
@@ -387,6 +555,33 @@ void MainWindow::UpdateAddress(const QString& url) {
                                                                : url);
 }
 
+void MainWindow::ShowFindBar() {
+  find_bar_->show();
+  find_edit_->setFocus();
+  find_edit_->selectAll();
+}
+
+void MainWindow::HideFindBar() {
+  find_bar_->hide();
+  find_result_label_->clear();
+  if (BrowserView* browser = CurrentBrowser()) {
+    browser->StopFinding(true);
+    browser->setFocus();
+  }
+}
+
+void MainWindow::FindFromBar(bool forward, bool find_next) {
+  BrowserView* browser = CurrentBrowser();
+  if (!browser) return;
+  const QString text = find_edit_->text();
+  if (text.isEmpty()) {
+    browser->StopFinding(true);
+    find_result_label_->clear();
+    return;
+  }
+  browser->Find(text, forward, find_next);
+}
+
 BrowserView* MainWindow::AddTab(const QString& url, bool activate,
                                 bool focus_address) {
   auto* browser = new BrowserView(url, download_manager_->handler(), tab_stack_);
@@ -405,10 +600,29 @@ BrowserView* MainWindow::AddTab(const QString& url, bool activate,
             if (browser == CurrentBrowser()) UpdateAddress(address);
             ScheduleSessionSave();
           });
+  connect(browser, &BrowserView::NavigationCompleted, this,
+          [this, browser] { RecordVisit(browser); });
   connect(browser, &BrowserView::LoadingStateChanged, this,
           [this, browser](bool loading, bool can_go_back, bool can_go_forward) {
             if (browser == CurrentBrowser()) {
               UpdateLoadingState(loading, can_go_back, can_go_forward);
+            }
+          });
+  connect(browser, &BrowserView::FindResultChanged, this,
+          [this, browser](int count, int active_match, bool final_update) {
+            if (browser != CurrentBrowser() || !find_bar_->isVisible()) return;
+            if (count <= 0 && final_update) {
+              find_result_label_->setText(QStringLiteral("No matches"));
+            } else if (count > 0) {
+              find_result_label_->setText(
+                  QStringLiteral("%1 / %2").arg(active_match).arg(count));
+            }
+          });
+  connect(browser, &BrowserView::ZoomChanged, this,
+          [this, browser](int percent) {
+            if (browser == CurrentBrowser()) {
+              statusBar()->showMessage(QStringLiteral("Zoom: %1%").arg(percent),
+                                       2000);
             }
           });
   connect(browser, &BrowserView::PopupRequested, this,
@@ -558,6 +772,8 @@ void MainWindow::UpdateChrome() {
   back_button_->setEnabled(available && browser->can_go_back());
   forward_button_->setEnabled(available && browser->can_go_forward());
   reload_button_->setEnabled(available);
+  bookmark_button_->setEnabled(available && !browser->current_url().isEmpty() &&
+                               browser->current_url() != QStringLiteral("about:blank"));
 
   if (!browser) {
     address_bar_->clear();
@@ -566,6 +782,9 @@ void MainWindow::UpdateChrome() {
   }
 
   const QString url = browser->current_url();
+  bookmark_button_->setText(browsing_data_->IsBookmarked(url)
+                                ? QStringLiteral("★")
+                                : QStringLiteral("☆"));
   address_bar_->setText(url == QStringLiteral("about:blank") ? QString()
                                                                : url);
   reload_button_->setText(browser->is_loading() ? QStringLiteral("×")
@@ -614,7 +833,117 @@ void MainWindow::HandleBrowserShortcut(int action_value) {
                                   tab_bar_->count());
       }
       break;
+    case BrowserView::ShortcutAction::FindInPage:
+      ShowFindBar();
+      break;
+    case BrowserView::ShortcutAction::FindNext:
+      FindFromBar(true, true);
+      break;
+    case BrowserView::ShortcutAction::FindPrevious:
+      FindFromBar(false, true);
+      break;
+    case BrowserView::ShortcutAction::ZoomIn:
+      if (BrowserView* browser = CurrentBrowser()) browser->ZoomIn();
+      break;
+    case BrowserView::ShortcutAction::ZoomOut:
+      if (BrowserView* browser = CurrentBrowser()) browser->ZoomOut();
+      break;
+    case BrowserView::ShortcutAction::ResetZoom:
+      if (BrowserView* browser = CurrentBrowser()) browser->ResetZoom();
+      break;
+    case BrowserView::ShortcutAction::ToggleBookmark:
+      ToggleCurrentBookmark();
+      break;
   }
+}
+
+void MainWindow::ToggleCurrentBookmark() {
+  BrowserView* browser = CurrentBrowser();
+  if (!browser) return;
+  const QString url = browser->current_url();
+  if (browsing_data_->IsBookmarked(url)) {
+    browsing_data_->RemoveBookmark(url);
+    statusBar()->showMessage(QStringLiteral("Bookmark removed"), 2000);
+  } else if (browsing_data_->AddBookmark(url, browser->page_title())) {
+    statusBar()->showMessage(QStringLiteral("Bookmark added"), 2000);
+  } else {
+    return;
+  }
+  SaveBrowsingData();
+  RebuildBookmarksMenu();
+  UpdateChrome();
+}
+
+void MainWindow::RebuildBookmarksMenu() {
+  bookmarks_menu_->clear();
+  if (browsing_data_->bookmarks().isEmpty()) {
+    QAction* empty = bookmarks_menu_->addAction(QStringLiteral("No bookmarks yet"));
+    empty->setEnabled(false);
+    return;
+  }
+  for (const BrowsingDataStore::Bookmark& bookmark :
+       browsing_data_->bookmarks()) {
+    const QString label = bookmark.title.isEmpty() ? bookmark.url
+                                                    : bookmark.title;
+    QAction* action = bookmarks_menu_->addAction(label);
+    action->setToolTip(bookmark.url);
+    connect(action, &QAction::triggered, this,
+            [this, url = bookmark.url] { AddTab(url, true); });
+  }
+  bookmarks_menu_->addSeparator();
+  QAction* remove = bookmarks_menu_->addAction(
+      QStringLiteral("Remove bookmark for current page"));
+  BrowserView* browser = CurrentBrowser();
+  remove->setEnabled(browser &&
+                     browsing_data_->IsBookmarked(browser->current_url()));
+  connect(remove, &QAction::triggered, this,
+          &MainWindow::ToggleCurrentBookmark);
+}
+
+void MainWindow::RebuildHistoryMenu() {
+  history_menu_->clear();
+  if (browsing_data_->history().isEmpty()) {
+    QAction* empty = history_menu_->addAction(QStringLiteral("No history yet"));
+    empty->setEnabled(false);
+    return;
+  }
+  constexpr int kVisibleHistoryEntries = 25;
+  const auto& history = browsing_data_->history();
+  const int count = std::min(static_cast<int>(history.size()),
+                             kVisibleHistoryEntries);
+  for (int index = 0; index < count; ++index) {
+    const auto& entry = history.at(index);
+    const QString label = entry.title.isEmpty() ? entry.url : entry.title;
+    QAction* action = history_menu_->addAction(label);
+    action->setToolTip(entry.url);
+    connect(action, &QAction::triggered, this,
+            [this, url = entry.url] { AddTab(url, true); });
+  }
+  history_menu_->addSeparator();
+  QAction* clear = history_menu_->addAction(QStringLiteral("Clear history"));
+  connect(clear, &QAction::triggered, this, [this] {
+    browsing_data_->ClearHistory();
+    SaveBrowsingData();
+    RebuildHistoryMenu();
+  });
+}
+
+void MainWindow::RecordVisit(BrowserView* browser) {
+  if (!browser || browser->is_loading()) return;
+  const QString url = browser->current_url();
+  if (url.isEmpty()) return;
+  browsing_data_->RecordVisit(url, browser->page_title());
+  SaveBrowsingData();
+}
+
+bool MainWindow::SaveBrowsingData() {
+  QString error;
+  const bool saved = browsing_data_->Save(&error);
+  if (!saved && !error.isEmpty()) {
+    statusBar()->showMessage(
+        QStringLiteral("Unable to save browsing data: %1").arg(error), 8000);
+  }
+  return saved;
 }
 
 void MainWindow::ScheduleSessionSave() {

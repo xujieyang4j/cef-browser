@@ -14,7 +14,8 @@ renderer crashes display a retry page while preserving the requested URL.
 Window geometry, open tab URLs, and the active tab are saved atomically and
 restored on the next regular launch. A previous unclean exit is detected and
 reported after its tabs are recovered. An explicit startup URL takes priority
-over the saved session.
+over the saved session. The browser also provides in-page search, per-tab page
+zoom, persistent bookmarks, and a bounded visit history.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -75,6 +76,11 @@ application builds automatically use the Release CEF runtime.
 - Ctrl/Cmd+Shift+T: reopen the most recently closed tab
 - Ctrl+Tab / Ctrl+Shift+Tab: switch tabs
 - Ctrl/Cmd+L: focus and select the address bar
+- Ctrl/Cmd+F: find text in the active page
+- F3 / Shift+F3: move between page matches
+- Ctrl/Cmd++ / Ctrl/Cmd+-: zoom the active page
+- Ctrl/Cmd+0: reset page zoom
+- Ctrl/Cmd+D: add or remove a bookmark for the active page
 - F12: open CEF DevTools
 
 Tabs can also be reordered by dragging and closed with either their close
@@ -92,8 +98,9 @@ timeout 20s xvfb-run -a ./build/trail-browser --smoke-test-tabs \
 
 A passing run prints `TAB_SMOKE_OK` and exits with status 0 after creating,
 closing, reopening, and finally shutting down multiple CEF browser instances.
-CTest also runs deterministic download-state, failure-page, and atomic session
-restore checks. All four checks are registered when `xvfb-run` is available:
+CTest also runs deterministic download-state, failure-page, atomic session
+restore, page-search/zoom, and bookmark/history persistence checks. All six
+checks are registered when `xvfb-run` is available:
 
 ~~~sh
 ctest --test-dir build --output-on-failure
