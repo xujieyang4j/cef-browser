@@ -1,8 +1,11 @@
 #pragma once
 
+#include <QByteArray>
 #include <QSet>
 #include <QHash>
+#include <QIcon>
 #include <QPointer>
+#include <QStringList>
 #include <QWidget>
 
 #include "include/cef_browser.h"
@@ -74,6 +77,7 @@ class BrowserView final : public QWidget {
   static bool IsAllowedExternalScheme(const QString& url);
   void ShowFailureForTesting(bool render_process_failed);
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
+  void SetFaviconForTesting(const QIcon& icon);
 
   // Starts an asynchronous close and returns true if no browser exists.
   bool RequestClose();
@@ -85,6 +89,10 @@ class BrowserView final : public QWidget {
   void OnCefDialogClosed(CefRefPtr<CefBrowser> browser);
   bool OnCefKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event);
   void OnCefTitleChanged(CefRefPtr<CefBrowser> browser, const QString& title);
+  void OnCefFaviconURLChanged(CefRefPtr<CefBrowser> browser,
+                              const QStringList& icon_urls);
+  void OnCefFaviconDownloaded(int browser_id, const QString& image_url,
+                              quint64 generation, const QByteArray& png_data);
   void OnCefFullscreenChanged(CefRefPtr<CefBrowser> browser, bool fullscreen);
   void OnCefStatusMessage(CefRefPtr<CefBrowser> browser,
                           const QString& value);
@@ -125,6 +133,7 @@ class BrowserView final : public QWidget {
 
  signals:
   void TitleChanged(const QString& title);
+  void FaviconChanged(const QIcon& icon);
   void AddressChanged(const QString& url);
   void LoadingStateChanged(bool loading, bool can_go_back,
                            bool can_go_forward);
@@ -165,6 +174,8 @@ class BrowserView final : public QWidget {
   QString initial_url_;
   QString current_url_;
   QString page_title_;
+  QString favicon_url_;
+  quint64 favicon_request_generation_ = 0;
   CefRefPtr<CefDownloadHandler> download_handler_;
   CefRefPtr<BrowserClient> client_;
   CefRefPtr<CefBrowser> browser_;

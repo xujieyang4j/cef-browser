@@ -1,19 +1,24 @@
 #include "ui/main_window.h"
 
 #include <algorithm>
+#include <functional>
 #include <utility>
 
 #include <QCloseEvent>
 #include <QCompleter>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
+#include <QPointer>
 #include <QMoveEvent>
 #include <QPushButton>
 #include <QProgressBar>
+#include <QPixmap>
 #include <QResizeEvent>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -28,6 +33,8 @@
 #include <QWidget>
 
 #include "download/download_manager.h"
+#include "include/cef_cookie.h"
+#include "include/cef_request_context.h"
 #include "profile/browsing_data_store.h"
 #include "ui/browser_view.h"
 #include "ui/download_panel.h"
@@ -35,6 +42,38 @@
 namespace {
 
 constexpr int kMaxClosedTabs = 20;
+
+class CompletionCallback final : public CefCompletionCallback {
+ public:
+  explicit CompletionCallback(std::function<void()> completion)
+      : completion_(std::move(completion)) {}
+
+  void OnComplete() override {
+    if (completion_) completion_();
+  }
+
+ private:
+  std::function<void()> completion_;
+
+  IMPLEMENT_REFCOUNTING(CompletionCallback);
+  DISALLOW_COPY_AND_ASSIGN(CompletionCallback);
+};
+
+class DeleteCookiesCallback final : public CefDeleteCookiesCallback {
+ public:
+  explicit DeleteCookiesCallback(std::function<void(int)> completion)
+      : completion_(std::move(completion)) {}
+
+  void OnComplete(int num_deleted) override {
+    if (completion_) completion_(num_deleted);
+  }
+
+ private:
+  std::function<void(int)> completion_;
+
+  IMPLEMENT_REFCOUNTING(DeleteCookiesCallback);
+  DISALLOW_COPY_AND_ASSIGN(DeleteCookiesCallback);
+};
 
 class BrowserTabBar final : public QTabBar {
  public:
@@ -450,6 +489,18 @@ QString MainWindow::download_status_for_testing(quint32 id) const {
   return item ? DownloadManager::StatusText(*item) : QString();
 }
 
+void MainWindow::SetCurrentFaviconForTesting() {
+  BrowserView* browser = CurrentBrowser();
+  if (!browser) return;
+  QPixmap image(16, 16);
+  image.fill(Qt::darkCyan);
+  browser->SetFaviconForTesting(QIcon(image));
+}
+
+bool MainWindow::current_tab_has_favicon_for_testing() const {
+  return !tab_bar_->tabIcon(tab_bar_->currentIndex()).isNull();
+}
+
 void MainWindow::ShowFailureForTesting(bool render_process_failed) {
   if (BrowserView* browser = CurrentBrowser()) {
     browser->ShowFailureForTesting(render_process_failed);
@@ -534,6 +585,17 @@ QStringList MainWindow::address_suggestions_for_testing() const {
   return address_suggestions_->stringList();
 }
 
+void MainWindow::AddHistoryForTesting(const QString& url,
+                                      const QString& title) {
+  browsing_data_->RecordVisit(url, title);
+  SaveBrowsingData();
+  RefreshAddressSuggestions();
+}
+
+void MainWindow::ClearBrowsingDataForTesting() {
+  BeginClearBrowsingData(false);
+}
+
 QString MainWindow::media_permission_description_for_testing(
     uint32_t permissions) const {
   return BrowserView::MediaPermissionDescription(permissions);
@@ -568,6 +630,39 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 
   event->ignore();
   if (window_close_requested_) return;
+  if (download_manager_->active_count() > 0) {
+    if (download_exit_prompt_open_) return;
+    download_exit_prompt_open_ = true;
+
+    const int active_downloads = download_manager_->active_count();
+    auto* dialog = new QMessageBox(
+        QMessageBox::Warning, QStringLiteral("Downloads in progress"),
+        QStringLiteral(
+            "%1 download(s) are still active. Keep the browser open to "
+            "allow them to finish.")
+            .arg(active_downloads),
+        QMessageBox::NoButton, this);
+    auto* keep_downloading = dialog->addButton(
+        QStringLiteral("Continue downloading"), QMessageBox::RejectRole);
+    auto* quit_and_cancel = dialog->addButton(
+        QStringLiteral("Quit and cancel downloads"),
+        QMessageBox::DestructiveRole);
+    dialog->setDefaultButton(keep_downloading);
+    dialog->setEscapeButton(keep_downloading);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dialog, &QMessageBox::finished, this,
+            [this, dialog, quit_and_cancel](int) {
+              download_exit_prompt_open_ = false;
+              if (dialog->clickedButton() != quit_and_cancel) return;
+              download_manager_->CancelAllActive();
+              window_close_requested_ = true;
+              closing_session_ = CaptureSession(true);
+              ContinueWindowClose();
+            });
+    dialog->open();
+    return;
+  }
+
   window_close_requested_ = true;
   closing_session_ = CaptureSession(true);
   ContinueWindowClose();
@@ -684,6 +779,11 @@ BrowserView* MainWindow::AddTab(const QString& url, bool activate,
   connect(browser, &BrowserView::TitleChanged, this,
           [this, browser](const QString& title) {
             UpdateTabTitle(browser, title);
+          });
+  connect(browser, &BrowserView::FaviconChanged, this,
+          [this, browser](const QIcon& icon) {
+            const int index = IndexOf(browser);
+            if (index >= 0) tab_bar_->setTabIcon(index, icon);
           });
   connect(browser, &BrowserView::AddressChanged, this,
           [this, browser](const QString& address) {
@@ -1054,28 +1154,142 @@ void MainWindow::RebuildHistoryMenu() {
   if (browsing_data_->history().isEmpty()) {
     QAction* empty = history_menu_->addAction(QStringLiteral("No history yet"));
     empty->setEnabled(false);
-    return;
-  }
-  constexpr int kVisibleHistoryEntries = 25;
-  const auto& history = browsing_data_->history();
-  const int count = std::min(static_cast<int>(history.size()),
-                             kVisibleHistoryEntries);
-  for (int index = 0; index < count; ++index) {
-    const auto& entry = history.at(index);
-    const QString label = entry.title.isEmpty() ? entry.url : entry.title;
-    QAction* action = history_menu_->addAction(label);
-    action->setToolTip(entry.url);
-    connect(action, &QAction::triggered, this,
-            [this, url = entry.url] { AddTab(url, true); });
+  } else {
+    constexpr int kVisibleHistoryEntries = 25;
+    const auto& history = browsing_data_->history();
+    const int count = std::min(static_cast<int>(history.size()),
+                               kVisibleHistoryEntries);
+    for (int index = 0; index < count; ++index) {
+      const auto& entry = history.at(index);
+      const QString label = entry.title.isEmpty() ? entry.url : entry.title;
+      QAction* action = history_menu_->addAction(label);
+      action->setToolTip(entry.url);
+      connect(action, &QAction::triggered, this,
+              [this, url = entry.url] { AddTab(url, true); });
+    }
   }
   history_menu_->addSeparator();
-  QAction* clear = history_menu_->addAction(QStringLiteral("Clear history"));
-  connect(clear, &QAction::triggered, this, [this] {
-    browsing_data_->ClearHistory();
-    SaveBrowsingData();
-    RebuildHistoryMenu();
-    RefreshAddressSuggestions();
-  });
+  QAction* clear =
+      history_menu_->addAction(QStringLiteral("Clear browsing data…"));
+  clear->setEnabled(!browsing_data_clear_in_progress_);
+  connect(clear, &QAction::triggered, this,
+          &MainWindow::ShowClearBrowsingDataPrompt);
+}
+
+void MainWindow::ShowClearBrowsingDataPrompt() {
+  if (browsing_data_clear_in_progress_) return;
+  auto* dialog = new QMessageBox(
+      QMessageBox::Warning, QStringLiteral("Clear browsing data?"),
+      QStringLiteral(
+          "This removes browsing history, cached files, cookies, saved site "
+          "sessions, HTTP credentials, and certificate exceptions. "
+          "Bookmarks are kept."),
+      QMessageBox::NoButton, this);
+  auto* cancel = dialog->addButton(QStringLiteral("Cancel"),
+                                   QMessageBox::RejectRole);
+  auto* clear = dialog->addButton(QStringLiteral("Clear data"),
+                                  QMessageBox::DestructiveRole);
+  dialog->setDefaultButton(cancel);
+  dialog->setEscapeButton(cancel);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QMessageBox::finished, this,
+          [this, dialog, clear](int) {
+            if (dialog->clickedButton() == clear) BeginClearBrowsingData(true);
+          });
+  dialog->open();
+}
+
+void MainWindow::BeginClearBrowsingData(bool show_result_dialog) {
+  if (browsing_data_clear_in_progress_) return;
+  browsing_data_clear_in_progress_ = true;
+  browsing_data_clear_show_result_ = show_result_dialog;
+  browsing_data_clear_pending_ = 5;
+  browsing_data_clear_failures_.clear();
+  browsing_data_clear_result_.clear();
+  RebuildHistoryMenu();
+  statusBar()->showMessage(QStringLiteral("Clearing browsing data…"));
+
+  browsing_data_->ClearHistory();
+  CompleteBrowsingDataClearTask(QStringLiteral("history"),
+                                SaveBrowsingData());
+  RebuildHistoryMenu();
+  RefreshAddressSuggestions();
+
+  QPointer<MainWindow> owner(this);
+  CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
+  if (!context) {
+    CompleteBrowsingDataClearTask(QStringLiteral("cache"), false);
+    CompleteBrowsingDataClearTask(QStringLiteral("site credentials"), false);
+    CompleteBrowsingDataClearTask(QStringLiteral("certificate exceptions"),
+                                  false);
+    CompleteBrowsingDataClearTask(QStringLiteral("cookies"), false);
+    return;
+  }
+
+  context->ClearHttpCache(new CompletionCallback([owner] {
+    if (owner) owner->CompleteBrowsingDataClearTask(QStringLiteral("cache"),
+                                                     true);
+  }));
+  context->ClearHttpAuthCredentials(new CompletionCallback([owner] {
+    if (owner) {
+      owner->CompleteBrowsingDataClearTask(
+          QStringLiteral("site credentials"), true);
+    }
+  }));
+  context->ClearCertificateExceptions(new CompletionCallback([owner] {
+    if (owner) {
+      owner->CompleteBrowsingDataClearTask(
+          QStringLiteral("certificate exceptions"), true);
+    }
+  }));
+
+  CefRefPtr<CefCookieManager> cookie_manager =
+      context->GetCookieManager(nullptr);
+  if (!cookie_manager ||
+      !cookie_manager->DeleteCookies(
+          CefString(), CefString(),
+          new DeleteCookiesCallback([owner](int deleted) {
+            if (owner) {
+              owner->CompleteBrowsingDataClearTask(QStringLiteral("cookies"),
+                                                    deleted >= 0);
+            }
+          }))) {
+    CompleteBrowsingDataClearTask(QStringLiteral("cookies"), false);
+  }
+}
+
+void MainWindow::CompleteBrowsingDataClearTask(const QString& task,
+                                               bool success) {
+  if (!browsing_data_clear_in_progress_ || browsing_data_clear_pending_ <= 0) {
+    return;
+  }
+  if (!success) browsing_data_clear_failures_.append(task);
+  --browsing_data_clear_pending_;
+  if (browsing_data_clear_pending_ > 0) return;
+
+  browsing_data_clear_in_progress_ = false;
+  if (browsing_data_clear_failures_.isEmpty()) {
+    browsing_data_clear_result_ = QStringLiteral(
+        "Browsing history, cache, cookies, and site credentials were cleared.");
+  } else {
+    browsing_data_clear_result_ =
+        QStringLiteral("Some browsing data could not be cleared: %1.")
+            .arg(browsing_data_clear_failures_.join(QStringLiteral(", ")));
+  }
+  statusBar()->showMessage(browsing_data_clear_result_, 8000);
+  RebuildHistoryMenu();
+
+  if (browsing_data_clear_show_result_) {
+    auto* result = new QMessageBox(
+        browsing_data_clear_failures_.isEmpty() ? QMessageBox::Information
+                                                 : QMessageBox::Warning,
+        browsing_data_clear_failures_.isEmpty()
+            ? QStringLiteral("Browsing data cleared")
+            : QStringLiteral("Browsing data partially cleared"),
+        browsing_data_clear_result_, QMessageBox::Ok, this);
+    result->setAttribute(Qt::WA_DeleteOnClose);
+    result->open();
+  }
 }
 
 void MainWindow::RecordVisit(BrowserView* browser) {

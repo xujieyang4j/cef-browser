@@ -8,10 +8,12 @@
 #include <QDesktopServices>
 #include <QFocusEvent>
 #include <QHideEvent>
+#include <QImage>
 #include <QLineEdit>
 #include <QMetaObject>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QPixmap>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QUrl>
@@ -20,6 +22,7 @@
 
 #include "browser/browser_client.h"
 #include "include/cef_browser.h"
+#include "include/wrapper/cef_helpers.h"
 
 #if defined(OS_WIN)
 #include <windows.h>
@@ -29,6 +32,47 @@
 #elif defined(OS_MAC)
 #import <AppKit/AppKit.h>
 #endif
+
+namespace {
+
+class FaviconDownloadCallback final : public CefDownloadImageCallback {
+ public:
+  FaviconDownloadCallback(QPointer<BrowserView> owner, int browser_id,
+                          QString requested_url, quint64 generation)
+      : owner_(std::move(owner)),
+        browser_id_(browser_id),
+        requested_url_(std::move(requested_url)),
+        generation_(generation) {}
+
+  void OnDownloadImageFinished(const CefString& image_url, int,
+                               CefRefPtr<CefImage> image) override {
+    CEF_REQUIRE_UI_THREAD();
+    if (!owner_ || !image || image->IsEmpty()) return;
+    int pixel_width = 0;
+    int pixel_height = 0;
+    CefRefPtr<CefBinaryValue> png =
+        image->GetAsPNG(1.0F, true, pixel_width, pixel_height);
+    if (!png || png->GetSize() == 0) return;
+    QByteArray data(static_cast<qsizetype>(png->GetSize()), '\0');
+    if (png->GetData(data.data(), static_cast<size_t>(data.size()), 0) !=
+        static_cast<size_t>(data.size())) {
+      return;
+    }
+    owner_->OnCefFaviconDownloaded(browser_id_, requested_url_, generation_,
+                                    data);
+  }
+
+ private:
+  QPointer<BrowserView> owner_;
+  int browser_id_;
+  QString requested_url_;
+  quint64 generation_;
+
+  IMPLEMENT_REFCOUNTING(FaviconDownloadCallback);
+  DISALLOW_COPY_AND_ASSIGN(FaviconDownloadCallback);
+};
+
+}  // namespace
 
 BrowserView::BrowserView(QString initial_url,
                          CefRefPtr<CefDownloadHandler> download_handler,
@@ -78,6 +122,10 @@ void BrowserView::ShowFailureForTesting(bool render_process_failed) {
                     QStringLiteral("ERR_TEST_FAILURE (-999)"), current_url_,
                     false);
   }
+}
+
+void BrowserView::SetFaviconForTesting(const QIcon& icon) {
+  emit FaviconChanged(icon);
 }
 
 void BrowserView::GoBack() {
@@ -382,6 +430,46 @@ void BrowserView::OnCefTitleChanged(CefRefPtr<CefBrowser> browser,
   }
 }
 
+void BrowserView::OnCefFaviconURLChanged(
+    CefRefPtr<CefBrowser> browser, const QStringList& icon_urls) {
+  if (!browser_ || !browser_->IsSame(browser)) return;
+  ++favicon_request_generation_;
+  favicon_url_.clear();
+  emit FaviconChanged(QIcon());
+  QString icon_url;
+  for (const QString& candidate : icon_urls) {
+    const QUrl parsed(candidate);
+    if (parsed.isValid() &&
+        (parsed.scheme() == QStringLiteral("http") ||
+         parsed.scheme() == QStringLiteral("https") ||
+         parsed.scheme() == QStringLiteral("data"))) {
+      icon_url = candidate;
+      break;
+    }
+  }
+  if (icon_url.isEmpty()) return;
+  favicon_url_ = icon_url;
+  const quint64 generation = favicon_request_generation_;
+  const QByteArray encoded_url = icon_url.toUtf8();
+  browser_->GetHost()->DownloadImage(
+      std::string(encoded_url.constData(), encoded_url.size()), true, 32, false,
+      new FaviconDownloadCallback(this, browser_->GetIdentifier(), icon_url,
+                                  generation));
+}
+
+void BrowserView::OnCefFaviconDownloaded(int browser_id,
+                                         const QString& image_url,
+                                         quint64 generation,
+                                         const QByteArray& png_data) {
+  if (!browser_ || browser_->GetIdentifier() != browser_id ||
+      generation != favicon_request_generation_ ||
+      image_url != favicon_url_) {
+    return;
+  }
+  const QImage image = QImage::fromData(png_data, "PNG");
+  if (!image.isNull()) emit FaviconChanged(QIcon(QPixmap::fromImage(image)));
+}
+
 void BrowserView::OnCefFullscreenChanged(CefRefPtr<CefBrowser> browser,
                                          bool fullscreen) {
   if (browser_ && browser_->IsSame(browser)) emit FullscreenChanged(fullscreen);
@@ -412,6 +500,9 @@ void BrowserView::OnCefAddressChanged(CefRefPtr<CefBrowser> browser,
     render_process_failed_ = false;
     failure_page_url_.clear();
     certificate_failure_url_.clear();
+    ++favicon_request_generation_;
+    favicon_url_.clear();
+    emit FaviconChanged(QIcon());
     current_url_ = url;
     emit AddressChanged(url);
   }

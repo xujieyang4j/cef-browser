@@ -122,6 +122,19 @@ void DownloadManager::CancelDownload(quint32 id) {
   if (callback) callback->Cancel();
 }
 
+void DownloadManager::CancelAllActive() {
+  QList<CefRefPtr<CefDownloadItemCallback>> active_callbacks;
+  for (auto found = items_.cbegin(); found != items_.cend(); ++found) {
+    const auto callback = callbacks_.value(found.key());
+    if (IsActive(found->state) && callback) {
+      active_callbacks.append(callback);
+    }
+  }
+  for (const auto& callback : active_callbacks) {
+    callback->Cancel();
+  }
+}
+
 void DownloadManager::PauseDownload(quint32 id) {
   const auto callback = callbacks_.value(id);
   if (callback) callback->Pause();

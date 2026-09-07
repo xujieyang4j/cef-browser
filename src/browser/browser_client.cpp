@@ -81,6 +81,19 @@ void BrowserClient::OnTitleChange(CefRefPtr<CefBrowser> browser,
   }
 }
 
+void BrowserClient::OnFaviconURLChange(
+    CefRefPtr<CefBrowser> browser,
+    const std::vector<CefString>& icon_urls) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!owner_) return;
+  QStringList urls;
+  urls.reserve(static_cast<qsizetype>(icon_urls.size()));
+  for (const CefString& url : icon_urls) {
+    urls.append(QString::fromStdString(url.ToString()));
+  }
+  owner_->OnCefFaviconURLChanged(browser, urls);
+}
+
 void BrowserClient::OnFullscreenModeChange(CefRefPtr<CefBrowser> browser,
                                            bool fullscreen) {
   CEF_REQUIRE_UI_THREAD();

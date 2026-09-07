@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.7.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.8.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -173,6 +173,13 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "DOWNLOAD_SMOKE_OK"
     )
+    add_test(NAME trail_browser_exit_protection
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-exit-protection)
+    set_tests_properties(trail_browser_exit_protection PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "EXIT_PROTECTION_SMOKE_OK"
+    )
     add_test(NAME trail_browser_failures
       COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
               --smoke-test-failures
@@ -202,6 +209,20 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_profile PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "PROFILE_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_privacy
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-privacy)
+    set_tests_properties(trail_browser_privacy PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "PRIVACY_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_favicon
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-favicon)
+    set_tests_properties(trail_browser_favicon PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "FAVICON_SMOKE_OK"
     )
     add_test(NAME trail_browser_security
       COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>

@@ -9,9 +9,10 @@ normalization, page titles, pop-up routing based on the requested disposition,
 recently closed tab recovery, F12 DevTools, persistent CEF cache, and orderly
 asynchronous browser shutdown. Downloads have a window-level manager with
 progress, speed, pause/resume, cancellation, completion actions, and a platform
-save dialog;
-they continue when the originating tab closes. Main-frame load failures and
-renderer crashes display a retry page while preserving the requested URL.
+save dialog; they continue when the originating tab closes, and quitting with
+active or paused downloads requires explicit confirmation. Main-frame load
+failures and renderer crashes display a retry page while preserving the
+requested URL.
 Window geometry, open tab URLs, and the active tab are saved atomically and
 restored on the next regular launch. A previous unclean exit is detected and
 reported after its tabs are recovered. An explicit startup URL takes priority
@@ -30,7 +31,11 @@ credentials are never stored by Trail Browser.
 The address bar suggests unique URLs from bookmarks and recent history, with
 bookmarks ranked first. The recently closed tab stack is part of the atomic
 session file, so Ctrl/Cmd+Shift+T continues to work after an application
-restart.
+restart. Page favicons are loaded into their corresponding tabs with stale
+navigation results rejected. The History menu can clear history, HTTP cache,
+cookies, HTTP credentials, and certificate exceptions while preserving
+bookmarks; completion is reported only after every asynchronous CEF operation
+finishes.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -114,9 +119,10 @@ timeout 20s xvfb-run -a ./build/trail-browser --smoke-test-tabs \
 
 A passing run prints `TAB_SMOKE_OK` and exits with status 0 after creating,
 closing, reopening, and finally shutting down multiple CEF browser instances.
-CTest also runs deterministic download-state, failure-page, atomic session
-restore, page-search/zoom, bookmark/history persistence, security-policy, and
-authentication-dialog checks. All eight
+CTest also runs deterministic download-state, download-exit protection,
+failure-page, atomic session restore, page-search/zoom, bookmark/history
+persistence, browsing-data cleanup, favicon mapping, security-policy, and
+authentication-dialog checks. All eleven
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

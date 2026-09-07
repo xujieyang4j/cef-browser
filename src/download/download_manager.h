@@ -46,6 +46,7 @@ class DownloadManager final : public QObject {
   int active_count() const;
 
   void CancelDownload(quint32 id);
+  void CancelAllActive();
   void PauseDownload(quint32 id);
   void ResumeDownload(quint32 id);
   void ClearFinished();

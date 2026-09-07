@@ -46,6 +46,8 @@ class MainWindow final : public QMainWindow {
   int download_count_for_testing() const;
   int active_download_count_for_testing() const;
   QString download_status_for_testing(quint32 id) const;
+  void SetCurrentFaviconForTesting();
+  bool current_tab_has_favicon_for_testing() const;
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
   bool render_process_failed_for_testing() const;
@@ -64,12 +66,23 @@ class MainWindow final : public QMainWindow {
   int history_count_for_testing() const;
   int current_url_visit_count_for_testing() const;
   QStringList address_suggestions_for_testing() const;
+  void AddHistoryForTesting(const QString& url, const QString& title);
+  void ClearBrowsingDataForTesting();
+  bool browsing_data_clear_in_progress_for_testing() const {
+    return browsing_data_clear_in_progress_;
+  }
+  const QString& browsing_data_clear_result_for_testing() const {
+    return browsing_data_clear_result_;
+  }
   QString media_permission_description_for_testing(uint32_t permissions) const;
   QString permission_description_for_testing(uint32_t permissions) const;
   bool external_scheme_allowed_for_testing(const QString& url) const;
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
   void SetWebFullscreenForTesting(bool fullscreen);
   bool web_fullscreen_for_testing() const { return web_fullscreen_; }
+  bool window_close_requested_for_testing() const {
+    return window_close_requested_;
+  }
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -91,6 +104,9 @@ class MainWindow final : public QMainWindow {
   void ToggleCurrentBookmark();
   void RebuildBookmarksMenu();
   void RebuildHistoryMenu();
+  void ShowClearBrowsingDataPrompt();
+  void BeginClearBrowsingData(bool show_result_dialog);
+  void CompleteBrowsingDataClearTask(const QString& task, bool success);
   void RecordVisit(BrowserView* browser);
   bool SaveBrowsingData();
   void RefreshAddressSuggestions();
@@ -142,6 +158,12 @@ class MainWindow final : public QMainWindow {
   QString session_path_;
   std::optional<BrowserSession> closing_session_;
   bool session_persistence_ready_ = false;
+  bool download_exit_prompt_open_ = false;
+  bool browsing_data_clear_in_progress_ = false;
+  bool browsing_data_clear_show_result_ = false;
+  int browsing_data_clear_pending_ = 0;
+  QStringList browsing_data_clear_failures_;
+  QString browsing_data_clear_result_;
   bool window_close_requested_ = false;
   bool allow_window_close_ = false;
   bool web_fullscreen_ = false;

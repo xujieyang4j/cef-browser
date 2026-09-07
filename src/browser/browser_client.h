@@ -36,6 +36,9 @@ class BrowserClient final : public CefClient,
 
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
                      const CefString& title) override;
+  void OnFaviconURLChange(
+      CefRefPtr<CefBrowser> browser,
+      const std::vector<CefString>& icon_urls) override;
   void OnFullscreenModeChange(CefRefPtr<CefBrowser> browser,
                               bool fullscreen) override;
   void OnStatusMessage(CefRefPtr<CefBrowser> browser,

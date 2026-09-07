@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QStandardPaths>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QTimer>
@@ -161,6 +162,55 @@ void StartDownloadSmokeTest(MainWindow* window) {
   }
 }
 
+void StartExitProtectionSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  window->UpdateDownloadForTesting(81, 35, false);
+  window->UpdateDownloadForTesting(82, 60, false);
+  window->PauseDownloadForTesting(82);
+  window->close();
+
+  auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, stage, step] {
+    ++*attempts;
+    QMessageBox* dialog = window->findChild<QMessageBox*>();
+    if (*stage == 0 && dialog && dialog->isVisible() &&
+        window->active_download_count_for_testing() == 2 &&
+        !window->window_close_requested_for_testing()) {
+      dialog->defaultButton()->click();
+      *stage = 1;
+    } else if (*stage == 1 && !dialog && window->isVisible() &&
+               !window->window_close_requested_for_testing()) {
+      window->close();
+      *stage = 2;
+    } else if (*stage == 2 && dialog && dialog->isVisible()) {
+      for (QAbstractButton* button : dialog->buttons()) {
+        if (dialog->buttonRole(button) == QMessageBox::DestructiveRole) {
+          button->click();
+          break;
+        }
+      }
+      if (window->window_close_requested_for_testing()) {
+        *output << "EXIT_PROTECTION_SMOKE_OK active=2 default=keep "
+                   "confirmed=cancel"
+                << Qt::endl;
+        return;
+      }
+    }
+    if (*attempts > 120) {
+      *output << "EXIT_PROTECTION_SMOKE_FAILED stage=" << *stage
+              << " active=" << window->active_download_count_for_testing()
+              << " closing="
+              << window->window_close_requested_for_testing() << Qt::endl;
+      QCoreApplication::exit(10);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(50, window, [step] { (*step)(); });
+}
+
 void StartFailureSmokeTest(MainWindow* window) {
   auto output = std::make_shared<QTextStream>(stdout);
   auto attempts = std::make_shared<int>(0);
@@ -216,10 +266,13 @@ bool HasArgument(const QString& argument) {
 bool IsSmokeTest() {
   return HasArgument(QStringLiteral("--smoke-test-tabs")) ||
          HasArgument(QStringLiteral("--smoke-test-downloads")) ||
+         HasArgument(QStringLiteral("--smoke-test-exit-protection")) ||
          HasArgument(QStringLiteral("--smoke-test-failures")) ||
          HasArgument(QStringLiteral("--smoke-test-session")) ||
          HasArgument(QStringLiteral("--smoke-test-page-tools")) ||
          HasArgument(QStringLiteral("--smoke-test-profile")) ||
+         HasArgument(QStringLiteral("--smoke-test-privacy")) ||
+         HasArgument(QStringLiteral("--smoke-test-favicon")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth"));
 }
@@ -345,6 +398,61 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
             << " suggestions=" << suggestions_ok
             << Qt::endl;
     QCoreApplication::exit(7);
+  }
+}
+
+void StartPrivacySmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  window->AddHistoryForTesting(QStringLiteral("https://example.test/private"),
+                               QStringLiteral("Private visit"));
+  const bool seeded = window->history_count_for_testing() == 1 &&
+                      window->address_suggestions_for_testing().contains(
+                          QStringLiteral("https://example.test/private"));
+  window->ClearBrowsingDataForTesting();
+
+  auto attempts = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, seeded, attempts, step] {
+    ++*attempts;
+    if (!window->browsing_data_clear_in_progress_for_testing()) {
+      const bool cleared = window->history_count_for_testing() == 0 &&
+                           !window->address_suggestions_for_testing().contains(
+                               QStringLiteral("https://example.test/private"));
+      const bool completed =
+          window->browsing_data_clear_result_for_testing().startsWith(
+              QStringLiteral("Browsing history"));
+      if (seeded && cleared && completed) {
+        *output << "PRIVACY_SMOKE_OK history=cleared cef=completed"
+                << Qt::endl;
+        window->close();
+      } else {
+        *output << "PRIVACY_SMOKE_FAILED seeded=" << seeded
+                << " cleared=" << cleared << " completed=" << completed
+                << " result="
+                << window->browsing_data_clear_result_for_testing() << Qt::endl;
+        QCoreApplication::exit(11);
+      }
+      return;
+    }
+    if (*attempts > 160) {
+      *output << "PRIVACY_SMOKE_FAILED timeout=1" << Qt::endl;
+      QCoreApplication::exit(11);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(50, window, [step] { (*step)(); });
+}
+
+void StartFaviconSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  window->SetCurrentFaviconForTesting();
+  if (window->current_tab_has_favicon_for_testing()) {
+    *output << "FAVICON_SMOKE_OK tab_icon=visible" << Qt::endl;
+    window->close();
+  } else {
+    *output << "FAVICON_SMOKE_FAILED tab_icon=missing" << Qt::endl;
+    QCoreApplication::exit(12);
   }
 }
 
@@ -544,7 +652,8 @@ int RunBrowser(int argc, char* argv[]) {
                       : QDir(data_path).filePath(
                             QStringLiteral("browsing-data.json"));
     QString active_browsing_data_path = browsing_data_path;
-    if (HasArgument(QStringLiteral("--smoke-test-profile"))) {
+    if (HasArgument(QStringLiteral("--smoke-test-profile")) ||
+        HasArgument(QStringLiteral("--smoke-test-privacy"))) {
       smoke_profile_directory = std::make_unique<QTemporaryDir>();
       if (!smoke_profile_directory->isValid()) {
         CefShutdown();
@@ -562,6 +671,11 @@ int RunBrowser(int argc, char* argv[]) {
     } else if (HasArgument(QStringLiteral("--smoke-test-downloads"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartDownloadSmokeTest(&main_window); });
+    } else if (HasArgument(
+                   QStringLiteral("--smoke-test-exit-protection"))) {
+      QTimer::singleShot(300, &main_window, [&main_window] {
+        StartExitProtectionSmokeTest(&main_window);
+      });
     } else if (HasArgument(QStringLiteral("--smoke-test-failures"))) {
       StartFailureSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-session"))) {
@@ -576,6 +690,12 @@ int RunBrowser(int argc, char* argv[]) {
                            StartProfileSmokeTest(&main_window,
                                                  active_browsing_data_path);
                          });
+    } else if (HasArgument(QStringLiteral("--smoke-test-privacy"))) {
+      QTimer::singleShot(300, &main_window,
+                         [&main_window] { StartPrivacySmokeTest(&main_window); });
+    } else if (HasArgument(QStringLiteral("--smoke-test-favicon"))) {
+      QTimer::singleShot(300, &main_window,
+                         [&main_window] { StartFaviconSmokeTest(&main_window); });
     } else if (HasArgument(QStringLiteral("--smoke-test-security"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartSecuritySmokeTest(&main_window); });
