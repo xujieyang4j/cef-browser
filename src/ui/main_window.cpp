@@ -1108,6 +1108,11 @@ bool MainWindow::ShowPermissionForTesting(
          browser->ShowPermissionForTesting(prompt_id, std::move(callback));
 }
 
+bool MainWindow::ShowExternalProtocolForTesting(const QString& url) {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->ShowExternalProtocolForTesting(url);
+}
+
 bool MainWindow::ShowJavaScriptDialogForTesting(
     cef_jsdialog_type_t dialog_type, const QString& message,
     const QString& default_prompt,
@@ -1128,6 +1133,22 @@ void MainWindow::ResetJavaScriptDialogForTesting() {
   if (BrowserView* browser = CurrentBrowser()) {
     browser->ResetJavaScriptDialogForTesting();
   }
+}
+
+void MainWindow::ExpireCurrentPageRequestForTesting() {
+  if (BrowserView* browser = CurrentBrowser()) {
+    browser->ExpirePageRequestForTesting();
+  }
+}
+
+bool MainWindow::current_page_request_active_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->page_request_active_for_testing();
+}
+
+bool MainWindow::current_page_request_timeout_active_for_testing() const {
+  BrowserView* browser = CurrentBrowser();
+  return browser && browser->page_request_timeout_active_for_testing();
 }
 
 void MainWindow::SetWebFullscreenForTesting(bool fullscreen) {

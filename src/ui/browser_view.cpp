@@ -44,6 +44,7 @@ constexpr int kMaxFaviconPngBytes = 256 * 1024;
 constexpr int kMaxFaviconDimension = 128;
 constexpr int kMaxFaviconCandidates = 16;
 constexpr int kFaviconRequestTimeoutMs = 10 * 1000;
+constexpr int kPageRequestTimeoutMs = 60 * 1000;
 constexpr int kMaxPageTitleCharacters = 512;
 constexpr int kMaxStatusMessageCharacters = 2048;
 constexpr int kMaxActionUrlBytes = 64 * 1024;
@@ -269,6 +270,10 @@ BrowserView::BrowserView(QString initial_url,
   favicon_request_timer_->setSingleShot(true);
   connect(favicon_request_timer_, &QTimer::timeout, this,
           &BrowserView::ExpireFaviconRequest);
+  page_request_timer_ = new QTimer(this);
+  page_request_timer_->setSingleShot(true);
+  connect(page_request_timer_, &QTimer::timeout, this,
+          &BrowserView::ExpirePageRequest);
 }
 
 BrowserView::~BrowserView() {
@@ -628,6 +633,12 @@ bool BrowserView::ShowPermissionForTesting(
   return true;
 }
 
+bool BrowserView::ShowExternalProtocolForTesting(const QString& url) {
+  if (!browser_) return false;
+  OnCefExternalProtocol(browser_, url);
+  return page_request_dialog_ != nullptr;
+}
+
 bool BrowserView::ShowJavaScriptDialogForTesting(
     cef_jsdialog_type_t dialog_type, const QString& message,
     const QString& default_prompt,
@@ -647,6 +658,14 @@ bool BrowserView::ShowBeforeUnloadForTesting(
 
 void BrowserView::ResetJavaScriptDialogForTesting() {
   if (browser_) OnCefResetJavaScriptDialog(browser_);
+}
+
+bool BrowserView::page_request_timeout_active_for_testing() const {
+  return page_request_timer_->isActive();
+}
+
+bool BrowserView::page_request_active_for_testing() const {
+  return page_request_dialog_ != nullptr;
 }
 
 void BrowserView::FinalizeClose() {
@@ -678,6 +697,27 @@ void BrowserView::DismissOpenDialogs() {
   for (QMessageBox* dialog : dialogs) {
     if (dialog) dialog->reject();
   }
+}
+
+void BrowserView::StartPageRequestTimeout(QMessageBox* dialog) {
+  if (dialog && page_request_dialog_ == dialog) {
+    page_request_timer_->start(kPageRequestTimeoutMs);
+  }
+}
+
+void BrowserView::ClearPageRequestDialog(QMessageBox* dialog) {
+  if (page_request_dialog_ != dialog) return;
+  page_request_timer_->stop();
+  page_request_dialog_.clear();
+}
+
+void BrowserView::ExpirePageRequest() {
+  if (!page_request_dialog_) {
+    page_request_timer_->stop();
+    return;
+  }
+  emit SecurityMessage(QStringLiteral("Page request timed out"));
+  page_request_dialog_->reject();
 }
 
 void BrowserView::CompleteJavaScriptDialog(quint64 generation, bool success,
@@ -1068,10 +1108,11 @@ bool BrowserView::OnCefJavaScriptDialog(
             const bool accepted = dialog->clickedButton() == accept_button;
             const QString input = prompt && accepted ? prompt->text()
                                                      : QString();
-            if (page_request_dialog_ == dialog) page_request_dialog_.clear();
+            ClearPageRequestDialog(dialog);
             if (javascript_dialog_ == dialog) javascript_dialog_.clear();
             CompleteJavaScriptDialog(generation, accepted, input);
           });
+  StartPageRequestTimeout(dialog);
   dialog->open();
   if (prompt) prompt->setFocus();
   return true;
@@ -1116,10 +1157,11 @@ void BrowserView::OnCefBeforeUnloadDialog(
   connect(dialog, &QMessageBox::finished, this,
           [this, dialog, leave_button, generation](int) {
             const bool accepted = dialog->clickedButton() == leave_button;
-            if (page_request_dialog_ == dialog) page_request_dialog_.clear();
+            ClearPageRequestDialog(dialog);
             if (javascript_dialog_ == dialog) javascript_dialog_.clear();
             CompleteJavaScriptDialog(generation, accepted);
           });
+  StartPageRequestTimeout(dialog);
   dialog->open();
 }
 
@@ -1258,13 +1300,14 @@ void BrowserView::OnCefMediaPermissionRequest(
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &QMessageBox::finished, this,
           [this, dialog, allow_button, callback, requested_permissions](int) {
-            page_request_dialog_.clear();
+            ClearPageRequestDialog(dialog);
             if (dialog->clickedButton() == allow_button) {
               callback->Continue(requested_permissions);
             } else {
               callback->Cancel();
             }
           });
+  StartPageRequestTimeout(dialog);
   dialog->open();
 }
 
@@ -1299,13 +1342,14 @@ void BrowserView::OnCefPermissionRequest(
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &QMessageBox::finished, this,
           [this, dialog, allow_button, callback, prompt_id](int) {
-    page_request_dialog_.clear();
+    ClearPageRequestDialog(dialog);
     permission_prompt_id_.reset();
     if (dialog->property("cefDismissed").toBool()) return;
     callback->Continue(dialog->clickedButton() == allow_button
                            ? CEF_PERMISSION_RESULT_ACCEPT
                            : CEF_PERMISSION_RESULT_DENY);
   });
+  StartPageRequestTimeout(dialog);
   dialog->open();
 }
 
@@ -1345,11 +1389,12 @@ void BrowserView::OnCefExternalProtocol(CefRefPtr<CefBrowser> browser,
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &QMessageBox::finished, this,
           [this, dialog, open_button, normalized = *normalized](int) {
-    page_request_dialog_.clear();
+    ClearPageRequestDialog(dialog);
     if (dialog->clickedButton() == open_button) {
       QDesktopServices::openUrl(QUrl(normalized, QUrl::StrictMode));
     }
   });
+  StartPageRequestTimeout(dialog);
   dialog->open();
 }
 
@@ -1412,7 +1457,7 @@ void BrowserView::OnCefAuthRequest(
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &QMessageBox::finished, this,
           [this, dialog, sign_in, username, password, callback](int) {
-            page_request_dialog_.clear();
+            ClearPageRequestDialog(dialog);
             if (dialog->clickedButton() == sign_in &&
                 !username->text().isEmpty()) {
               const QByteArray user = username->text().toUtf8();
@@ -1424,6 +1469,7 @@ void BrowserView::OnCefAuthRequest(
               callback->Cancel();
             }
           });
+  StartPageRequestTimeout(dialog);
   dialog->open();
   username->setFocus();
 }

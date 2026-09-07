@@ -94,7 +94,10 @@ status bar, and Ctrl/Cmd+P opens the platform print flow.
 Navigation shows page-load progress and supports standard back, forward, and
 refresh shortcuts even while the embedded page owns keyboard focus. HTTP and
 proxy authentication use an in-memory, non-blocking credential prompt; entered
-credentials are never stored by Trail Browser.
+credentials are never stored by Trail Browser. Page-driven dialogs,
+permissions, external-protocol confirmations, and authentication prompts
+automatically reject after 60 seconds so an abandoned request cannot retain a
+CEF callback or block later prompts indefinitely.
 The address bar suggests page titles alongside their URLs from bookmarks and
 recent history. Suggestions match either field, keep bookmarks ranked first,
 deduplicate shared URLs, and navigate to the underlying URL rather than the
@@ -252,7 +255,8 @@ of an existing destination when the generated document would be too large.
 Corrupt-profile recovery verifies that all four persistent stores preserve the
 original bytes before replacement files are written and successfully reloaded.
 JavaScript-dialog limits, concurrency suppression, navigation reset, and
-before-unload cancellation are checked as well.
+before-unload cancellation are checked as well. Authentication, media, general
+permission, and before-unload tests also verify timeout fail-closed behavior.
 Keyboard-accessible browser surfaces and full-screen exit routing are also
 covered, along with numeric tab navigation, the all-tabs menu, and selective
 recent-tab restoration, native application-menu actions, search-setting

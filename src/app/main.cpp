@@ -2418,10 +2418,21 @@ void StartSecuritySmokeTest(MainWindow* window) {
       CEF_WOD_NEW_BACKGROUND_TAB);
   const bool popup_ok = safe_popup_opened &&
                         window->tab_count() == tabs_before_popups + 1;
+  const bool external_prompt_shown = window->ShowExternalProtocolForTesting(
+      QStringLiteral("mailto:test@example.com"));
+  const bool external_timeout_armed =
+      external_prompt_shown &&
+      window->current_page_request_timeout_active_for_testing();
+  window->ExpireCurrentPageRequestForTesting();
+  const bool external_timeout_ok =
+      external_timeout_armed &&
+      !window->current_page_request_timeout_active_for_testing() &&
+      !window->current_page_request_active_for_testing();
   if (media_ok && permissions_ok && prompts_bounded && schemes_ok &&
-      unsafe_popups_blocked && popup_ok) {
+      unsafe_popups_blocked && popup_ok && external_timeout_ok) {
     *output << "SECURITY_SMOKE_OK media=2 permissions=2 "
-               "prompts=bounded schemes=normalized popups=guarded"
+               "prompts=bounded schemes=normalized popups=guarded "
+               "external=timeout"
             << Qt::endl;
     window->close();
   } else {
@@ -2430,7 +2441,8 @@ void StartSecuritySmokeTest(MainWindow* window) {
             << " prompts=" << prompts_bounded
             << " schemes=" << schemes_ok
             << " unsafe_popups=" << unsafe_popups_blocked
-            << " popup=" << popup_ok << Qt::endl;
+            << " popup=" << popup_ok
+            << " external_timeout=" << external_timeout_ok << Qt::endl;
     QCoreApplication::exit(8);
   }
 }
@@ -2441,17 +2453,22 @@ void StartAuthSmokeTest(MainWindow* window) {
   auto duplicate_auth = std::make_shared<AuthSmokeResult>();
   auto duplicate_media = std::make_shared<MediaPermissionSmokeResult>();
   auto duplicate_permission = std::make_shared<PermissionSmokeResult>();
+  auto timed_media = std::make_shared<MediaPermissionSmokeResult>();
+  auto timed_permission = std::make_shared<PermissionSmokeResult>();
+  auto stage = std::make_shared<int>(0);
   auto attempts = std::make_shared<int>(0);
-  auto requested = std::make_shared<bool>(false);
-  auto duplicate_requested = std::make_shared<bool>(false);
+  auto timeouts_armed = std::make_shared<bool>(true);
   auto step = std::make_shared<std::function<void()>>();
   *step = [window, output, result, duplicate_auth, duplicate_media,
-           duplicate_permission, attempts, requested, duplicate_requested,
-           step] {
+           duplicate_permission, timed_media, timed_permission, stage, attempts,
+           timeouts_armed, step] {
     ++*attempts;
-    if (!*requested && window->current_title() == QStringLiteral("Auth")) {
-      *requested = window->ShowAuthForTesting(new AuthSmokeCallback(result));
-    } else if (*requested && !*duplicate_requested) {
+    if (*stage == 0 &&
+        window->current_title() == QStringLiteral("Auth")) {
+      if (window->ShowAuthForTesting(new AuthSmokeCallback(result))) {
+        *stage = 1;
+      }
+    } else if (*stage == 1) {
       bool credentials_bounded = false;
       if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
         const QList<QLineEdit*> fields = dialog->findChildren<QLineEdit*>();
@@ -2465,32 +2482,50 @@ void StartAuthSmokeTest(MainWindow* window) {
           new MediaPermissionSmokeCallback(duplicate_media));
       const bool permission_requested = window->ShowPermissionForTesting(
           77, new PermissionSmokeCallback(duplicate_permission));
-      *duplicate_requested =
+      *timeouts_armed =
           credentials_bounded && auth_requested && media_requested &&
-          permission_requested;
-    } else if (*requested && !result->cancelled) {
-      if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
-        for (QAbstractButton* button : dialog->buttons()) {
-          if (dialog->buttonRole(button) == QMessageBox::RejectRole) {
-            button->click();
-            break;
-          }
-        }
+          permission_requested &&
+          window->current_page_request_timeout_active_for_testing();
+      if (*timeouts_armed) {
+        window->ExpireCurrentPageRequestForTesting();
+        *stage = 2;
       }
-    } else if (result->cancelled && !result->continued &&
+    } else if (*stage == 2 && result->cancelled && !result->continued) {
+      if (window->ShowMediaPermissionForTesting(
+              new MediaPermissionSmokeCallback(timed_media)) &&
+          window->current_page_request_timeout_active_for_testing()) {
+        window->ExpireCurrentPageRequestForTesting();
+        *stage = 3;
+      } else {
+        *timeouts_armed = false;
+      }
+    } else if (*stage == 3 && timed_media->cancelled &&
+               timed_media->allowed_permissions == 0) {
+      if (window->ShowPermissionForTesting(
+              78, new PermissionSmokeCallback(timed_permission)) &&
+          window->current_page_request_timeout_active_for_testing()) {
+        window->ExpireCurrentPageRequestForTesting();
+        *stage = 4;
+      } else {
+        *timeouts_armed = false;
+      }
+    } else if (*stage == 4 &&
+               timed_permission->result == CEF_PERMISSION_RESULT_DENY &&
+               !window->current_page_request_timeout_active_for_testing() &&
                duplicate_auth->cancelled && !duplicate_auth->continued &&
                duplicate_media->cancelled &&
                duplicate_media->allowed_permissions == 0 &&
-               duplicate_permission->result == CEF_PERMISSION_RESULT_DENY) {
+               duplicate_permission->result == CEF_PERMISSION_RESULT_DENY &&
+               *timeouts_armed) {
       *output << "AUTH_SMOKE_OK cancelled=1 credentials=persisted-none "
-                 "credentials=bounded concurrent=denied"
+                 "credentials=bounded concurrent=denied timeout=denied"
               << Qt::endl;
       window->close();
       return;
     }
     if (*attempts > 160) {
-      *output << "AUTH_SMOKE_FAILED requested=" << *requested
-              << " duplicate_requested=" << *duplicate_requested
+      *output << "AUTH_SMOKE_FAILED stage=" << *stage
+              << " timeouts_armed=" << *timeouts_armed
               << " cancelled=" << result->cancelled
               << " continued=" << result->continued
               << " duplicate_auth=" << duplicate_auth->cancelled
@@ -2516,9 +2551,11 @@ void StartJavaScriptDialogSmokeTest(MainWindow* window) {
   auto limits_ok = std::make_shared<bool>(false);
   auto prompt_ui_ok = std::make_shared<bool>(false);
   auto duplicate_suppressed = std::make_shared<bool>(false);
+  auto timeout_armed = std::make_shared<bool>(false);
   auto step = std::make_shared<std::function<void()>>();
   *step = [window, output, prompt, duplicate, reset, before_unload, stage,
-           attempts, limits_ok, prompt_ui_ok, duplicate_suppressed, step] {
+           attempts, limits_ok, prompt_ui_ok, duplicate_suppressed,
+           timeout_armed, step] {
     ++*attempts;
     if (*stage == 0 &&
         window->current_title() == QStringLiteral("Dialogs")) {
@@ -2540,7 +2577,8 @@ void StartJavaScriptDialogSmokeTest(MainWindow* window) {
             dialog->textFormat() == Qt::PlainText &&
             dialog->informativeText().size() == 4 * 1024 &&
             fields.size() == 1 && fields.front()->maxLength() == 1024 &&
-            fields.front()->text().size() == 1024;
+            fields.front()->text().size() == 1024 &&
+            window->current_page_request_timeout_active_for_testing();
         const bool second_shown = window->ShowJavaScriptDialogForTesting(
             JSDIALOGTYPE_ALERT, QStringLiteral("duplicate"), QString(),
             new JavaScriptDialogSmokeCallback(duplicate));
@@ -2569,21 +2607,20 @@ void StartJavaScriptDialogSmokeTest(MainWindow* window) {
         *stage = 4;
       }
     } else if (*stage == 4) {
-      if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
-        for (QAbstractButton* button : dialog->buttons()) {
-          if (dialog->buttonRole(button) == QMessageBox::RejectRole) {
-            button->click();
-            break;
-          }
-        }
+      if (window->findChild<QMessageBox*>()) {
+        *timeout_armed =
+            window->current_page_request_timeout_active_for_testing();
+        window->ExpireCurrentPageRequestForTesting();
         *stage = 5;
       }
     } else if (*stage == 5 && before_unload->calls == 1 &&
                !before_unload->success && *limits_ok && *prompt_ui_ok &&
-               *duplicate_suppressed && reset->calls == 1) {
+               *duplicate_suppressed && *timeout_armed &&
+               !window->current_page_request_timeout_active_for_testing() &&
+               reset->calls == 1) {
       *output << "JAVASCRIPT_DIALOG_SMOKE_OK prompt=bounded "
                  "concurrent=suppressed reset=cancelled "
-                 "beforeunload=cancelled navigation=bounded"
+                 "beforeunload=timeout navigation=bounded"
               << Qt::endl;
       window->close();
       return;
@@ -2597,6 +2634,7 @@ void StartJavaScriptDialogSmokeTest(MainWindow* window) {
               << " prompt_success=" << prompt->success
               << " prompt_length=" << prompt->input.size()
               << " duplicate=" << *duplicate_suppressed
+              << " timeout=" << *timeout_armed
               << " reset_calls=" << reset->calls
               << " beforeunload_calls=" << before_unload->calls
               << Qt::endl;

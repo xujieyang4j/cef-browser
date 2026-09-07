@@ -168,12 +168,16 @@ class MainWindow final : public QMainWindow {
       CefRefPtr<CefMediaAccessCallback> callback);
   bool ShowPermissionForTesting(
       quint64 prompt_id, CefRefPtr<CefPermissionPromptCallback> callback);
+  bool ShowExternalProtocolForTesting(const QString& url);
   bool ShowJavaScriptDialogForTesting(
       cef_jsdialog_type_t dialog_type, const QString& message,
       const QString& default_prompt,
       CefRefPtr<CefJSDialogCallback> callback);
   bool ShowBeforeUnloadForTesting(CefRefPtr<CefJSDialogCallback> callback);
   void ResetJavaScriptDialogForTesting();
+  void ExpireCurrentPageRequestForTesting();
+  bool current_page_request_active_for_testing() const;
+  bool current_page_request_timeout_active_for_testing() const;
   void SetWebFullscreenForTesting(bool fullscreen);
   bool web_fullscreen_for_testing() const { return web_fullscreen_; }
   bool window_close_requested_for_testing() const {

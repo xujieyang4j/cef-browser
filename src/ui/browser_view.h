@@ -126,12 +126,16 @@ class BrowserView final : public QWidget {
       CefRefPtr<CefMediaAccessCallback> callback);
   bool ShowPermissionForTesting(
       quint64 prompt_id, CefRefPtr<CefPermissionPromptCallback> callback);
+  bool ShowExternalProtocolForTesting(const QString& url);
   bool ShowJavaScriptDialogForTesting(
       cef_jsdialog_type_t dialog_type, const QString& message,
       const QString& default_prompt,
       CefRefPtr<CefJSDialogCallback> callback);
   bool ShowBeforeUnloadForTesting(CefRefPtr<CefJSDialogCallback> callback);
   void ResetJavaScriptDialogForTesting();
+  void ExpirePageRequestForTesting() { ExpirePageRequest(); }
+  bool page_request_active_for_testing() const;
+  bool page_request_timeout_active_for_testing() const;
   void SetFaviconForTesting(const QIcon& icon);
   void QueueFaviconUrlsForTesting(const QStringList& urls);
   void CancelFaviconRequestForTesting() { CancelFaviconRequest(); }
@@ -247,6 +251,9 @@ class BrowserView final : public QWidget {
   void UpdateNativeVisibility();
   void ResizeBrowser();
   void DismissOpenDialogs();
+  void StartPageRequestTimeout(QMessageBox* dialog);
+  void ClearPageRequestDialog(QMessageBox* dialog);
+  void ExpirePageRequest();
   void CompleteJavaScriptDialog(quint64 generation, bool success,
                                 const QString& user_input = {});
   void StartFaviconRequest(const QString& url, quint64 generation);
@@ -289,6 +296,7 @@ class BrowserView final : public QWidget {
   bool render_process_failed_ = false;
   QString failure_page_url_;
   QPointer<QMessageBox> page_request_dialog_;
+  QTimer* page_request_timer_ = nullptr;
   QPointer<QMessageBox> javascript_dialog_;
   CefRefPtr<CefJSDialogCallback> javascript_dialog_callback_;
   quint64 javascript_dialog_generation_ = 0;
