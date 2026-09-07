@@ -175,7 +175,8 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   address_bar_->setCompleter(address_completer_);
   downloads_button_->setToolTip(QStringLiteral("Show downloads"));
   bookmark_button_->setToolTip(QStringLiteral("Bookmark this page"));
-  all_tabs_button_->setToolTip(QStringLiteral("All tabs (Ctrl+Shift+A)"));
+  all_tabs_button_->setToolTip(
+      QStringLiteral("Open and recently closed tabs (Ctrl+Shift+A)"));
   back_button_->setEnabled(false);
   forward_button_->setEnabled(false);
 
@@ -704,6 +705,23 @@ int MainWindow::all_tabs_action_count_for_testing() const {
   return all_tabs_menu_->actions().size();
 }
 
+int MainWindow::recently_closed_tab_count_for_testing() const {
+  return closed_tabs_.size();
+}
+
+QStringList MainWindow::recently_closed_tabs_for_testing() const {
+  return closed_tabs_;
+}
+
+bool MainWindow::TriggerRecentlyClosedForTesting(int recent_index) {
+  RebuildAllTabsMenu();
+  const int action_index = tab_bar_->count() + 1 + recent_index;
+  const QList<QAction*> actions = all_tabs_menu_->actions();
+  if (action_index < 0 || action_index >= actions.size()) return false;
+  actions.at(action_index)->trigger();
+  return true;
+}
+
 void MainWindow::ActivateTabShortcutForTesting(int number) {
   ActivateTabByShortcut(number == 9 ? tab_bar_->count() - 1 : number - 1);
 }
@@ -921,8 +939,15 @@ void MainWindow::AddBlankTab() {
 }
 
 void MainWindow::ReopenClosedTab() {
-  if (closed_tabs_.isEmpty()) return;
-  AddTab(closed_tabs_.takeLast(), true);
+  ReopenClosedTabAt(0);
+}
+
+bool MainWindow::ReopenClosedTabAt(int recent_index) {
+  const int stored_index = closed_tabs_.size() - 1 - recent_index;
+  if (stored_index < 0 || stored_index >= closed_tabs_.size()) return false;
+  const QString url = closed_tabs_.takeAt(stored_index);
+  AddTab(url, true);
+  return true;
 }
 
 void MainWindow::CloseTab(int index) {
@@ -1703,6 +1728,38 @@ void MainWindow::RebuildAllTabsMenu() {
     const QPointer<BrowserView> target(browser);
     connect(action, &QAction::triggered, this, [this, target] {
       if (target) ActivateTabByShortcut(IndexOf(target));
+    });
+  }
+
+  if (closed_tabs_.isEmpty()) return;
+  all_tabs_menu_->addSection(QStringLiteral("Recently closed"));
+  constexpr int kVisibleRecentlyClosedTabs = 10;
+  const int count = std::min(static_cast<int>(closed_tabs_.size()),
+                             kVisibleRecentlyClosedTabs);
+  for (int recent_index = 0; recent_index < count; ++recent_index) {
+    const QString url = closed_tabs_.at(closed_tabs_.size() - 1 - recent_index);
+    QString title;
+    for (const BrowsingDataStore::Bookmark& bookmark :
+         browsing_data_->bookmarks()) {
+      if (bookmark.url == url) {
+        title = bookmark.title;
+        break;
+      }
+    }
+    if (title.isEmpty()) {
+      for (const BrowsingDataStore::HistoryEntry& entry :
+           browsing_data_->history()) {
+        if (entry.url == url) {
+          title = entry.title;
+          break;
+        }
+      }
+    }
+    QAction* action =
+        all_tabs_menu_->addAction(title.isEmpty() ? url : title);
+    action->setToolTip(url);
+    connect(action, &QAction::triggered, this, [this, recent_index] {
+      ReopenClosedTabAt(recent_index);
     });
   }
 }

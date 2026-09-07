@@ -395,6 +395,7 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-audio")) ||
          HasArgument(QStringLiteral("--smoke-test-browser-surfaces")) ||
          HasArgument(QStringLiteral("--smoke-test-tab-navigation")) ||
+         HasArgument(QStringLiteral("--smoke-test-recent-tabs")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth"));
 }
@@ -766,6 +767,73 @@ void StartTabNavigationSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
+void StartRecentlyClosedTabsSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
+  const QString second_url =
+      QStringLiteral("data:text/html,<title>Second</title>");
+  const QString third_url =
+      QStringLiteral("data:text/html,<title>Third</title>");
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, stage, step, second_url, third_url] {
+    ++*attempts;
+    if (*stage == 0 && window->current_title() == QStringLiteral("Smoke")) {
+      window->OpenTabForTesting(second_url);
+      window->OpenTabForTesting(third_url);
+      *stage = 1;
+    } else if (*stage == 1 &&
+               window->current_title() == QStringLiteral("Third")) {
+      window->CloseCurrentTabForTesting();
+      *stage = 2;
+    } else if (*stage == 2 && window->tab_count() == 2 &&
+               window->recently_closed_tab_count_for_testing() == 1) {
+      window->CloseCurrentTabForTesting();
+      *stage = 3;
+    } else if (*stage == 3 && window->tab_count() == 1 &&
+               window->recently_closed_tab_count_for_testing() == 2) {
+      window->ShowAllTabsForTesting();
+      *stage = 4;
+    } else if (*stage == 4 && window->all_tabs_visible_for_testing() &&
+               window->all_tabs_action_count_for_testing() == 4) {
+      window->HideBrowserSurfacesForTesting();
+      const bool ordered =
+          window->recently_closed_tabs_for_testing() ==
+          QStringList{third_url, second_url};
+      const bool triggered = window->TriggerRecentlyClosedForTesting(1);
+      const bool remaining =
+          window->recently_closed_tabs_for_testing() ==
+          QStringList{second_url};
+      const bool persisted =
+          window->session_for_testing(true).recently_closed_urls ==
+          QStringList{second_url};
+      if (ordered && triggered && remaining && persisted &&
+          window->tab_count() == 2 && window->current_url() == third_url) {
+        *output << "RECENT_TABS_SMOKE_OK menu=2 restored=older persisted=1"
+                << Qt::endl;
+        window->close();
+        return;
+      }
+      *output << "RECENT_TABS_SMOKE_FAILED ordered=" << ordered
+              << " triggered=" << triggered << " remaining=" << remaining
+              << " persisted=" << persisted
+              << " current=" << window->current_url() << Qt::endl;
+      QCoreApplication::exit(18);
+      return;
+    }
+    if (*attempts > 180) {
+      *output << "RECENT_TABS_SMOKE_FAILED stage=" << *stage
+              << " tabs=" << window->tab_count()
+              << " recent=" << window->recently_closed_tab_count_for_testing()
+              << Qt::endl;
+      QCoreApplication::exit(18);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
 void StartSecuritySmokeTest(MainWindow* window) {
   auto output = std::make_shared<QTextStream>(stdout);
   const QString media = window->media_permission_description_for_testing(
@@ -1028,6 +1096,8 @@ int RunBrowser(int argc, char* argv[]) {
     } else if (HasArgument(
                    QStringLiteral("--smoke-test-tab-navigation"))) {
       StartTabNavigationSmokeTest(&main_window);
+    } else if (HasArgument(QStringLiteral("--smoke-test-recent-tabs"))) {
+      StartRecentlyClosedTabsSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-security"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartSecuritySmokeTest(&main_window); });

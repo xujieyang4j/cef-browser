@@ -76,6 +76,9 @@ class MainWindow final : public QMainWindow {
   void ShowAllTabsForTesting();
   bool all_tabs_visible_for_testing() const;
   int all_tabs_action_count_for_testing() const;
+  int recently_closed_tab_count_for_testing() const;
+  QStringList recently_closed_tabs_for_testing() const;
+  bool TriggerRecentlyClosedForTesting(int recent_index);
   void ActivateTabShortcutForTesting(int number);
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
@@ -179,6 +182,7 @@ class MainWindow final : public QMainWindow {
   void ActivateTabByShortcut(int index);
   void ShowBrowserUiSurface(BrowserUiSurface surface);
   void PerformBrowserUiSurface(BrowserUiSurface surface);
+  bool ReopenClosedTabAt(int recent_index);
   void ScheduleSessionSave();
   BrowserSession CaptureSession(bool clean_exit) const;
   bool PersistSession(const BrowserSession& session);

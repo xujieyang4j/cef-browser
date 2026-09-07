@@ -49,7 +49,9 @@ Tabs can be pinned from the context menu. Pinned tabs stay grouped at the left,
 survive session restoration, and are protected from "close other tabs" and
 "close tabs to the right"; explicitly closing a pinned tab still works.
 An all-tabs menu lists every open page with its current pin, audio, title, and
-selection state for quick navigation when the tab strip is crowded.
+selection state for quick navigation when the tab strip is crowded. It also
+lists the ten most recently closed tabs in newest-first order, allowing any
+entry to be restored instead of only the latest one.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -148,7 +150,8 @@ page-search/zoom, titled address suggestions, bookmark/history persistence,
 browsing-data cleanup, favicon
 mapping, audio/mute state, security-policy, and authentication-dialog checks.
 Keyboard-accessible browser surfaces and full-screen exit routing are also
-covered, along with numeric tab navigation and the all-tabs menu. All sixteen
+covered, along with numeric tab navigation, the all-tabs menu, and selective
+recent-tab restoration. All seventeen
 checks are registered when `xvfb-run` is available:
 
 ~~~sh
