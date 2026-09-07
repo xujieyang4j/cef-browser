@@ -1,24 +1,32 @@
 #pragma once
 
+#include <optional>
+
 #include <QHash>
 #include <QMainWindow>
 #include <QSet>
 #include <QStringList>
 
+#include "session/session_store.h"
+
 class BrowserView;
 class DownloadManager;
 class DownloadPanel;
 class QCloseEvent;
+class QMoveEvent;
+class QResizeEvent;
 class QLineEdit;
 class QPushButton;
 class QStackedWidget;
 class QTabBar;
+class QTimer;
 
 class MainWindow final : public QMainWindow {
   Q_OBJECT
 
  public:
-  explicit MainWindow(const QString& initial_url, QWidget* parent = nullptr);
+  MainWindow(const BrowserSession& initial_session, QString session_path,
+             QWidget* parent = nullptr);
   int tab_count() const;
   QString current_url() const;
   QString current_title() const;
@@ -32,9 +40,13 @@ class MainWindow final : public QMainWindow {
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
   bool render_process_failed_for_testing() const;
+  BrowserSession session_for_testing(bool clean_exit) const;
+  bool save_session_for_testing(bool clean_exit);
 
  protected:
   void closeEvent(QCloseEvent* event) override;
+  void moveEvent(QMoveEvent* event) override;
+  void resizeEvent(QResizeEvent* event) override;
 
  private slots:
   void NavigateFromAddressBar();
@@ -60,6 +72,9 @@ class MainWindow final : public QMainWindow {
   void UpdateChrome();
   void UpdateTabTitle(BrowserView* browser, const QString& title);
   void HandleBrowserShortcut(int action);
+  void ScheduleSessionSave();
+  BrowserSession CaptureSession(bool clean_exit) const;
+  bool PersistSession(const BrowserSession& session);
 
   QTabBar* tab_bar_ = nullptr;
   QStackedWidget* tab_stack_ = nullptr;
@@ -69,9 +84,13 @@ class MainWindow final : public QMainWindow {
   QPushButton* reload_button_ = nullptr;
   DownloadManager* download_manager_ = nullptr;
   DownloadPanel* download_panel_ = nullptr;
+  QTimer* session_save_timer_ = nullptr;
   QSet<BrowserView*> closing_tabs_;
   QHash<BrowserView*, QString> pending_closed_urls_;
   QStringList closed_tabs_;
+  QString session_path_;
+  std::optional<BrowserSession> closing_session_;
+  bool session_persistence_ready_ = false;
   bool window_close_requested_ = false;
   bool allow_window_close_ = false;
 

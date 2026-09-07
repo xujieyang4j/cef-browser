@@ -1,15 +1,22 @@
 #include "ui/main_window.h"
 
+#include <algorithm>
+#include <utility>
+
 #include <QCloseEvent>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLineEdit>
 #include <QMouseEvent>
+#include <QMoveEvent>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QShortcut>
 #include <QStackedWidget>
+#include <QStatusBar>
 #include <QTabBar>
 #include <QToolButton>
+#include <QTimer>
 #include <QUrl>
 #include <QVariant>
 #include <QVBoxLayout>
@@ -50,8 +57,9 @@ QString TabText(const QString& title, const QString& url) {
 
 }  // namespace
 
-MainWindow::MainWindow(const QString& initial_url, QWidget* parent)
-    : QMainWindow(parent) {
+MainWindow::MainWindow(const BrowserSession& initial_session,
+                       QString session_path, QWidget* parent)
+    : QMainWindow(parent), session_path_(std::move(session_path)) {
   setWindowTitle(QStringLiteral("Trail Browser"));
   resize(1280, 800);
   setMinimumSize(640, 480);
@@ -111,6 +119,13 @@ MainWindow::MainWindow(const QString& initial_url, QWidget* parent)
   tab_stack_ = new QStackedWidget(central);
   download_manager_ = new DownloadManager(this);
   download_panel_ = new DownloadPanel(download_manager_, central);
+  session_save_timer_ = new QTimer(this);
+  session_save_timer_->setSingleShot(true);
+  connect(session_save_timer_, &QTimer::timeout, this, [this] {
+    if (session_persistence_ready_ && !window_close_requested_) {
+      PersistSession(CaptureSession(false));
+    }
+  });
   page_layout->addWidget(tab_strip);
   page_layout->addWidget(toolbar);
   page_layout->addWidget(tab_stack_, 1);
@@ -124,6 +139,7 @@ MainWindow::MainWindow(const QString& initial_url, QWidget* parent)
     // The tab-to-page relationship is stored in tabData and therefore moves
     // with the visual tab. Keep the stacked page pointed at that object.
     ActivateTab(tab_bar_->currentIndex());
+    ScheduleSessionSave();
   });
   connect(back_button_, &QPushButton::clicked, this, [this] {
     if (BrowserView* browser = CurrentBrowser()) browser->GoBack();
@@ -188,7 +204,29 @@ MainWindow::MainWindow(const QString& initial_url, QWidget* parent)
     if (BrowserView* browser = CurrentBrowser()) browser->ShowDevTools();
   });
 
-  AddTab(initial_url, true);
+  const QStringList initial_urls = initial_session.tab_urls.isEmpty()
+                                       ? QStringList{QStringLiteral("https://www.example.com")}
+                                       : initial_session.tab_urls;
+  for (const QString& url : initial_urls) AddTab(url, false);
+  tab_bar_->setCurrentIndex(
+      std::clamp(initial_session.active_tab, 0, tab_bar_->count() - 1));
+  ActivateTab(tab_bar_->currentIndex());
+  if (!initial_session.window_geometry.isEmpty()) {
+    restoreGeometry(initial_session.window_geometry);
+  }
+  if (!initial_session.clean_exit) {
+    statusBar()->showMessage(
+        QStringLiteral("Restored tabs after an unexpected shutdown"), 8000);
+  }
+
+  // Do not overwrite a known-good previous session until the window and CEF
+  // event loop have had time to start successfully. After this gate, every
+  // saved live snapshot is marked unclean until orderly shutdown completes.
+  QTimer::singleShot(1500, this, [this] {
+    if (window_close_requested_) return;
+    session_persistence_ready_ = true;
+    PersistSession(CaptureSession(false));
+  });
 }
 
 int MainWindow::tab_count() const {
@@ -262,8 +300,17 @@ bool MainWindow::render_process_failed_for_testing() const {
   return browser && browser->render_process_failed();
 }
 
+BrowserSession MainWindow::session_for_testing(bool clean_exit) const {
+  return CaptureSession(clean_exit);
+}
+
+bool MainWindow::save_session_for_testing(bool clean_exit) {
+  return PersistSession(CaptureSession(clean_exit));
+}
+
 void MainWindow::closeEvent(QCloseEvent* event) {
   if (allow_window_close_) {
+    if (closing_session_) PersistSession(*closing_session_);
     event->accept();
     return;
   }
@@ -271,7 +318,18 @@ void MainWindow::closeEvent(QCloseEvent* event) {
   event->ignore();
   if (window_close_requested_) return;
   window_close_requested_ = true;
+  closing_session_ = CaptureSession(true);
   ContinueWindowClose();
+}
+
+void MainWindow::moveEvent(QMoveEvent* event) {
+  QMainWindow::moveEvent(event);
+  ScheduleSessionSave();
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event) {
+  QMainWindow::resizeEvent(event);
+  ScheduleSessionSave();
 }
 
 void MainWindow::NavigateFromAddressBar() {
@@ -309,6 +367,7 @@ void MainWindow::ActivateTab(int index) {
     if (browser) tab_stack_->setCurrentWidget(browser);
   }
   UpdateChrome();
+  ScheduleSessionSave();
 }
 
 void MainWindow::UpdateLoadingState(bool loading, bool can_go_back,
@@ -344,6 +403,7 @@ BrowserView* MainWindow::AddTab(const QString& url, bool activate,
             const int index = IndexOf(browser);
             if (index >= 0) tab_bar_->setTabToolTip(index, address);
             if (browser == CurrentBrowser()) UpdateAddress(address);
+            ScheduleSessionSave();
           });
   connect(browser, &BrowserView::LoadingStateChanged, this,
           [this, browser](bool loading, bool can_go_back, bool can_go_forward) {
@@ -376,6 +436,7 @@ BrowserView* MainWindow::AddTab(const QString& url, bool activate,
       browser->setFocus();
     }
   }
+  ScheduleSessionSave();
   return browser;
 }
 
@@ -457,6 +518,7 @@ void MainWindow::CompleteTabClose(BrowserView* browser) {
     ContinueWindowClose();
   } else {
     UpdateChrome();
+    ScheduleSessionSave();
   }
 }
 
@@ -469,7 +531,9 @@ void MainWindow::CancelTabClose(BrowserView* browser) {
     tab_bar_->setCurrentIndex(index);
   }
   window_close_requested_ = false;
+  closing_session_.reset();
   UpdateChrome();
+  ScheduleSessionSave();
 }
 
 void MainWindow::ContinueWindowClose() {
@@ -551,6 +615,52 @@ void MainWindow::HandleBrowserShortcut(int action_value) {
       }
       break;
   }
+}
+
+void MainWindow::ScheduleSessionSave() {
+  if (!session_persistence_ready_ || window_close_requested_ ||
+      session_path_.isEmpty()) {
+    return;
+  }
+  constexpr int kSaveDelayMs = 500;
+  session_save_timer_->start(kSaveDelayMs);
+}
+
+BrowserSession MainWindow::CaptureSession(bool clean_exit) const {
+  BrowserSession session;
+  session.clean_exit = clean_exit;
+  session.active_tab = std::max(0, tab_bar_->currentIndex());
+  session.window_geometry = saveGeometry();
+  for (int index = 0; index < tab_bar_->count(); ++index) {
+    BrowserView* browser =
+        qvariant_cast<BrowserView*>(tab_bar_->tabData(index));
+    if (browser && !closing_tabs_.contains(browser)) {
+      const QString url = browser->current_url().trimmed();
+      session.tab_urls.append(url.isEmpty() ? QStringLiteral("about:blank")
+                                            : url);
+    }
+  }
+  if (session.tab_urls.isEmpty()) {
+    session.tab_urls.append(QStringLiteral("about:blank"));
+    session.active_tab = 0;
+  } else {
+    session.active_tab =
+        std::clamp(session.active_tab, 0,
+                   static_cast<int>(session.tab_urls.size()) - 1);
+  }
+  return session;
+}
+
+bool MainWindow::PersistSession(const BrowserSession& session) {
+  if (session_path_.isEmpty()) return false;
+  QString error;
+  const bool saved = SessionStore::Save(session_path_, session, &error);
+  if (!saved) {
+    statusBar()->showMessage(
+        QStringLiteral("Unable to save browser session: %1").arg(error),
+        8000);
+  }
+  return saved;
 }
 
 QString MainWindow::NormalizeUrl(QString input) {

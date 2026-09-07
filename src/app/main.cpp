@@ -10,6 +10,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTextStream>
 #include <QTimer>
 
@@ -17,6 +18,7 @@
 #include "include/cef_app.h"
 #include "include/cef_command_line.h"
 #include "include/wrapper/cef_helpers.h"
+#include "session/session_store.h"
 #include "ui/main_window.h"
 
 #if defined(OS_WIN)
@@ -162,18 +164,59 @@ void StartFailureSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
-QString InitialUrl() {
+std::optional<QString> ExplicitStartupUrl() {
   const QStringList arguments = QCoreApplication::arguments();
   for (int index = 1; index < arguments.size(); ++index) {
     if (!arguments.at(index).startsWith(QLatin1Char('-'))) {
       return arguments.at(index);
     }
   }
-  return QStringLiteral("https://www.example.com");
+  return std::nullopt;
 }
 
 bool HasArgument(const QString& argument) {
   return QCoreApplication::arguments().contains(argument);
+}
+
+bool IsSmokeTest() {
+  return HasArgument(QStringLiteral("--smoke-test-tabs")) ||
+         HasArgument(QStringLiteral("--smoke-test-downloads")) ||
+         HasArgument(QStringLiteral("--smoke-test-failures")) ||
+         HasArgument(QStringLiteral("--smoke-test-session"));
+}
+
+BrowserSession DefaultSession(const QString& url) {
+  BrowserSession session;
+  session.tab_urls = {url};
+  return session;
+}
+
+void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  const BrowserSession captured = window->session_for_testing(false);
+  const bool captured_ok =
+      captured.tab_urls.size() == 2 && captured.active_tab == 1 &&
+      !captured.window_geometry.isEmpty() && !captured.clean_exit;
+  const bool unclean_saved = window->save_session_for_testing(false);
+  const auto unclean = SessionStore::Load(session_path);
+  const bool unclean_ok =
+      unclean && unclean->tab_urls == captured.tab_urls &&
+      unclean->active_tab == captured.active_tab && !unclean->clean_exit;
+  const bool clean_saved = window->save_session_for_testing(true);
+  const auto clean = SessionStore::Load(session_path);
+  const bool clean_ok = clean && clean->clean_exit &&
+                        clean->tab_urls == captured.tab_urls &&
+                        clean->active_tab == captured.active_tab;
+  if (captured_ok && unclean_saved && unclean_ok && clean_saved && clean_ok) {
+    *output << "SESSION_SMOKE_OK tabs=" << clean->tab_urls.size()
+            << " active=" << clean->active_tab << Qt::endl;
+    window->close();
+  } else {
+    *output << "SESSION_SMOKE_FAILED captured=" << captured_ok
+            << " unclean=" << unclean_ok << " clean=" << clean_ok
+            << Qt::endl;
+    QCoreApplication::exit(5);
+  }
 }
 
 int RunBrowser(int argc, char* argv[]) {
@@ -249,7 +292,43 @@ int RunBrowser(int argc, char* argv[]) {
 
   int exit_code = 0;
   {
-    MainWindow main_window(InitialUrl());
+    const QString session_path =
+        QDir(data_path).filePath(QStringLiteral("session.json"));
+    std::unique_ptr<QTemporaryDir> smoke_session_directory;
+    QString active_session_path = session_path;
+    BrowserSession initial_session;
+    if (HasArgument(QStringLiteral("--smoke-test-session"))) {
+      smoke_session_directory = std::make_unique<QTemporaryDir>();
+      if (!smoke_session_directory->isValid()) {
+        CefShutdown();
+        return 5;
+      }
+      active_session_path =
+          smoke_session_directory->filePath(QStringLiteral("session.json"));
+      initial_session.tab_urls = {
+          QStringLiteral("data:text/html,<title>Session One</title>"),
+          QStringLiteral("data:text/html,<title>Session Two</title>")};
+      initial_session.active_tab = 1;
+      initial_session.clean_exit = false;
+    } else if (IsSmokeTest()) {
+      initial_session = DefaultSession(ExplicitStartupUrl().value_or(
+          QStringLiteral("data:text/html,<title>Smoke</title>")));
+      active_session_path.clear();
+    } else if (const auto startup_url = ExplicitStartupUrl()) {
+      // A URL explicitly supplied by the caller always wins over restoration.
+      initial_session = DefaultSession(*startup_url);
+    } else {
+      QString session_error;
+      const auto restored = SessionStore::Load(session_path, &session_error);
+      initial_session = restored.value_or(
+          DefaultSession(QStringLiteral("https://www.example.com")));
+      if (!session_error.isEmpty()) {
+        qWarning("Unable to restore browser session: %s",
+                 qPrintable(session_error));
+      }
+    }
+
+    MainWindow main_window(initial_session, active_session_path);
     main_window.show();
     message_pump.Schedule(0);
     if (HasArgument(QStringLiteral("--smoke-test-tabs"))) {
@@ -259,6 +338,10 @@ int RunBrowser(int argc, char* argv[]) {
                          [&main_window] { StartDownloadSmokeTest(&main_window); });
     } else if (HasArgument(QStringLiteral("--smoke-test-failures"))) {
       StartFailureSmokeTest(&main_window);
+    } else if (HasArgument(QStringLiteral("--smoke-test-session"))) {
+      QTimer::singleShot(300, &main_window, [&main_window, active_session_path] {
+        StartSessionSmokeTest(&main_window, active_session_path);
+      });
     }
     exit_code = application.exec();
   }

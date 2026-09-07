@@ -11,6 +11,10 @@ asynchronous browser shutdown. Downloads have a window-level manager with
 progress, speed, cancellation, completion actions, and a platform save dialog;
 they continue when the originating tab closes. Main-frame load failures and
 renderer crashes display a retry page while preserving the requested URL.
+Window geometry, open tab URLs, and the active tab are saved atomically and
+restored on the next regular launch. A previous unclean exit is detected and
+reported after its tabs are recovered. An explicit startup URL takes priority
+over the saved session.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -88,8 +92,8 @@ timeout 20s xvfb-run -a ./build/trail-browser --smoke-test-tabs \
 
 A passing run prints `TAB_SMOKE_OK` and exits with status 0 after creating,
 closing, reopening, and finally shutting down multiple CEF browser instances.
-CTest also runs deterministic download-state and failure-page checks. All three
-checks are registered when `xvfb-run` is available:
+CTest also runs deterministic download-state, failure-page, and atomic session
+restore checks. All four checks are registered when `xvfb-run` is available:
 
 ~~~sh
 ctest --test-dir build --output-on-failure
