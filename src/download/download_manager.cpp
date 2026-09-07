@@ -37,6 +37,8 @@ DownloadManager::Item Snapshot(CefRefPtr<CefDownloadItem> download) {
     item.state = DownloadManager::State::Interrupted;
     item.detail = QStringLiteral("Error %1")
                       .arg(static_cast<int>(download->GetInterruptReason()));
+  } else if (download->IsPaused()) {
+    item.state = DownloadManager::State::Paused;
   } else if (download->IsInProgress()) {
     item.state = DownloadManager::State::InProgress;
   } else {
@@ -120,6 +122,16 @@ void DownloadManager::CancelDownload(quint32 id) {
   if (callback) callback->Cancel();
 }
 
+void DownloadManager::PauseDownload(quint32 id) {
+  const auto callback = callbacks_.value(id);
+  if (callback) callback->Pause();
+}
+
+void DownloadManager::ResumeDownload(quint32 id) {
+  const auto callback = callbacks_.value(id);
+  if (callback) callback->Resume();
+}
+
 void DownloadManager::ClearFinished() {
   const QList<quint32> ids = order_;
   for (const quint32 id : ids) {
@@ -190,6 +202,9 @@ QString DownloadManager::StatusText(const Item& item) {
       if (!speed.isEmpty()) progress += QStringLiteral(" · %1").arg(speed);
       return progress;
     }
+    case State::Paused:
+      return item.percent >= 0 ? QStringLiteral("Paused · %1%").arg(item.percent)
+                               : QStringLiteral("Paused");
     case State::Complete:
       return QStringLiteral("Complete");
     case State::Cancelled:
@@ -227,5 +242,6 @@ void DownloadManager::UpdateDownload(
 }
 
 bool DownloadManager::IsActive(State state) {
-  return state == State::Starting || state == State::InProgress;
+  return state == State::Starting || state == State::InProgress ||
+         state == State::Paused;
 }

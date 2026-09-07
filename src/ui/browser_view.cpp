@@ -143,6 +143,16 @@ void BrowserView::ResetZoom() {
   emit ZoomChanged(100);
 }
 
+void BrowserView::Print() {
+  if (browser_) browser_->GetHost()->Print();
+}
+
+void BrowserView::ExitFullscreen() {
+  if (browser_ && browser_->GetHost()->IsFullscreen()) {
+    browser_->GetHost()->ExitFullscreen(true);
+  }
+}
+
 int BrowserView::zoom_percent() const {
   return browser_
              ? qRound(100.0 *
@@ -213,6 +223,7 @@ void BrowserView::FinalizeClose() {
 
 bool BrowserView::RequestClose() {
   closing_ = true;
+  DismissOpenDialogs();
   if (browser_) {
     // A tab is not a top-level native window and cannot complete the regular
     // close handshake independently. Force the CEF child closed, then wait
@@ -221,6 +232,13 @@ bool BrowserView::RequestClose() {
     return false;
   }
   return !create_requested_ && browser_ids_.isEmpty();
+}
+
+void BrowserView::DismissOpenDialogs() {
+  const auto dialogs = findChildren<QMessageBox*>();
+  for (QMessageBox* dialog : dialogs) {
+    if (dialog) dialog->reject();
+  }
 }
 
 void BrowserView::OnCefBrowserCreated(CefRefPtr<CefBrowser> browser) {
@@ -284,7 +302,9 @@ bool BrowserView::OnCefKeyEvent(CefRefPtr<CefBrowser> browser,
 #endif
   const bool shift = event.modifiers & EVENTFLAG_SHIFT_DOWN;
   ShortcutAction action;
-  if (event.windows_key_code == 0x72) {
+  if (event.windows_key_code == 0x1B) {
+    action = ShortcutAction::ExitFullscreen;
+  } else if (event.windows_key_code == 0x72) {
     action = shift ? ShortcutAction::FindPrevious : ShortcutAction::FindNext;
   } else if (primary_modifier && event.windows_key_code == 'T') {
     action = shift ? ShortcutAction::ReopenClosedTab : ShortcutAction::NewTab;
@@ -332,6 +352,16 @@ void BrowserView::OnCefTitleChanged(CefRefPtr<CefBrowser> browser,
     page_title_ = title;
     emit TitleChanged(title);
   }
+}
+
+void BrowserView::OnCefFullscreenChanged(CefRefPtr<CefBrowser> browser,
+                                         bool fullscreen) {
+  if (browser_ && browser_->IsSame(browser)) emit FullscreenChanged(fullscreen);
+}
+
+void BrowserView::OnCefStatusMessage(CefRefPtr<CefBrowser> browser,
+                                     const QString& value) {
+  if (browser_ && browser_->IsSame(browser)) emit StatusMessageChanged(value);
 }
 
 void BrowserView::OnCefAddressChanged(CefRefPtr<CefBrowser> browser,

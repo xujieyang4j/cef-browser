@@ -43,6 +43,21 @@ void BrowserClient::OnTitleChange(CefRefPtr<CefBrowser> browser,
   }
 }
 
+void BrowserClient::OnFullscreenModeChange(CefRefPtr<CefBrowser> browser,
+                                           bool fullscreen) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) owner_->OnCefFullscreenChanged(browser, fullscreen);
+}
+
+void BrowserClient::OnStatusMessage(CefRefPtr<CefBrowser> browser,
+                                    const CefString& value) {
+  CEF_REQUIRE_UI_THREAD();
+  if (owner_) {
+    owner_->OnCefStatusMessage(
+        browser, QString::fromStdString(value.ToString()));
+  }
+}
+
 void BrowserClient::OnFindResult(CefRefPtr<CefBrowser> browser, int, int count,
                                  const CefRect&, int active_match_ordinal,
                                  bool final_update) {

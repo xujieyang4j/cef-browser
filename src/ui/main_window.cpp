@@ -73,12 +73,12 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   page_layout->setContentsMargins(0, 0, 0, 0);
   page_layout->setSpacing(0);
 
-  auto* tab_strip = new QWidget(central);
-  auto* tab_layout = new QHBoxLayout(tab_strip);
+  tab_strip_ = new QWidget(central);
+  auto* tab_layout = new QHBoxLayout(tab_strip_);
   tab_layout->setContentsMargins(6, 4, 6, 0);
   tab_layout->setSpacing(4);
 
-  tab_bar_ = new BrowserTabBar(tab_strip);
+  tab_bar_ = new BrowserTabBar(tab_strip_);
   tab_bar_->setDocumentMode(true);
   tab_bar_->setDrawBase(false);
   tab_bar_->setElideMode(Qt::ElideRight);
@@ -87,25 +87,26 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   tab_bar_->setTabsClosable(true);
   tab_bar_->setUsesScrollButtons(true);
 
-  auto* add_tab_button = new QToolButton(tab_strip);
+  auto* add_tab_button = new QToolButton(tab_strip_);
   add_tab_button->setText(QStringLiteral("+"));
   add_tab_button->setToolTip(QStringLiteral("New tab (Ctrl+T)"));
   tab_layout->addWidget(tab_bar_, 1);
   tab_layout->addWidget(add_tab_button);
 
-  auto* toolbar = new QWidget(central);
-  auto* toolbar_layout = new QHBoxLayout(toolbar);
+  toolbar_ = new QWidget(central);
+  auto* toolbar_layout = new QHBoxLayout(toolbar_);
   toolbar_layout->setContentsMargins(8, 6, 8, 6);
   toolbar_layout->setSpacing(6);
 
-  back_button_ = new QPushButton(QStringLiteral("←"), toolbar);
-  forward_button_ = new QPushButton(QStringLiteral("→"), toolbar);
-  reload_button_ = new QPushButton(QStringLiteral("↻"), toolbar);
-  address_bar_ = new QLineEdit(toolbar);
-  auto* downloads_button = new QPushButton(QStringLiteral("Downloads"), toolbar);
-  bookmark_button_ = new QPushButton(QStringLiteral("☆"), toolbar);
-  bookmarks_button_ = new QPushButton(QStringLiteral("Bookmarks"), toolbar);
-  history_button_ = new QPushButton(QStringLiteral("History"), toolbar);
+  back_button_ = new QPushButton(QStringLiteral("←"), toolbar_);
+  forward_button_ = new QPushButton(QStringLiteral("→"), toolbar_);
+  reload_button_ = new QPushButton(QStringLiteral("↻"), toolbar_);
+  address_bar_ = new QLineEdit(toolbar_);
+  auto* downloads_button =
+      new QPushButton(QStringLiteral("Downloads"), toolbar_);
+  bookmark_button_ = new QPushButton(QStringLiteral("☆"), toolbar_);
+  bookmarks_button_ = new QPushButton(QStringLiteral("Bookmarks"), toolbar_);
+  history_button_ = new QPushButton(QStringLiteral("History"), toolbar_);
   bookmarks_menu_ = new QMenu(bookmarks_button_);
   history_menu_ = new QMenu(history_button_);
   bookmarks_button_->setMenu(bookmarks_menu_);
@@ -170,8 +171,8 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
       PersistSession(CaptureSession(false));
     }
   });
-  page_layout->addWidget(tab_strip);
-  page_layout->addWidget(toolbar);
+  page_layout->addWidget(tab_strip_);
+  page_layout->addWidget(toolbar_);
   page_layout->addWidget(find_bar_);
   page_layout->addWidget(tab_stack_, 1);
   page_layout->addWidget(download_panel_);
@@ -264,6 +265,10 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   connect(dev_tools, &QShortcut::activated, this, [this] {
     if (BrowserView* browser = CurrentBrowser()) browser->ShowDevTools();
   });
+  auto* print_page = new QShortcut(QKeySequence::Print, this);
+  connect(print_page, &QShortcut::activated, this, [this] {
+    if (BrowserView* browser = CurrentBrowser()) browser->Print();
+  });
   auto* find_in_page = new QShortcut(QKeySequence::Find, this);
   connect(find_in_page, &QShortcut::activated, this, &MainWindow::ShowFindBar);
   auto* find_next = new QShortcut(QKeySequence::FindNext, this);
@@ -277,6 +282,13 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   close_find_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
   connect(close_find_shortcut, &QShortcut::activated, this,
           &MainWindow::HideFindBar);
+  auto* exit_fullscreen =
+      new QShortcut(QKeySequence(Qt::Key_Escape), this);
+  connect(exit_fullscreen, &QShortcut::activated, this, [this] {
+    if (web_fullscreen_) {
+      if (BrowserView* browser = CurrentBrowser()) browser->ExitFullscreen();
+    }
+  });
   auto* previous_match_shortcut = new QShortcut(
       QKeySequence(Qt::SHIFT | Qt::Key_Return), find_bar_);
   previous_match_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
@@ -381,6 +393,15 @@ void MainWindow::UpdateDownloadForTesting(quint32 id, int percent,
   item.state = complete ? DownloadManager::State::Complete
                         : DownloadManager::State::InProgress;
   download_manager_->UpdateForTesting(item);
+}
+
+void MainWindow::PauseDownloadForTesting(quint32 id) {
+  const auto current = download_manager_->item(id);
+  if (!current) return;
+  DownloadManager::Item paused = *current;
+  paused.state = DownloadManager::State::Paused;
+  paused.bytes_per_second = 0;
+  download_manager_->UpdateForTesting(paused);
 }
 
 int MainWindow::download_count_for_testing() const {
@@ -488,6 +509,12 @@ QString MainWindow::permission_description_for_testing(
 
 bool MainWindow::external_scheme_allowed_for_testing(const QString& url) const {
   return BrowserView::IsAllowedExternalScheme(url);
+}
+
+void MainWindow::SetWebFullscreenForTesting(bool fullscreen) {
+  if (BrowserView* browser = CurrentBrowser()) {
+    browser->FullscreenChanged(fullscreen);
+  }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -619,6 +646,36 @@ BrowserView* MainWindow::AddTab(const QString& url, bool activate,
   connect(browser, &BrowserView::SecurityMessage, this,
           [this](const QString& message) {
             statusBar()->showMessage(message, 5000);
+          });
+  connect(browser, &BrowserView::StatusMessageChanged, this,
+          [this, browser](const QString& message) {
+            if (browser != CurrentBrowser()) return;
+            message.isEmpty() ? statusBar()->clearMessage()
+                              : statusBar()->showMessage(message);
+          });
+  connect(browser, &BrowserView::FullscreenChanged, this,
+          [this, browser](bool fullscreen) {
+            if (browser != CurrentBrowser()) return;
+            if (fullscreen == web_fullscreen_) return;
+            if (fullscreen) {
+              window_was_maximized_ = isMaximized();
+              find_bar_was_visible_ = find_bar_->isVisible();
+            }
+            web_fullscreen_ = fullscreen;
+            tab_strip_->setVisible(!fullscreen);
+            toolbar_->setVisible(!fullscreen);
+            find_bar_->setVisible(!fullscreen && find_bar_was_visible_);
+            if (fullscreen) {
+              showFullScreen();
+            } else if (window_was_maximized_) {
+              showMaximized();
+            } else {
+              showNormal();
+            }
+            if (fullscreen) {
+              statusBar()->showMessage(
+                  QStringLiteral("Press Esc to exit full screen"), 3000);
+            }
           });
   connect(browser, &BrowserView::LoadingStateChanged, this,
           [this, browser](bool loading, bool can_go_back, bool can_go_forward) {
@@ -871,6 +928,11 @@ void MainWindow::HandleBrowserShortcut(int action_value) {
       break;
     case BrowserView::ShortcutAction::ToggleBookmark:
       ToggleCurrentBookmark();
+      break;
+    case BrowserView::ShortcutAction::ExitFullscreen:
+      if (web_fullscreen_) {
+        if (BrowserView* browser = CurrentBrowser()) browser->ExitFullscreen();
+      }
       break;
   }
 }

@@ -8,7 +8,8 @@ Current features include tabbed browsing, navigation controls, URL/search
 normalization, page titles, pop-up routing based on the requested disposition,
 recently closed tab recovery, F12 DevTools, persistent CEF cache, and orderly
 asynchronous browser shutdown. Downloads have a window-level manager with
-progress, speed, cancellation, completion actions, and a platform save dialog;
+progress, speed, pause/resume, cancellation, completion actions, and a platform
+save dialog;
 they continue when the originating tab closes. Main-frame load failures and
 renderer crashes display a retry page while preserving the requested URL.
 Window geometry, open tab URLs, and the active tab are saved atomically and
@@ -20,6 +21,8 @@ Sensitive site capabilities use explicit one-time allow/block prompts, invalid
 HTTPS certificates are blocked with a dedicated error page, and only a small
 allowlist of external URL schemes can reach an OS application after user
 confirmation.
+Web pages can enter native full screen, hovered-link destinations appear in the
+status bar, and Ctrl/Cmd+P opens the platform print flow.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -85,6 +88,7 @@ application builds automatically use the Release CEF runtime.
 - Ctrl/Cmd++ / Ctrl/Cmd+-: zoom the active page
 - Ctrl/Cmd+0: reset page zoom
 - Ctrl/Cmd+D: add or remove a bookmark for the active page
+- Ctrl/Cmd+P: print the active page
 - F12: open CEF DevTools
 
 Tabs can also be reordered by dragging and closed with either their close

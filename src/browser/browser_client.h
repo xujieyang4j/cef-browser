@@ -36,6 +36,10 @@ class BrowserClient final : public CefClient,
 
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
                      const CefString& title) override;
+  void OnFullscreenModeChange(CefRefPtr<CefBrowser> browser,
+                              bool fullscreen) override;
+  void OnStatusMessage(CefRefPtr<CefBrowser> browser,
+                       const CefString& value) override;
   void OnFindResult(CefRefPtr<CefBrowser> browser, int identifier, int count,
                     const CefRect& selection_rect, int active_match_ordinal,
                     bool final_update) override;

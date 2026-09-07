@@ -112,16 +112,26 @@ void StartDownloadSmokeTest(MainWindow* window) {
                        window->active_download_count_for_testing() == 1 &&
                        window->download_status_for_testing(41).startsWith(
                            QStringLiteral("25%"));
+  window->PauseDownloadForTesting(41);
+  const bool paused = window->active_download_count_for_testing() == 1 &&
+                      window->download_status_for_testing(41).startsWith(
+                          QStringLiteral("Paused"));
+  window->UpdateDownloadForTesting(41, 50, false);
+  const bool resumed = window->active_download_count_for_testing() == 1 &&
+                       window->download_status_for_testing(41).startsWith(
+                           QStringLiteral("50%"));
   window->UpdateDownloadForTesting(41, 100, true);
   const bool completed = window->download_count_for_testing() == 1 &&
                          window->active_download_count_for_testing() == 0 &&
                          window->download_status_for_testing(41) ==
                              QStringLiteral("Complete");
-  if (started && completed) {
-    *output << "DOWNLOAD_SMOKE_OK status=Complete" << Qt::endl;
+  if (started && paused && resumed && completed) {
+    *output << "DOWNLOAD_SMOKE_OK paused=1 resumed=1 status=Complete"
+            << Qt::endl;
     window->close();
   } else {
     *output << "DOWNLOAD_SMOKE_FAILED started=" << started
+            << " paused=" << paused << " resumed=" << resumed
             << " completed=" << completed << Qt::endl;
     QCoreApplication::exit(3);
   }
@@ -241,10 +251,16 @@ void StartPageToolsSmokeTest(MainWindow* window) {
                window->zoom_percent_for_testing() > 100) {
       window->ResetZoomForTesting();
       window->HideFindBarForTesting();
+      window->SetWebFullscreenForTesting(true);
       *stage = 2;
-    } else if (*stage == 2 && !window->find_bar_visible_for_testing() &&
+    } else if (*stage == 2 && window->web_fullscreen_for_testing()) {
+      window->SetWebFullscreenForTesting(false);
+      *stage = 3;
+    } else if (*stage == 3 && !window->web_fullscreen_for_testing() &&
+               !window->find_bar_visible_for_testing() &&
                window->zoom_percent_for_testing() == 100) {
-      *output << "PAGE_TOOLS_SMOKE_OK matches=3 zoom=100" << Qt::endl;
+      *output << "PAGE_TOOLS_SMOKE_OK matches=3 zoom=100 fullscreen=roundtrip"
+              << Qt::endl;
       window->close();
       return;
     }

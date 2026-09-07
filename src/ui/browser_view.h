@@ -35,6 +35,7 @@ class BrowserView final : public QWidget {
     ZoomOut,
     ResetZoom,
     ToggleBookmark,
+    ExitFullscreen,
   };
 
   BrowserView(QString initial_url,
@@ -53,6 +54,8 @@ class BrowserView final : public QWidget {
   void ZoomIn();
   void ZoomOut();
   void ResetZoom();
+  void Print();
+  void ExitFullscreen();
   void FinalizeClose();
   const QString& current_url() const { return current_url_; }
   const QString& page_title() const { return page_title_; }
@@ -77,6 +80,9 @@ class BrowserView final : public QWidget {
   void OnCefDialogClosed(CefRefPtr<CefBrowser> browser);
   bool OnCefKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event);
   void OnCefTitleChanged(CefRefPtr<CefBrowser> browser, const QString& title);
+  void OnCefFullscreenChanged(CefRefPtr<CefBrowser> browser, bool fullscreen);
+  void OnCefStatusMessage(CefRefPtr<CefBrowser> browser,
+                          const QString& value);
   void OnCefFindResult(CefRefPtr<CefBrowser> browser, int count,
                        int active_match_ordinal, bool final_update);
   void OnCefAddressChanged(CefRefPtr<CefBrowser> browser, const QString& url);
@@ -115,6 +121,8 @@ class BrowserView final : public QWidget {
   void ZoomChanged(int percent);
   void NavigationCompleted();
   void SecurityMessage(const QString& message);
+  void FullscreenChanged(bool fullscreen);
+  void StatusMessageChanged(const QString& message);
   void PopupRequested(const QString& url, int disposition);
   void ShortcutRequested(int action);
   void BrowserClosed();
@@ -132,6 +140,7 @@ class BrowserView final : public QWidget {
   void CreateBrowserIfNeeded();
   void UpdateNativeVisibility();
   void ResizeBrowser();
+  void DismissOpenDialogs();
   void ShowFailurePage(const QString& heading, const QString& summary,
                        const QString& detail, const QString& failed_url,
                        bool render_process_failed);

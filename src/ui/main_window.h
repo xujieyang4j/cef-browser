@@ -38,6 +38,7 @@ class MainWindow final : public QMainWindow {
   void CloseCurrentTabForTesting();
   void ReopenClosedTabForTesting();
   void UpdateDownloadForTesting(quint32 id, int percent, bool complete);
+  void PauseDownloadForTesting(quint32 id);
   int download_count_for_testing() const;
   int active_download_count_for_testing() const;
   QString download_status_for_testing(quint32 id) const;
@@ -61,6 +62,8 @@ class MainWindow final : public QMainWindow {
   QString media_permission_description_for_testing(uint32_t permissions) const;
   QString permission_description_for_testing(uint32_t permissions) const;
   bool external_scheme_allowed_for_testing(const QString& url) const;
+  void SetWebFullscreenForTesting(bool fullscreen);
+  bool web_fullscreen_for_testing() const { return web_fullscreen_; }
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -110,6 +113,8 @@ class MainWindow final : public QMainWindow {
   QPushButton* forward_button_ = nullptr;
   QPushButton* reload_button_ = nullptr;
   QWidget* find_bar_ = nullptr;
+  QWidget* tab_strip_ = nullptr;
+  QWidget* toolbar_ = nullptr;
   QLineEdit* find_edit_ = nullptr;
   QLabel* find_result_label_ = nullptr;
   QPushButton* bookmark_button_ = nullptr;
@@ -129,6 +134,9 @@ class MainWindow final : public QMainWindow {
   bool session_persistence_ready_ = false;
   bool window_close_requested_ = false;
   bool allow_window_close_ = false;
+  bool web_fullscreen_ = false;
+  bool window_was_maximized_ = false;
+  bool find_bar_was_visible_ = false;
 
   Q_DISABLE_COPY_MOVE(MainWindow)
 };

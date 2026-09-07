@@ -76,11 +76,14 @@ void DownloadPanel::RefreshDownload(quint32 id, bool is_new) {
     auto* open_button = new QPushButton(QStringLiteral("Open"), actions);
     auto* folder_button = new QPushButton(QStringLiteral("Folder"), actions);
     auto* cancel_button = new QPushButton(QStringLiteral("Cancel"), actions);
+    auto* pause_button = new QPushButton(QStringLiteral("Pause"), actions);
     open_button->setObjectName(QStringLiteral("openDownload"));
     folder_button->setObjectName(QStringLiteral("showDownload"));
     cancel_button->setObjectName(QStringLiteral("cancelDownload"));
+    pause_button->setObjectName(QStringLiteral("pauseDownload"));
     action_layout->addWidget(open_button);
     action_layout->addWidget(folder_button);
+    action_layout->addWidget(pause_button);
     action_layout->addWidget(cancel_button);
     list_->setItemWidget(row, kActionColumn, actions);
     connect(open_button, &QPushButton::clicked, this,
@@ -89,6 +92,15 @@ void DownloadPanel::RefreshDownload(quint32 id, bool is_new) {
             [this, id] { manager_->ShowDownloadInFolder(id); });
     connect(cancel_button, &QPushButton::clicked, this,
             [this, id] { manager_->CancelDownload(id); });
+    connect(pause_button, &QPushButton::clicked, this, [this, id] {
+      const auto download = manager_->item(id);
+      if (!download) return;
+      if (download->state == DownloadManager::State::Paused) {
+        manager_->ResumeDownload(id);
+      } else {
+        manager_->PauseDownload(id);
+      }
+    });
   }
 
   row->setText(0, download->file_name.isEmpty() ? download->url
@@ -104,7 +116,8 @@ void DownloadPanel::RefreshDownload(quint32 id, bool is_new) {
 
   if (QWidget* actions = list_->itemWidget(row, kActionColumn)) {
     const bool active = download->state == DownloadManager::State::Starting ||
-                        download->state == DownloadManager::State::InProgress;
+                        download->state == DownloadManager::State::InProgress ||
+                        download->state == DownloadManager::State::Paused;
     const bool complete = download->state == DownloadManager::State::Complete;
     actions->findChild<QPushButton*>(QStringLiteral("openDownload"))
         ->setVisible(complete && !download->full_path.isEmpty());
@@ -112,6 +125,13 @@ void DownloadPanel::RefreshDownload(quint32 id, bool is_new) {
         ->setVisible(!active && !download->full_path.isEmpty());
     actions->findChild<QPushButton*>(QStringLiteral("cancelDownload"))
         ->setVisible(active);
+    QPushButton* pause =
+        actions->findChild<QPushButton*>(QStringLiteral("pauseDownload"));
+    pause->setVisible(active &&
+                      download->state != DownloadManager::State::Starting);
+    pause->setText(download->state == DownloadManager::State::Paused
+                       ? QStringLiteral("Resume")
+                       : QStringLiteral("Pause"));
   }
   if (is_new) show();
   UpdateHeader();

@@ -18,6 +18,7 @@ class DownloadManager final : public QObject {
   enum class State {
     Starting,
     InProgress,
+    Paused,
     Complete,
     Cancelled,
     Interrupted,
@@ -45,6 +46,8 @@ class DownloadManager final : public QObject {
   int active_count() const;
 
   void CancelDownload(quint32 id);
+  void PauseDownload(quint32 id);
+  void ResumeDownload(quint32 id);
   void ClearFinished();
   bool OpenDownload(quint32 id) const;
   bool ShowDownloadInFolder(quint32 id) const;
