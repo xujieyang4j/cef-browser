@@ -10,6 +10,8 @@
 #include <QSaveFile>
 #include <QUrl>
 
+#include "util/bounded_file.h"
+
 namespace {
 
 constexpr int kSettingsVersion = 1;
@@ -79,13 +81,13 @@ bool BrowserSettings::Load(QString* error) {
     SetError(error, file.errorString());
     return false;
   }
-  if (file.size() > kMaxSettingsBytes) {
-    SetError(error, QStringLiteral("Settings file is unexpectedly large"));
-    return false;
-  }
+  const auto bytes = trail::ReadBoundedFile(
+      file, kMaxSettingsBytes,
+      QStringLiteral("Settings file is unexpectedly large"), error);
+  if (!bytes) return false;
   QJsonParseError parse_error;
   const QJsonDocument document =
-      QJsonDocument::fromJson(file.readAll(), &parse_error);
+      QJsonDocument::fromJson(*bytes, &parse_error);
   if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
     SetError(error, parse_error.errorString());
     return false;

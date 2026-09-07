@@ -17,6 +17,7 @@
 #include <QUrl>
 
 #include "settings/browser_settings.h"
+#include "util/bounded_file.h"
 
 namespace {
 
@@ -133,14 +134,14 @@ bool BrowsingDataStore::Load(QString* error) {
     SetError(error, file.errorString());
     return false;
   }
-  if (file.size() > kMaxDataBytes) {
-    SetError(error, QStringLiteral("Browsing data file is unexpectedly large"));
-    return false;
-  }
+  const auto bytes = trail::ReadBoundedFile(
+      file, kMaxDataBytes,
+      QStringLiteral("Browsing data file is unexpectedly large"), error);
+  if (!bytes) return false;
 
   QJsonParseError parse_error;
   const QJsonDocument document =
-      QJsonDocument::fromJson(file.readAll(), &parse_error);
+      QJsonDocument::fromJson(*bytes, &parse_error);
   if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
     SetError(error, parse_error.errorString());
     return false;
@@ -264,11 +265,11 @@ bool BrowsingDataStore::ImportBookmarksHtml(const QString& path,
     SetError(error, file.errorString());
     return false;
   }
-  if (file.size() > kMaxBookmarkHtmlBytes) {
-    SetError(error, QStringLiteral("Bookmark file is unexpectedly large"));
-    return false;
-  }
-  const QString html = QString::fromUtf8(file.readAll());
+  const auto bytes = trail::ReadBoundedFile(
+      file, kMaxBookmarkHtmlBytes,
+      QStringLiteral("Bookmark file is unexpectedly large"), error);
+  if (!bytes) return false;
+  const QString html = QString::fromUtf8(*bytes);
   const QRegularExpression anchor_pattern(
       QStringLiteral(R"(<a\b([^>]*)>(.*?)</a\s*>)"),
       QRegularExpression::CaseInsensitiveOption |

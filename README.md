@@ -60,7 +60,10 @@ same 512 characters retained by profile storage. Download and browsing-data
 files share their read and
 write byte limits, retain the newest records when trimming is required, and
 prioritize bookmarks over older visit history so every saved profile remains
-reloadable.
+reloadable. Session, settings, download-history, browsing-data, and bookmark
+HTML input is read through strict byte budgets rather than trusting an earlier
+file-size check, so files that grow while being opened cannot bypass the
+limits or replace the corresponding in-memory state.
 Sensitive site capabilities use explicit one-time allow/block prompts, invalid
 HTTPS certificates are blocked with a dedicated error page, and only a small
 allowlist of external URL schemes can reach an OS application after user
@@ -225,6 +228,9 @@ page-search/zoom, titled address suggestions, bookmark/history persistence,
 bounds for address, search, find, and bookmark-name input, browsing-data
 cleanup, download-ingress and active-count limits, favicon
 mapping, audio/mute state, security-policy, and authentication-dialog checks.
+Oversized session, settings, download-history, browsing-data, and bookmark
+HTML files are also rejected using the bytes actually read, with existing
+in-memory settings and profile data preserved.
 JavaScript-dialog limits, concurrency suppression, navigation reset, and
 before-unload cancellation are checked as well.
 Keyboard-accessible browser surfaces and full-screen exit routing are also

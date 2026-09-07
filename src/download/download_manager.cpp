@@ -16,6 +16,7 @@
 #include <QUrl>
 
 #include "include/wrapper/cef_helpers.h"
+#include "util/bounded_file.h"
 
 namespace {
 
@@ -310,14 +311,14 @@ bool DownloadManager::LoadHistory(QString* error) {
     SetError(error, file.errorString());
     return false;
   }
-  if (file.size() > kMaxHistoryBytes) {
-    SetError(error, QStringLiteral("Download history file is unexpectedly large"));
-    return false;
-  }
+  const auto bytes = trail::ReadBoundedFile(
+      file, kMaxHistoryBytes,
+      QStringLiteral("Download history file is unexpectedly large"), error);
+  if (!bytes) return false;
 
   QJsonParseError parse_error;
   const QJsonDocument document =
-      QJsonDocument::fromJson(file.readAll(), &parse_error);
+      QJsonDocument::fromJson(*bytes, &parse_error);
   if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
     SetError(error, parse_error.errorString());
     return false;

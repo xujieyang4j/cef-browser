@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.47.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.48.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -76,6 +76,8 @@ set(TRAIL_BROWSER_SOURCES
   src/session/session_store.h
   src/settings/browser_settings.cpp
   src/settings/browser_settings.h
+  src/util/bounded_file.cpp
+  src/util/bounded_file.h
   src/ui/browser_view.cpp
   src/ui/browser_view.h
   src/ui/download_panel.cpp

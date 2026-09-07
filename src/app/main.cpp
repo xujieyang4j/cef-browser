@@ -53,6 +53,19 @@ namespace {
 
 constexpr int kMaxMessagePumpDelayMs = 1000 / 30;
 
+bool WriteRepeatedFile(const QString& path, qint64 byte_count) {
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly)) return false;
+  const QByteArray chunk(64 * 1024, 'x');
+  qint64 remaining = byte_count;
+  while (remaining > 0) {
+    const qint64 next = std::min<qint64>(remaining, chunk.size());
+    if (file.write(chunk.constData(), next) != next) return false;
+    remaining -= next;
+  }
+  return file.flush();
+}
+
 class CefMessagePump final : public QObject {
  public:
   explicit CefMessagePump(QObject* parent = nullptr) : QObject(parent) {
@@ -590,6 +603,31 @@ void StartDownloadSmokeTest(MainWindow* window,
       bounded_download_items.first().file_name.size() == 512 &&
       bounded_download_items.first().detail.size() == 1024;
 
+  const QString oversized_history_path =
+      download_history_path + QStringLiteral(".oversized.json");
+  DownloadManager oversized_history(oversized_history_path);
+  DownloadManager::Item preserved_download;
+  preserved_download.id = 4500;
+  preserved_download.file_name = QStringLiteral("preserved.bin");
+  preserved_download.url =
+      QStringLiteral("https://example.test/preserved.bin");
+  preserved_download.state = DownloadManager::State::InProgress;
+  const bool oversized_history_seeded =
+      oversized_history.UpdateForTesting(preserved_download);
+  const bool oversized_history_written =
+      WriteRepeatedFile(oversized_history_path, 2 * 1024 * 1024 + 1);
+  QString oversized_history_error;
+  const bool oversized_history_loaded =
+      oversized_history.LoadHistory(&oversized_history_error);
+  const auto preserved_download_after_load =
+      oversized_history.item(preserved_download.id);
+  const bool oversized_history_rejected =
+      oversized_history_seeded && oversized_history_written &&
+      !oversized_history_loaded && !oversized_history_error.isEmpty() &&
+      oversized_history.items().size() == 1 &&
+      preserved_download_after_load &&
+      preserved_download_after_load->url == preserved_download.url;
+
   DownloadManager runtime_bounded;
   int rejected_downloads = 0;
   QObject::connect(&runtime_bounded, &DownloadManager::DownloadRejected,
@@ -657,11 +695,12 @@ void StartDownloadSmokeTest(MainWindow* window,
       active_protected && empty_after_clear && tampered_filtered &&
       restored_actions_blocked && live_actions_validated &&
       missing_file_blocked && incomplete_file_blocked &&
-      relative_path_blocked && bounded_download_history && ingress_bounded &&
-      active_limit_enforced && runtime_metadata_bounded) {
+      relative_path_blocked && bounded_download_history &&
+      oversized_history_rejected && ingress_bounded && active_limit_enforced &&
+      runtime_metadata_bounded) {
     *output << "DOWNLOAD_SMOKE_OK paused=1 resumed=1 status=Complete "
                "persisted=1 removed=1 untrusted=blocked local_paths=validated "
-               "bounded=reloadable ingress=bounded active=limited"
+               "bounded=reloadable read=bounded ingress=bounded active=limited"
             << Qt::endl;
     window->close();
   } else {
@@ -677,6 +716,7 @@ void StartDownloadSmokeTest(MainWindow* window,
             << " incomplete=" << incomplete_file_blocked
             << " relative=" << relative_path_blocked
             << " bounded=" << bounded_download_history
+            << " oversized_history=" << oversized_history_rejected
             << " ingress=" << ingress_bounded
             << " active_limit=" << active_limit_enforced
             << " runtime_metadata=" << runtime_metadata_bounded
@@ -1014,13 +1054,23 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
       bounded->tab_urls.at(bounded->active_tab) == active_oversized_url &&
       bounded->window_geometry.isEmpty() &&
       bounded->recently_closed_tabs.isEmpty();
+  const QString oversized_file_path =
+      session_path + QStringLiteral(".oversized");
+  const bool oversized_file_written =
+      WriteRepeatedFile(oversized_file_path, 1024 * 1024 + 1);
+  QString oversized_file_error;
+  const auto oversized_file =
+      SessionStore::Load(oversized_file_path, &oversized_file_error);
+  const bool oversized_file_rejected =
+      oversized_file_written && !oversized_file &&
+      !oversized_file_error.isEmpty();
   if (captured_ok && unclean_saved && unclean_ok && clean_saved && clean_ok &&
       legacy_ok && untrusted_filtered && all_unsafe_rejected &&
-      unsafe_not_saved && bounded_round_trip) {
+      unsafe_not_saved && bounded_round_trip && oversized_file_rejected) {
     *output << "SESSION_SMOKE_OK tabs=" << clean->tab_urls.size()
             << " active=" << clean->active_tab
             << " recent_title=persisted legacy=migrated unsafe=filtered "
-               "size=bounded"
+               "size=bounded read=bounded"
             << Qt::endl;
     window->close();
   } else {
@@ -1031,6 +1081,7 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
             << " rejected=" << all_unsafe_rejected
             << " sanitized=" << unsafe_not_saved
             << " bounded=" << bounded_round_trip
+            << " oversized_file=" << oversized_file_rejected
             << Qt::endl;
     QCoreApplication::exit(5);
   }
@@ -1125,6 +1176,23 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       transfer.bookmarks().first().url == imported_url &&
       transfer.bookmarks().first().title ==
           QStringLiteral("Imported & <Safe>");
+  const QString oversized_import_path =
+      data_path + QStringLiteral(".oversized-import.html");
+  const bool oversized_import_written =
+      WriteRepeatedFile(oversized_import_path, 5 * 1024 * 1024 + 1);
+  const int bookmarks_before_failed_import = transfer.bookmarks().size();
+  const QString first_bookmark_before_failed_import =
+      transfer.bookmarks().first().url;
+  int oversized_import_count = 123;
+  QString oversized_import_error;
+  const bool oversized_imported = transfer.ImportBookmarksHtml(
+      oversized_import_path, &oversized_import_count,
+      &oversized_import_error);
+  const bool oversized_import_rejected =
+      oversized_import_written && !oversized_imported &&
+      !oversized_import_error.isEmpty() && oversized_import_count == 0 &&
+      transfer.bookmarks().size() == bookmarks_before_failed_import &&
+      transfer.bookmarks().first().url == first_bookmark_before_failed_import;
   const QString export_path = data_path + QStringLiteral(".export.html");
   const bool exported = transfer.ExportBookmarksHtml(export_path);
   BrowsingDataStore round_trip(data_path + QStringLiteral(".roundtrip.json"));
@@ -1272,6 +1340,23 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       bounded_data_restored.history().size() < kBoundedRecordCount &&
       bounded_data_restored.history().first().url == newest_history_url &&
       oldest_history_removed;
+  const QString oversized_data_path =
+      data_path + QStringLiteral(".oversized-data.json");
+  BrowsingDataStore oversized_data(oversized_data_path);
+  const bool oversized_data_seeded =
+      oversized_data.AddBookmark(first_url, QStringLiteral("Preserved"));
+  oversized_data.RecordVisit(second_url, QStringLiteral("Preserved visit"));
+  const bool oversized_data_written =
+      WriteRepeatedFile(oversized_data_path, 2 * 1024 * 1024 + 1);
+  QString oversized_data_error;
+  const bool oversized_data_loaded = oversized_data.Load(&oversized_data_error);
+  const bool oversized_data_rejected =
+      oversized_data_seeded && oversized_data_written &&
+      !oversized_data_loaded && !oversized_data_error.isEmpty() &&
+      oversized_data.bookmarks().size() == 1 &&
+      oversized_data.bookmarks().first().url == first_url &&
+      oversized_data.history().size() == 1 &&
+      oversized_data.history().first().url == second_url;
   const bool removed = restored.RemoveBookmark(first_url) &&
                        !restored.IsBookmarked(first_url);
   const QString bookmarked_url = window->current_url();
@@ -1322,9 +1407,10 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       after_single_remove.history().size() == 1 &&
       after_single_remove.history().first().url == first_url;
   const bool profile_ok = add_first && reject_duplicate && add_second && saved &&
-                          import_ok && round_trip_ok &&
+                          import_ok && oversized_import_rejected &&
+                          round_trip_ok &&
                           bookmark_ok && history_ok && stored_data_sanitized &&
-                          bounded_browsing_data &&
+                          bounded_browsing_data && oversized_data_rejected &&
                           removed && suggestions_ok && !first_label.isEmpty() &&
                           renamed &&
                           rename_persisted && empty_name &&
@@ -1336,6 +1422,8 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
             << " history=" << history_ok << " removed=" << removed
             << " stored_data=" << stored_data_sanitized
             << " bounded=" << bounded_browsing_data
+            << " oversized_data=" << oversized_data_rejected
+            << " oversized_import=" << oversized_import_rejected
             << " suggestions=" << suggestions_ok
             << " titled=" << !first_label.isEmpty()
             << " renamed=" << rename_persisted
@@ -1354,7 +1442,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
     if (window->current_url() == first_url) {
       *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2 "
                  "html=roundtrip "
-                 "bounded=reloadable "
+                 "bounded=reloadable read=bounded "
                  "rename=persisted empty=url single-remove=persisted "
                  "suggestions=titled-navigation"
               << Qt::endl;
@@ -1994,6 +2082,29 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
   const bool startup_decision = home_startup && restore_startup &&
                                 blank_startup && explicit_startup &&
                                 startup_normalization;
+  const QString oversized_settings_path =
+      settings_path + QStringLiteral(".oversized");
+  BrowserSettings oversized_settings(oversized_settings_path);
+  oversized_settings.set_search_engine(BrowserSettings::SearchEngine::Bing);
+  const bool oversized_settings_seeded =
+      oversized_settings.set_home_page(home_url);
+  oversized_settings.set_open_home_on_new_tab(true);
+  oversized_settings.set_startup_behavior(
+      BrowserSettings::StartupBehavior::BlankPage);
+  const bool oversized_settings_written =
+      WriteRepeatedFile(oversized_settings_path, 64 * 1024 + 1);
+  QString oversized_settings_error;
+  const bool oversized_settings_loaded =
+      oversized_settings.Load(&oversized_settings_error);
+  const bool oversized_settings_rejected =
+      oversized_settings_seeded && oversized_settings_written &&
+      !oversized_settings_loaded && !oversized_settings_error.isEmpty() &&
+      oversized_settings.search_engine() ==
+          BrowserSettings::SearchEngine::Bing &&
+      oversized_settings.home_page() == home_url &&
+      oversized_settings.open_home_on_new_tab() &&
+      oversized_settings.startup_behavior() ==
+          BrowserSettings::StartupBehavior::BlankPage;
   const bool preliminary_ok = default_ok && selected && persisted && encoded &&
                               address_ok && safe_schemes &&
                               unsafe_navigation_rejected &&
@@ -2002,7 +2113,7 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
                               oversized_home_rejected &&
                               new_tab_setting && new_tab_persisted &&
                               startup_selected && startup_persisted &&
-                              startup_decision;
+                              startup_decision && oversized_settings_rejected;
   if (!preliminary_ok) {
     *output << "SEARCH_SETTINGS_SMOKE_FAILED default=" << default_ok
             << " selected=" << selected << " persisted=" << persisted
@@ -2018,7 +2129,9 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
             << " oversized=" << oversized_home_rejected
             << " new_tab=" << new_tab_persisted
             << " startup=" << startup_persisted
-            << " decision=" << startup_decision << Qt::endl;
+            << " decision=" << startup_decision
+            << " oversized_settings=" << oversized_settings_rejected
+            << Qt::endl;
     QCoreApplication::exit(20);
     return;
   }
@@ -2037,7 +2150,8 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
     ++*attempts;
     if (window->tab_count() == 2 && window->current_url() == home_url) {
       *output << "SEARCH_SETTINGS_SMOKE_OK default=google selected=duckduckgo "
-                 "persisted=1 encoded=1 home=new-tab startup=home bounded=1"
+                 "persisted=1 encoded=1 home=new-tab startup=home bounded=1 "
+                 "read=bounded"
               << Qt::endl;
       window->close();
       return;

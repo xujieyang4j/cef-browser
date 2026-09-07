@@ -11,6 +11,7 @@
 #include <QSaveFile>
 
 #include "settings/browser_settings.h"
+#include "util/bounded_file.h"
 
 namespace {
 
@@ -54,14 +55,14 @@ std::optional<BrowserSession> SessionStore::Load(const QString& path,
     SetError(error, file.errorString());
     return std::nullopt;
   }
-  if (file.size() > kMaxSessionBytes) {
-    SetError(error, QStringLiteral("Session file is unexpectedly large"));
-    return std::nullopt;
-  }
+  const auto bytes = trail::ReadBoundedFile(
+      file, kMaxSessionBytes,
+      QStringLiteral("Session file is unexpectedly large"), error);
+  if (!bytes) return std::nullopt;
 
   QJsonParseError parse_error;
   const QJsonDocument document =
-      QJsonDocument::fromJson(file.readAll(), &parse_error);
+      QJsonDocument::fromJson(*bytes, &parse_error);
   if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
     SetError(error, parse_error.errorString());
     return std::nullopt;
