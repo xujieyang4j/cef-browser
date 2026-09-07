@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -869,25 +870,39 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       untrusted_data_file.open(QIODevice::WriteOnly);
   bool untrusted_data_written = false;
   if (untrusted_data_opened) {
+    const QString oversized_title(600, QLatin1Char('x'));
     const QJsonObject untrusted_root{
         {QStringLiteral("version"), 1},
         {QStringLiteral("bookmarks"),
          QJsonArray{
              QJsonObject{{QStringLiteral("url"), first_url},
-                         {QStringLiteral("title"), QStringLiteral("Safe")}},
+                         {QStringLiteral("title"), oversized_title},
+                         {QStringLiteral("createdAt"),
+                          QStringLiteral("not-a-date")}},
              QJsonObject{{QStringLiteral("url"),
                           QStringLiteral("javascript:alert(1)")},
                          {QStringLiteral("title"),
-                          QStringLiteral("Unsafe")}}}},
+                          QStringLiteral("Unsafe")}},
+             QJsonObject{{QStringLiteral("url"), first_url},
+                         {QStringLiteral("title"),
+                          QStringLiteral("Duplicate")}}}},
         {QStringLiteral("history"),
          QJsonArray{
              QJsonObject{{QStringLiteral("url"), second_url},
-                         {QStringLiteral("title"), QStringLiteral("Safe")},
-                         {QStringLiteral("visitCount"), 2}},
+                         {QStringLiteral("title"),
+                          QStringLiteral("  Safe\n\tHistory  ")},
+                         {QStringLiteral("lastVisitedAt"),
+                          QStringLiteral("invalid")},
+                         {QStringLiteral("visitCount"),
+                          std::numeric_limits<int>::max()}},
              QJsonObject{{QStringLiteral("url"),
                           QStringLiteral("data:text/html,unsafe")},
                          {QStringLiteral("title"),
                           QStringLiteral("Unsafe")},
+                         {QStringLiteral("visitCount"), 1}},
+             QJsonObject{{QStringLiteral("url"), second_url},
+                         {QStringLiteral("title"),
+                          QStringLiteral("Duplicate")},
                          {QStringLiteral("visitCount"), 1}}}},
     };
     const QByteArray bytes =
@@ -897,12 +912,25 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
     untrusted_data_file.close();
   }
   BrowsingDataStore untrusted_data(untrusted_data_path);
-  const bool stored_urls_filtered =
-      untrusted_data_written && untrusted_data.Load() &&
+  const bool untrusted_loaded = untrusted_data.Load();
+  untrusted_data.RecordVisit(
+      second_url, QStringLiteral("  Updated\r\nHistory  "),
+      QDateTime::fromSecsSinceEpoch(123, Qt::UTC));
+  const bool stored_data_sanitized =
+      untrusted_data_written && untrusted_loaded &&
       untrusted_data.bookmarks().size() == 1 &&
       untrusted_data.bookmarks().first().url == first_url &&
+      untrusted_data.bookmarks().first().title.size() == 512 &&
+      untrusted_data.bookmarks().first().created_at ==
+          QDateTime::fromSecsSinceEpoch(0, Qt::UTC) &&
       untrusted_data.history().size() == 1 &&
-      untrusted_data.history().first().url == second_url;
+      untrusted_data.history().first().url == second_url &&
+      untrusted_data.history().first().title ==
+          QStringLiteral("Updated History") &&
+      untrusted_data.history().first().visit_count ==
+          std::numeric_limits<int>::max() &&
+      untrusted_data.history().first().last_visited_at ==
+          QDateTime::fromSecsSinceEpoch(123, Qt::UTC);
   const bool removed = restored.RemoveBookmark(first_url) &&
                        !restored.IsBookmarked(first_url);
   const QString bookmarked_url = window->current_url();
@@ -954,7 +982,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       after_single_remove.history().first().url == first_url;
   const bool profile_ok = add_first && reject_duplicate && add_second && saved &&
                           import_ok && round_trip_ok &&
-                          bookmark_ok && history_ok && stored_urls_filtered &&
+                          bookmark_ok && history_ok && stored_data_sanitized &&
                           removed && suggestions_ok && !first_label.isEmpty() &&
                           renamed &&
                           rename_persisted && empty_name &&
@@ -964,7 +992,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
     *output << "PROFILE_SMOKE_FAILED bookmark=" << bookmark_ok
             << " import=" << import_ok << " roundtrip=" << round_trip_ok
             << " history=" << history_ok << " removed=" << removed
-            << " stored_urls=" << stored_urls_filtered
+            << " stored_data=" << stored_data_sanitized
             << " suggestions=" << suggestions_ok
             << " titled=" << !first_label.isEmpty()
             << " renamed=" << rename_persisted

@@ -1,6 +1,8 @@
 #include "profile/browsing_data_store.h"
 
 #include <algorithm>
+#include <limits>
+#include <optional>
 
 #include <QDir>
 #include <QFile>
@@ -23,25 +25,55 @@ constexpr int kMaxBookmarks = 1000;
 constexpr int kMaxHistoryEntries = 1000;
 constexpr int kMaxDataBytes = 2 * 1024 * 1024;
 constexpr int kMaxBookmarkHtmlBytes = 5 * 1024 * 1024;
+constexpr int kMaxTitleCharacters = 512;
+constexpr int kMaxRecordUrlBytes = 64 * 1024;
 
 void SetError(QString* error, const QString& value) {
   if (error) *error = value;
 }
 
+QString NormalizeTitle(QString value) {
+  for (qsizetype index = 0; index < value.size(); ++index) {
+    if (value.at(index).category() == QChar::Other_Control) {
+      value[index] = QLatin1Char(' ');
+    }
+  }
+  return value.simplified().left(kMaxTitleCharacters);
+}
+
+QDateTime NormalizeDate(QDateTime value) {
+  return value.isValid() ? value.toUTC()
+                         : QDateTime::fromSecsSinceEpoch(0, Qt::UTC);
+}
+
 QDateTime ParseDate(const QJsonValue& value) {
-  return QDateTime::fromString(value.toString(), Qt::ISODateWithMs);
+  return NormalizeDate(
+      QDateTime::fromString(value.toString(), Qt::ISODateWithMs));
+}
+
+std::optional<QString> NormalizeRecordableUrl(QString value) {
+  const auto normalized =
+      BrowserSettings::NormalizeStoredUrl(std::move(value));
+  if (!normalized || *normalized == QStringLiteral("about:blank") ||
+      normalized->toUtf8().size() > kMaxRecordUrlBytes) {
+    return std::nullopt;
+  }
+  return normalized;
 }
 
 QString DecodeHtml(const QString& value) {
   return QTextDocumentFragment::fromHtml(value).toPlainText();
 }
 
-bool IsSafeImportedUrl(const QString& value) {
-  const QUrl url(value);
-  const QString scheme = url.scheme().toLower();
-  return url.isValid() && !url.host().isEmpty() &&
-         (scheme == QStringLiteral("http") ||
-          scheme == QStringLiteral("https"));
+std::optional<QString> NormalizeImportedUrl(QString value) {
+  const auto normalized = NormalizeRecordableUrl(std::move(value));
+  if (!normalized) return std::nullopt;
+  const QString scheme = QUrl(*normalized).scheme();
+  if (scheme != QStringLiteral("http") &&
+      scheme != QStringLiteral("https")) {
+    return std::nullopt;
+  }
+  return normalized;
 }
 
 }  // namespace
@@ -74,35 +106,41 @@ bool BrowsingDataStore::Load(QString* error) {
   }
 
   QList<Bookmark> loaded_bookmarks;
+  QSet<QString> seen_bookmarks;
   const QJsonArray bookmarks = root.value(QStringLiteral("bookmarks")).toArray();
-  for (int index = 0;
-       index < std::min(static_cast<int>(bookmarks.size()), kMaxBookmarks);
+  for (int index = 0; index < bookmarks.size() &&
+                      loaded_bookmarks.size() < kMaxBookmarks;
        ++index) {
     const QJsonObject object = bookmarks.at(index).toObject();
     Bookmark bookmark{object.value(QStringLiteral("url")).toString(),
-                      object.value(QStringLiteral("title")).toString(),
+                      NormalizeTitle(
+                          object.value(QStringLiteral("title")).toString()),
                       ParseDate(object.value(QStringLiteral("createdAt")))};
-    const auto normalized = BrowserSettings::NormalizeStoredUrl(bookmark.url);
-    if (normalized && *normalized != QStringLiteral("about:blank")) {
+    const auto normalized = NormalizeRecordableUrl(bookmark.url);
+    if (normalized && !seen_bookmarks.contains(*normalized)) {
       bookmark.url = *normalized;
+      seen_bookmarks.insert(bookmark.url);
       loaded_bookmarks.append(bookmark);
     }
   }
 
   QList<HistoryEntry> loaded_history;
+  QSet<QString> seen_history;
   const QJsonArray history = root.value(QStringLiteral("history")).toArray();
-  for (int index = 0;
-       index < std::min(static_cast<int>(history.size()), kMaxHistoryEntries);
+  for (int index = 0; index < history.size() &&
+                      loaded_history.size() < kMaxHistoryEntries;
        ++index) {
     const QJsonObject object = history.at(index).toObject();
     HistoryEntry entry{
         object.value(QStringLiteral("url")).toString(),
-        object.value(QStringLiteral("title")).toString(),
+        NormalizeTitle(object.value(QStringLiteral("title")).toString()),
         ParseDate(object.value(QStringLiteral("lastVisitedAt"))),
-        std::max(1, object.value(QStringLiteral("visitCount")).toInt(1))};
-    const auto normalized = BrowserSettings::NormalizeStoredUrl(entry.url);
-    if (normalized && *normalized != QStringLiteral("about:blank")) {
+        std::clamp(object.value(QStringLiteral("visitCount")).toInt(1), 1,
+                   std::numeric_limits<int>::max())};
+    const auto normalized = NormalizeRecordableUrl(entry.url);
+    if (normalized && !seen_history.contains(*normalized)) {
       entry.url = *normalized;
+      seen_history.insert(entry.url);
       loaded_history.append(entry);
     }
   }
@@ -119,22 +157,28 @@ bool BrowsingDataStore::Save(QString* error) const {
   }
   QJsonArray bookmarks;
   for (const Bookmark& bookmark : bookmarks_) {
+    const auto url = NormalizeRecordableUrl(bookmark.url);
+    if (!url) continue;
     bookmarks.append(QJsonObject{
-        {QStringLiteral("url"), bookmark.url},
-        {QStringLiteral("title"), bookmark.title},
+        {QStringLiteral("url"), *url},
+        {QStringLiteral("title"), NormalizeTitle(bookmark.title)},
         {QStringLiteral("createdAt"),
-         bookmark.created_at.toString(Qt::ISODateWithMs)},
+         NormalizeDate(bookmark.created_at).toString(Qt::ISODateWithMs)},
     });
+    if (bookmarks.size() >= kMaxBookmarks) break;
   }
   QJsonArray history;
   for (const HistoryEntry& entry : history_) {
+    const auto url = NormalizeRecordableUrl(entry.url);
+    if (!url) continue;
     history.append(QJsonObject{
-        {QStringLiteral("url"), entry.url},
-        {QStringLiteral("title"), entry.title},
+        {QStringLiteral("url"), *url},
+        {QStringLiteral("title"), NormalizeTitle(entry.title)},
         {QStringLiteral("lastVisitedAt"),
-         entry.last_visited_at.toString(Qt::ISODateWithMs)},
-        {QStringLiteral("visitCount"), entry.visit_count},
+         NormalizeDate(entry.last_visited_at).toString(Qt::ISODateWithMs)},
+        {QStringLiteral("visitCount"), std::max(1, entry.visit_count)},
     });
+    if (history.size() >= kMaxHistoryEntries) break;
   }
 
   const QJsonObject root{
@@ -195,11 +239,12 @@ bool BrowsingDataStore::ImportBookmarksHtml(const QString& path,
     QString encoded_url = href.captured(1);
     if (encoded_url.isEmpty()) encoded_url = href.captured(2);
     if (encoded_url.isEmpty()) encoded_url = href.captured(3);
-    const QString url = DecodeHtml(encoded_url).trimmed();
-    if (!IsSafeImportedUrl(url) || seen.contains(url)) continue;
-    seen.insert(url);
-    imported.append(Bookmark{url, DecodeHtml(anchor.captured(2)).trimmed(),
-                             QDateTime::currentDateTimeUtc()});
+    const auto url = NormalizeImportedUrl(DecodeHtml(encoded_url));
+    if (!url || seen.contains(*url)) continue;
+    seen.insert(*url);
+    imported.append(
+        Bookmark{*url, NormalizeTitle(DecodeHtml(anchor.captured(2))),
+                 QDateTime::currentDateTimeUtc()});
   }
   for (auto bookmark = imported.crbegin(); bookmark != imported.crend();
        ++bookmark) {
@@ -250,36 +295,47 @@ bool BrowsingDataStore::ExportBookmarksHtml(const QString& path,
 }
 
 bool BrowsingDataStore::IsBookmarked(const QString& url) const {
+  const auto normalized = NormalizeRecordableUrl(url);
+  if (!normalized) return false;
   return std::any_of(bookmarks_.cbegin(), bookmarks_.cend(),
-                     [&url](const Bookmark& bookmark) {
-                       return bookmark.url == url;
+                     [&normalized](const Bookmark& bookmark) {
+                       return bookmark.url == *normalized;
                      });
 }
 
 bool BrowsingDataStore::AddBookmark(const QString& url, const QString& title) {
-  if (!IsRecordableUrl(url) || IsBookmarked(url) ||
+  const auto normalized = NormalizeRecordableUrl(url);
+  if (!normalized || IsBookmarked(*normalized) ||
       bookmarks_.size() >= kMaxBookmarks) {
     return false;
   }
-  bookmarks_.prepend(
-      Bookmark{url, title.trimmed(), QDateTime::currentDateTimeUtc()});
+  bookmarks_.prepend(Bookmark{*normalized, NormalizeTitle(title),
+                              QDateTime::currentDateTimeUtc()});
   return true;
 }
 
 bool BrowsingDataStore::RenameBookmark(const QString& url,
                                        const QString& title) {
+  const auto normalized = NormalizeRecordableUrl(url);
+  if (!normalized) return false;
   const auto found = std::find_if(
       bookmarks_.begin(), bookmarks_.end(),
-      [&url](const Bookmark& bookmark) { return bookmark.url == url; });
+      [&normalized](const Bookmark& bookmark) {
+        return bookmark.url == *normalized;
+      });
   if (found == bookmarks_.end()) return false;
-  found->title = title.trimmed();
+  found->title = NormalizeTitle(title);
   return true;
 }
 
 bool BrowsingDataStore::RemoveBookmark(const QString& url) {
+  const auto normalized = NormalizeRecordableUrl(url);
+  if (!normalized) return false;
   const auto found = std::find_if(
       bookmarks_.begin(), bookmarks_.end(),
-      [&url](const Bookmark& bookmark) { return bookmark.url == url; });
+      [&normalized](const Bookmark& bookmark) {
+        return bookmark.url == *normalized;
+      });
   if (found == bookmarks_.end()) return false;
   bookmarks_.erase(found);
   return true;
@@ -287,27 +343,37 @@ bool BrowsingDataStore::RemoveBookmark(const QString& url) {
 
 void BrowsingDataStore::RecordVisit(const QString& url, const QString& title,
                                     QDateTime visited_at) {
-  if (!IsRecordableUrl(url)) return;
+  const auto normalized = NormalizeRecordableUrl(url);
+  if (!normalized) return;
   const auto found = std::find_if(
       history_.begin(), history_.end(),
-      [&url](const HistoryEntry& entry) { return entry.url == url; });
+      [&normalized](const HistoryEntry& entry) {
+        return entry.url == *normalized;
+      });
   if (found != history_.end()) {
     HistoryEntry entry = *found;
     history_.erase(found);
-    entry.title = title.trimmed();
-    entry.last_visited_at = visited_at;
-    ++entry.visit_count;
+    entry.title = NormalizeTitle(title);
+    entry.last_visited_at = NormalizeDate(visited_at);
+    if (entry.visit_count < std::numeric_limits<int>::max()) {
+      ++entry.visit_count;
+    }
     history_.prepend(std::move(entry));
   } else {
-    history_.prepend(HistoryEntry{url, title.trimmed(), visited_at, 1});
+    history_.prepend(HistoryEntry{*normalized, NormalizeTitle(title),
+                                  NormalizeDate(visited_at), 1});
   }
   while (history_.size() > kMaxHistoryEntries) history_.removeLast();
 }
 
 bool BrowsingDataStore::RemoveHistory(const QString& url) {
+  const auto normalized = NormalizeRecordableUrl(url);
+  if (!normalized) return false;
   const auto found = std::find_if(
       history_.begin(), history_.end(),
-      [&url](const HistoryEntry& entry) { return entry.url == url; });
+      [&normalized](const HistoryEntry& entry) {
+        return entry.url == *normalized;
+      });
   if (found == history_.end()) return false;
   history_.erase(found);
   return true;
@@ -318,6 +384,5 @@ void BrowsingDataStore::ClearHistory() {
 }
 
 bool BrowsingDataStore::IsRecordableUrl(const QString& url) {
-  const auto normalized = BrowserSettings::NormalizeStoredUrl(url);
-  return normalized && *normalized != QStringLiteral("about:blank");
+  return NormalizeRecordableUrl(url).has_value();
 }

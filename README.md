@@ -32,9 +32,11 @@ restored on the next regular launch. A previous unclean exit is detected and
 reported after its tabs are recovered. An explicit startup URL takes priority
 over the saved session. Restored tabs, recently closed tabs, bookmarks, and
 history are revalidated before they can navigate, so a damaged or modified
-profile cannot reintroduce blocked URL schemes. The browser also provides
-in-page search, per-tab page
-zoom, persistent bookmarks, and a bounded visit history.
+profile cannot reintroduce blocked URL schemes. Bookmark and history recovery
+also removes duplicate URLs, bounds display text and visit counters, and
+repairs invalid timestamps before the data reaches browser menus. The browser
+also provides in-page search, per-tab page zoom, persistent bookmarks, and a
+bounded visit history.
 Sensitive site capabilities use explicit one-time allow/block prompts, invalid
 HTTPS certificates are blocked with a dedicated error page, and only a small
 allowlist of external URL schemes can reach an OS application after user
