@@ -134,6 +134,8 @@ recently closed tabs, download history, or site data including HTTP cache,
 cookies, HTTP credentials, and certificate exceptions
 while preserving bookmarks; the updated session is persisted immediately, and
 completion is reported only after every asynchronous CEF operation finishes.
+Site-data clearing has a 15-second deadline; stalled tasks are reported as
+failed, and late or duplicate callbacks cannot complete a newer clear request.
 If clearing browsing history or recently closed tabs cannot be persisted, the
 corresponding in-memory list is restored instead of pretending the data was
 removed for the current run.

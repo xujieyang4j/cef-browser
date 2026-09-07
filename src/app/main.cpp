@@ -1846,10 +1846,23 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path,
           blocked_session_created && QDir(session_path).removeRecursively();
       const bool session_reseeded =
           blocked_session_removed && window->save_session_for_testing(false);
-      if (!recent_clear_rolled_back || !session_reseeded) {
+      window->ClearBrowsingDataForTesting(false, false, false, true);
+      const bool timeout_started =
+          window->browsing_data_clear_in_progress_for_testing() &&
+          window->browsing_data_clear_timeout_active_for_testing();
+      window->ExpireBrowsingDataClearForTesting();
+      const bool timeout_released =
+          !window->browsing_data_clear_in_progress_for_testing() &&
+          !window->browsing_data_clear_timeout_active_for_testing() &&
+          window->browsing_data_clear_result_for_testing().contains(
+              QStringLiteral("Could not clear:"));
+      if (!recent_clear_rolled_back || !session_reseeded ||
+          !timeout_started || !timeout_released) {
         *output << "PRIVACY_SMOKE_FAILED recent_rollback="
                 << recent_clear_rolled_back
-                << " session_reseeded=" << session_reseeded << Qt::endl;
+                << " session_reseeded=" << session_reseeded
+                << " timeout_started=" << timeout_started
+                << " timeout_released=" << timeout_released << Qt::endl;
         QCoreApplication::exit(11);
         return;
       }
@@ -1887,7 +1900,8 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path,
       if (cleared && session_cleared && downloads_cleared && completed) {
         *output << "PRIVACY_SMOKE_OK selective=preserved history=cleared "
                    "recent=transactional "
-                   "downloads=cleared session=cleared cef=completed"
+                   "downloads=cleared session=cleared cef=completed "
+                   "timeout=released"
                 << Qt::endl;
         window->close();
       } else {

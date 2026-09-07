@@ -158,6 +158,8 @@ class MainWindow final : public QMainWindow {
   bool browsing_data_clear_in_progress_for_testing() const {
     return browsing_data_clear_in_progress_;
   }
+  bool browsing_data_clear_timeout_active_for_testing() const;
+  void ExpireBrowsingDataClearForTesting();
   const QString& browsing_data_clear_result_for_testing() const {
     return browsing_data_clear_result_;
   }
@@ -212,7 +214,9 @@ class MainWindow final : public QMainWindow {
   void ShowHistoryContextMenu(const QPoint& position);
   void RebuildAllTabsMenu();
   void ShowClearBrowsingDataPrompt();
-  void CompleteBrowsingDataClearTask(const QString& task, bool success);
+  void CompleteBrowsingDataClearTask(quint64 generation, const QString& task,
+                                     bool success);
+  void ExpireBrowsingDataClear(quint64 generation);
   void RecordVisit(BrowserView* browser);
   bool SaveBrowsingData();
   void RefreshAddressSuggestions();
@@ -226,10 +230,6 @@ class MainWindow final : public QMainWindow {
 
     bool Any() const {
       return history || recently_closed || downloads || site_data;
-    }
-    int TaskCount() const {
-      return static_cast<int>(history) + static_cast<int>(recently_closed) +
-             static_cast<int>(downloads) + (site_data ? 4 : 0);
     }
   };
 
@@ -322,6 +322,7 @@ class MainWindow final : public QMainWindow {
   DownloadManager* download_manager_ = nullptr;
   DownloadPanel* download_panel_ = nullptr;
   QTimer* session_save_timer_ = nullptr;
+  QTimer* browsing_data_clear_timeout_ = nullptr;
   BrowsingDataStore* browsing_data_ = nullptr;
   BrowserSettings* browser_settings_ = nullptr;
   QSet<BrowserView*> closing_tabs_;
@@ -340,7 +341,8 @@ class MainWindow final : public QMainWindow {
   bool download_exit_prompt_open_ = false;
   bool browsing_data_clear_in_progress_ = false;
   bool browsing_data_clear_show_result_ = false;
-  int browsing_data_clear_pending_ = 0;
+  quint64 browsing_data_clear_generation_ = 0;
+  QSet<QString> browsing_data_clear_pending_tasks_;
   QStringList browsing_data_clear_failures_;
   QStringList browsing_data_clear_completed_;
   QString browsing_data_clear_result_;

@@ -317,6 +317,11 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
       PersistSession(CaptureSession(false));
     }
   });
+  browsing_data_clear_timeout_ = new QTimer(this);
+  browsing_data_clear_timeout_->setSingleShot(true);
+  connect(browsing_data_clear_timeout_, &QTimer::timeout, this, [this] {
+    ExpireBrowsingDataClear(browsing_data_clear_generation_);
+  });
   page_layout->addWidget(tab_strip_);
   page_layout->addWidget(toolbar_);
   page_layout->addWidget(loading_progress_);
@@ -1076,6 +1081,14 @@ void MainWindow::DismissClearBrowsingDataForTesting() {
       dialog->reject();
     }
   }
+}
+
+bool MainWindow::browsing_data_clear_timeout_active_for_testing() const {
+  return browsing_data_clear_timeout_->isActive();
+}
+
+void MainWindow::ExpireBrowsingDataClearForTesting() {
+  ExpireBrowsingDataClear(browsing_data_clear_generation_);
 }
 
 QString MainWindow::media_permission_description_for_testing(
@@ -2730,19 +2743,40 @@ void MainWindow::BeginClearBrowsingData(
   if (browsing_data_clear_in_progress_ || !selection.Any()) return;
   browsing_data_clear_in_progress_ = true;
   browsing_data_clear_show_result_ = show_result_dialog;
-  browsing_data_clear_pending_ = selection.TaskCount();
+  const quint64 generation = ++browsing_data_clear_generation_;
+  browsing_data_clear_pending_tasks_.clear();
+  if (selection.history) {
+    browsing_data_clear_pending_tasks_.insert(QStringLiteral("browsing history"));
+  }
+  if (selection.recently_closed) {
+    browsing_data_clear_pending_tasks_.insert(
+        QStringLiteral("recently closed tabs"));
+  }
+  if (selection.downloads) {
+    browsing_data_clear_pending_tasks_.insert(QStringLiteral("download history"));
+  }
+  if (selection.site_data) {
+    browsing_data_clear_pending_tasks_.insert(QStringLiteral("cache"));
+    browsing_data_clear_pending_tasks_.insert(QStringLiteral("site credentials"));
+    browsing_data_clear_pending_tasks_.insert(
+        QStringLiteral("certificate exceptions"));
+    browsing_data_clear_pending_tasks_.insert(QStringLiteral("cookies"));
+  }
   browsing_data_clear_failures_.clear();
   browsing_data_clear_completed_.clear();
   browsing_data_clear_result_.clear();
   RebuildHistoryMenu();
   statusBar()->showMessage(QStringLiteral("Clearing browsing data…"));
+  constexpr int kBrowsingDataClearTimeoutMs = 15 * 1000;
+  browsing_data_clear_timeout_->start(kBrowsingDataClearTimeoutMs);
 
   if (selection.history) {
     const BrowsingDataStore previous = *browsing_data_;
     browsing_data_->ClearHistory();
     const bool saved = SaveBrowsingData();
     if (!saved) *browsing_data_ = previous;
-    CompleteBrowsingDataClearTask(QStringLiteral("browsing history"), saved);
+    CompleteBrowsingDataClearTask(
+        generation, QStringLiteral("browsing history"), saved);
     RebuildHistoryMenu();
     RefreshAddressSuggestions();
   }
@@ -2770,40 +2804,44 @@ void MainWindow::BeginClearBrowsingData(
     RebuildHistoryMenu();
     RebuildAllTabsMenu();
     UpdateChrome();
-    CompleteBrowsingDataClearTask(QStringLiteral("recently closed tabs"),
-                                  saved);
+    CompleteBrowsingDataClearTask(
+        generation, QStringLiteral("recently closed tabs"), saved);
   }
   if (selection.downloads) {
-    CompleteBrowsingDataClearTask(QStringLiteral("download history"),
-                                  download_manager_->ClearFinished());
+    CompleteBrowsingDataClearTask(
+        generation, QStringLiteral("download history"),
+        download_manager_->ClearFinished());
   }
   if (!selection.site_data) return;
 
   QPointer<MainWindow> owner(this);
   CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
   if (!context) {
-    CompleteBrowsingDataClearTask(QStringLiteral("cache"), false);
-    CompleteBrowsingDataClearTask(QStringLiteral("site credentials"), false);
-    CompleteBrowsingDataClearTask(QStringLiteral("certificate exceptions"),
+    CompleteBrowsingDataClearTask(generation, QStringLiteral("cache"), false);
+    CompleteBrowsingDataClearTask(
+        generation, QStringLiteral("site credentials"), false);
+    CompleteBrowsingDataClearTask(
+        generation, QStringLiteral("certificate exceptions"), false);
+    CompleteBrowsingDataClearTask(generation, QStringLiteral("cookies"),
                                   false);
-    CompleteBrowsingDataClearTask(QStringLiteral("cookies"), false);
     return;
   }
 
-  context->ClearHttpCache(new CompletionCallback([owner] {
-    if (owner) owner->CompleteBrowsingDataClearTask(QStringLiteral("cache"),
-                                                     true);
+  context->ClearHttpCache(new CompletionCallback([owner, generation] {
+    if (owner) owner->CompleteBrowsingDataClearTask(
+        generation, QStringLiteral("cache"), true);
   }));
-  context->ClearHttpAuthCredentials(new CompletionCallback([owner] {
+  context->ClearHttpAuthCredentials(new CompletionCallback([owner, generation] {
     if (owner) {
       owner->CompleteBrowsingDataClearTask(
-          QStringLiteral("site credentials"), true);
+          generation, QStringLiteral("site credentials"), true);
     }
   }));
-  context->ClearCertificateExceptions(new CompletionCallback([owner] {
+  context->ClearCertificateExceptions(
+      new CompletionCallback([owner, generation] {
     if (owner) {
       owner->CompleteBrowsingDataClearTask(
-          QStringLiteral("certificate exceptions"), true);
+          generation, QStringLiteral("certificate exceptions"), true);
     }
   }));
 
@@ -2812,26 +2850,29 @@ void MainWindow::BeginClearBrowsingData(
   if (!cookie_manager ||
       !cookie_manager->DeleteCookies(
           CefString(), CefString(),
-          new DeleteCookiesCallback([owner](int deleted) {
+          new DeleteCookiesCallback([owner, generation](int deleted) {
             if (owner) {
-              owner->CompleteBrowsingDataClearTask(QStringLiteral("cookies"),
-                                                    deleted >= 0);
+              owner->CompleteBrowsingDataClearTask(
+                  generation, QStringLiteral("cookies"), deleted >= 0);
             }
           }))) {
-    CompleteBrowsingDataClearTask(QStringLiteral("cookies"), false);
+    CompleteBrowsingDataClearTask(generation, QStringLiteral("cookies"),
+                                  false);
   }
 }
 
-void MainWindow::CompleteBrowsingDataClearTask(const QString& task,
-                                               bool success) {
-  if (!browsing_data_clear_in_progress_ || browsing_data_clear_pending_ <= 0) {
+void MainWindow::CompleteBrowsingDataClearTask(
+    quint64 generation, const QString& task, bool success) {
+  if (!browsing_data_clear_in_progress_ ||
+      generation != browsing_data_clear_generation_ ||
+      !browsing_data_clear_pending_tasks_.remove(task)) {
     return;
   }
   if (!success) browsing_data_clear_failures_.append(task);
   if (success) browsing_data_clear_completed_.append(task);
-  --browsing_data_clear_pending_;
-  if (browsing_data_clear_pending_ > 0) return;
+  if (!browsing_data_clear_pending_tasks_.isEmpty()) return;
 
+  browsing_data_clear_timeout_->stop();
   browsing_data_clear_in_progress_ = false;
   if (!browsing_data_clear_completed_.isEmpty()) {
     browsing_data_clear_result_ =
@@ -2859,6 +2900,18 @@ void MainWindow::CompleteBrowsingDataClearTask(const QString& task,
         browsing_data_clear_result_, QMessageBox::Ok, this);
     result->setAttribute(Qt::WA_DeleteOnClose);
     result->open();
+  }
+}
+
+void MainWindow::ExpireBrowsingDataClear(quint64 generation) {
+  if (!browsing_data_clear_in_progress_ ||
+      generation != browsing_data_clear_generation_) {
+    return;
+  }
+  browsing_data_clear_timeout_->stop();
+  const QList<QString> pending = browsing_data_clear_pending_tasks_.values();
+  for (const QString& task : pending) {
+    CompleteBrowsingDataClearTask(generation, task, false);
   }
 }
 
