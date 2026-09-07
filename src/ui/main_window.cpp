@@ -442,7 +442,15 @@ void MainWindow::OpenTabForTesting(const QString& url) {
 }
 
 void MainWindow::HandleExternalOpenRequest(const QString& url) {
-  if (!url.isEmpty()) AddTab(url, true);
+  if (!url.trimmed().isEmpty()) {
+    const auto normalized = NormalizeUrl(url);
+    if (normalized) {
+      AddTab(*normalized, true);
+    } else {
+      statusBar()->showMessage(
+          QStringLiteral("Blocked an unsupported external URL"), 5000);
+    }
+  }
   if (isMinimized()) showNormal();
   show();
   raise();
@@ -752,7 +760,8 @@ bool MainWindow::SelectSearchEngineForTesting(const QString& name) {
   return false;
 }
 
-QString MainWindow::NormalizeUrlForTesting(const QString& input) const {
+std::optional<QString> MainWindow::NormalizeUrlForTesting(
+    const QString& input) const {
   return NormalizeUrl(input);
 }
 
@@ -1041,11 +1050,17 @@ void MainWindow::NavigateFromAddressBar() {
   if (BrowserView* browser = CurrentBrowser()) {
     const QString entered = address_bar_->text();
     const QString suggested_url = address_suggestion_urls_.value(entered);
-    const QString url = NormalizeUrl(suggested_url.isEmpty() ? entered
-                                                              : suggested_url);
-    address_bar_->setText(url == QStringLiteral("about:blank") ? QString()
-                                                                 : url);
-    browser->LoadUrl(url);
+    const auto url = NormalizeUrl(suggested_url.isEmpty() ? entered
+                                                           : suggested_url);
+    if (!url) {
+      statusBar()->showMessage(
+          QStringLiteral("This URL scheme is not supported"), 5000);
+      address_bar_->selectAll();
+      return;
+    }
+    address_bar_->setText(*url == QStringLiteral("about:blank") ? QString()
+                                                                   : *url);
+    browser->LoadUrl(*url);
   }
 }
 
@@ -2033,9 +2048,9 @@ void MainWindow::SetSearchEngine(int engine_value) {
 }
 
 bool MainWindow::SetHomePage(const QString& value) {
-  const QString normalized = NormalizeUrl(value);
+  const auto normalized = NormalizeUrl(value);
   const QString previous = browser_settings_->home_page();
-  if (!browser_settings_->set_home_page(normalized)) {
+  if (!normalized || !browser_settings_->set_home_page(*normalized)) {
     statusBar()->showMessage(QStringLiteral("This URL cannot be used as home"),
                              5000);
     return false;
@@ -2678,21 +2693,7 @@ bool MainWindow::PersistSession(const BrowserSession& session) {
   return saved;
 }
 
-QString MainWindow::NormalizeUrl(QString input) const {
-  input = input.trimmed();
-  if (input.isEmpty()) return QStringLiteral("about:blank");
-
-  const QUrl literal(input);
-  const bool explicit_scheme = !literal.scheme().isEmpty();
-  const bool likely_address =
-      explicit_scheme || input.contains(QLatin1Char('.')) ||
-      input.contains(QLatin1Char(':')) ||
-      input.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0 ||
-      input.startsWith(QLatin1Char('/'));
-  if (input.contains(QLatin1Char(' ')) || !likely_address) {
-    return BrowserSettings::SearchUrl(browser_settings_->search_engine(), input);
-  }
-
-  const QUrl parsed = QUrl::fromUserInput(input);
-  return parsed.isValid() ? parsed.toString() : QStringLiteral("about:blank");
+std::optional<QString> MainWindow::NormalizeUrl(QString input) const {
+  return BrowserSettings::NormalizeNavigationInput(
+      browser_settings_->search_engine(), std::move(input));
 }

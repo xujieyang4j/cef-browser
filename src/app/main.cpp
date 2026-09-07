@@ -437,7 +437,11 @@ BrowserSession DefaultSession(const QString& url) {
 BrowserSession SelectInitialSession(
     const BrowserSettings& settings, const std::optional<QString>& explicit_url,
     const std::optional<BrowserSession>& restored) {
-  if (explicit_url) return DefaultSession(*explicit_url);
+  if (explicit_url) {
+    const auto normalized = BrowserSettings::NormalizeNavigationInput(
+        settings.search_engine(), *explicit_url);
+    return DefaultSession(normalized.value_or(settings.home_page()));
+  }
   switch (settings.startup_behavior()) {
     case BrowserSettings::StartupBehavior::RestoreSession:
       return restored.value_or(DefaultSession(settings.home_page()));
@@ -1162,6 +1166,26 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
           QStringLiteral("http://localhost:8080") &&
       window->NormalizeUrlForTesting(QStringLiteral("intranet")) ==
           QStringLiteral("https://duckduckgo.com/?q=intranet");
+  const auto normalized_https =
+      window->NormalizeUrlForTesting(QStringLiteral("HTTPS://example.com/a"));
+  const auto normalized_file = window->NormalizeUrlForTesting(
+      QStringLiteral("file:///tmp/trail%20browser.html"));
+  const auto normalized_blank =
+      window->NormalizeUrlForTesting(QStringLiteral("ABOUT:BLANK"));
+  const bool safe_schemes =
+      normalized_https == QStringLiteral("https://example.com/a") &&
+      normalized_file == QStringLiteral("file:///tmp/trail%20browser.html") &&
+      normalized_blank == QStringLiteral("about:blank");
+  const bool unsafe_navigation_rejected =
+      !window->NormalizeUrlForTesting(
+          QStringLiteral("javascript:alert(1)")) &&
+      !window->NormalizeUrlForTesting(QStringLiteral("javascript:123")) &&
+      !window->NormalizeUrlForTesting(
+          QStringLiteral("data:text/html,unsafe")) &&
+      !window->NormalizeUrlForTesting(
+          QStringLiteral("unknown-scheme:payload")) &&
+      !window->NormalizeUrlForTesting(QStringLiteral("unknown-scheme:123")) &&
+      !window->NormalizeUrlForTesting(QStringLiteral("about:settings"));
   const bool menu_ok = window->application_menu_actions_for_testing(
                                   QStringLiteral("Settings")) ==
                               QStringList{
@@ -1216,11 +1240,26 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
                            previous_session)
               .tab_urls ==
           QStringList{QStringLiteral("https://example.test/explicit")};
+  const bool startup_normalization =
+      SelectInitialSession(startup_restored, QStringLiteral("example.test/path"),
+                           previous_session)
+              .tab_urls ==
+          QStringList{QStringLiteral("http://example.test/path")} &&
+      SelectInitialSession(startup_restored, QStringLiteral("privacy query"),
+                           previous_session)
+              .tab_urls ==
+          QStringList{QStringLiteral("https://duckduckgo.com/?q=privacy%20query")} &&
+      SelectInitialSession(startup_restored,
+                           QStringLiteral("javascript:alert(1)"),
+                           previous_session)
+              .tab_urls == QStringList{home_url};
   const bool startup_decision = home_startup && restore_startup &&
-                                blank_startup && explicit_startup;
+                                blank_startup && explicit_startup &&
+                                startup_normalization;
   const bool preliminary_ok = default_ok && selected && persisted && encoded &&
-                              address_ok && menu_ok && home_saved &&
-                              home_persisted && unsafe_rejected &&
+                              address_ok && safe_schemes &&
+                              unsafe_navigation_rejected && menu_ok &&
+                              home_saved && home_persisted && unsafe_rejected &&
                               new_tab_setting && new_tab_persisted &&
                               startup_selected && startup_persisted &&
                               startup_decision;
@@ -1228,6 +1267,11 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
     *output << "SEARCH_SETTINGS_SMOKE_FAILED default=" << default_ok
             << " selected=" << selected << " persisted=" << persisted
             << " encoded=" << encoded << " address=" << address_ok
+            << " safe_schemes=" << safe_schemes
+            << " https=" << normalized_https.value_or(QStringLiteral("null"))
+            << " file=" << normalized_file.value_or(QStringLiteral("null"))
+            << " blank=" << normalized_blank.value_or(QStringLiteral("null"))
+            << " unsafe_navigation=" << unsafe_navigation_rejected
             << " menu=" << menu_ok << " home=" << home_persisted
             << " unsafe=" << unsafe_rejected
             << " new_tab=" << new_tab_persisted
@@ -1341,12 +1385,15 @@ void StartSingleInstanceSmokeTest(MainWindow* window,
                                   const QString& data_path) {
   auto output = std::make_shared<QTextStream>(stdout);
   const QString forwarded_url =
-      QStringLiteral("data:text/html,<title>Forwarded Instance</title>");
-  auto client = std::make_shared<SingleInstance>(data_path);
+      QStringLiteral("http://example.test/forwarded");
+  auto forward = [data_path](const QString& value, QString* error) {
+    SingleInstance client(data_path);
+    return client.Start(value, error) ==
+           SingleInstance::StartResult::Forwarded;
+  };
   QString error;
-  const bool forwarded =
-      client->Start(forwarded_url, &error) ==
-      SingleInstance::StartResult::Forwarded;
+  const bool forwarded = forward(QStringLiteral("example.test/forwarded"),
+                                 &error);
   if (!forwarded) {
     *output << "SINGLE_INSTANCE_SMOKE_FAILED forwarded=0 error=" << error
             << Qt::endl;
@@ -1355,11 +1402,30 @@ void StartSingleInstanceSmokeTest(MainWindow* window,
   }
 
   auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
   auto step = std::make_shared<std::function<void()>>();
-  *step = [window, output, attempts, step, client, forwarded_url] {
+  *step = [window, output, attempts, stage, step, forward, forwarded_url] {
     ++*attempts;
-    if (window->tab_count() == 2 && window->current_url() == forwarded_url) {
-      *output << "SINGLE_INSTANCE_SMOKE_OK forwarded=url tabs=2"
+    if (*stage == 0 && window->tab_count() == 2 &&
+        window->current_url() == forwarded_url) {
+      QString error;
+      const bool rejected_sent =
+          forward(QStringLiteral("javascript:alert(1)"), &error);
+      const bool activation_sent = forward(QString(), &error);
+      const bool search_sent = forward(QStringLiteral("trail browser"), &error);
+      if (!rejected_sent || !activation_sent || !search_sent) {
+        *output << "SINGLE_INSTANCE_SMOKE_FAILED followup=0 error=" << error
+                << Qt::endl;
+        QCoreApplication::exit(21);
+        return;
+      }
+      *stage = 1;
+    } else if (*stage == 1 && window->tab_count() == 3 &&
+               window->current_url() ==
+                   QStringLiteral(
+                       "https://www.google.com/search?q=trail%20browser")) {
+      *output << "SINGLE_INSTANCE_SMOKE_OK forwarded=domain,search "
+                 "activation=window unsafe=blocked tabs=3"
               << Qt::endl;
       window->close();
       return;

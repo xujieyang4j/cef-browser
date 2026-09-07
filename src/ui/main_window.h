@@ -106,7 +106,7 @@ class MainWindow final : public QMainWindow {
   bool open_home_on_new_tab_for_testing() const;
   bool SetStartupBehaviorForTesting(const QString& name);
   QString startup_behavior_for_testing() const;
-  QString NormalizeUrlForTesting(const QString& input) const;
+  std::optional<QString> NormalizeUrlForTesting(const QString& input) const;
   void ActivateTabShortcutForTesting(int number);
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
@@ -208,7 +208,7 @@ class MainWindow final : public QMainWindow {
     ClearData
   };
 
-  QString NormalizeUrl(QString input) const;
+  std::optional<QString> NormalizeUrl(QString input) const;
   BrowserView* AddTab(const QString& url, bool activate,
                       bool focus_address = false);
   BrowserView* CurrentBrowser() const;

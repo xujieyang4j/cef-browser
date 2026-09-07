@@ -19,6 +19,38 @@ void SetError(QString* error, const QString& value) {
   if (error) *error = value;
 }
 
+bool IsSchemeCharacter(QChar value, bool first) {
+  if (value.isLetter()) return true;
+  return !first &&
+         (value.isDigit() || value == QLatin1Char('+') ||
+          value == QLatin1Char('-') || value == QLatin1Char('.'));
+}
+
+bool HasExplicitScheme(const QString& input) {
+  const qsizetype colon = input.indexOf(QLatin1Char(':'));
+  if (colon <= 0) return false;
+  for (qsizetype index = 0; index < colon; ++index) {
+    if (!IsSchemeCharacter(input.at(index), index == 0)) return false;
+  }
+
+  // Host names followed by a numeric port are addresses, even though the
+  // text before the colon also satisfies the URI scheme grammar.
+  qsizetype port_end = colon + 1;
+  while (port_end < input.size() && input.at(port_end).isDigit()) ++port_end;
+  const QString host_candidate = input.first(colon);
+  const bool address_before_port =
+      host_candidate.compare(QStringLiteral("localhost"),
+                             Qt::CaseInsensitive) == 0 ||
+      host_candidate.contains(QLatin1Char('.'));
+  if (address_before_port && port_end > colon + 1 &&
+      (port_end == input.size() || input.at(port_end) == QLatin1Char('/') ||
+       input.at(port_end) == QLatin1Char('?') ||
+       input.at(port_end) == QLatin1Char('#'))) {
+    return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 BrowserSettings::BrowserSettings(QString path) : path_(std::move(path)) {}
@@ -153,6 +185,73 @@ QString BrowserSettings::SearchUrl(SearchEngine engine, const QString& query) {
       return QStringLiteral("https://www.bing.com/search?q=%1").arg(encoded);
   }
   return QStringLiteral("https://www.google.com/search?q=%1").arg(encoded);
+}
+
+std::optional<QString> BrowserSettings::NormalizeNavigationInput(
+    SearchEngine engine, QString input) {
+  input = input.trimmed();
+  if (input.isEmpty()) return QStringLiteral("about:blank");
+
+  const bool absolute_path = QDir::isAbsolutePath(input);
+  if (absolute_path) {
+    return QUrl::fromLocalFile(input).toString(QUrl::FullyEncoded);
+  }
+
+  const bool explicit_scheme = HasExplicitScheme(input);
+  if (explicit_scheme) {
+    const QString scheme = QUrl(input).scheme().toLower();
+    if (scheme == QStringLiteral("about")) {
+      if (input.compare(QStringLiteral("about:blank"),
+                        Qt::CaseInsensitive) == 0) {
+        return QStringLiteral("about:blank");
+      }
+      return std::nullopt;
+    }
+    if (scheme != QStringLiteral("http") &&
+        scheme != QStringLiteral("https") &&
+        scheme != QStringLiteral("file")) {
+      return std::nullopt;
+    }
+
+    QUrl parsed = QUrl::fromUserInput(input);
+    if (!parsed.isValid() ||
+        parsed.scheme().compare(scheme, Qt::CaseInsensitive) != 0) {
+      return std::nullopt;
+    }
+    if ((scheme == QStringLiteral("http") ||
+         scheme == QStringLiteral("https")) &&
+        parsed.host().isEmpty()) {
+      return std::nullopt;
+    }
+    if (scheme == QStringLiteral("file") && parsed.path().isEmpty() &&
+        parsed.host().isEmpty()) {
+      return std::nullopt;
+    }
+    parsed.setScheme(scheme);
+    return parsed.toString(QUrl::FullyEncoded);
+  }
+
+  const bool likely_address =
+      input.contains(QLatin1Char('.')) || input.contains(QLatin1Char(':')) ||
+      input.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0;
+  if (input.contains(QLatin1Char(' ')) || !likely_address) {
+    return SearchUrl(engine, input);
+  }
+
+  const QUrl parsed = QUrl::fromUserInput(input);
+  const QString scheme = parsed.scheme().toLower();
+  if (!parsed.isValid() ||
+      (scheme != QStringLiteral("http") &&
+       scheme != QStringLiteral("https") &&
+       scheme != QStringLiteral("file"))) {
+    return std::nullopt;
+  }
+  if ((scheme == QStringLiteral("http") ||
+       scheme == QStringLiteral("https")) &&
+      parsed.host().isEmpty()) {
+    return std::nullopt;
+  }
+  return parsed.toString(QUrl::FullyEncoded);
 }
 
 QString BrowserSettings::StartupBehaviorId(StartupBehavior behavior) {

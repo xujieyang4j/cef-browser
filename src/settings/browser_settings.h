@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <QString>
 
 class BrowserSettings final {
@@ -27,6 +29,8 @@ class BrowserSettings final {
   static QString SearchEngineId(SearchEngine engine);
   static QString SearchEngineName(SearchEngine engine);
   static QString SearchUrl(SearchEngine engine, const QString& query);
+  static std::optional<QString> NormalizeNavigationInput(
+      SearchEngine engine, QString input);
   static QString StartupBehaviorId(StartupBehavior behavior);
   static QString StartupBehaviorName(StartupBehavior behavior);
 

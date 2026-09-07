@@ -18,7 +18,12 @@ failures and renderer crashes display a retry page while preserving the
 requested URL.
 Only one main process owns a browser profile at a time. Launching Trail Browser
 again activates the existing window and opens an explicitly supplied URL in a
-new tab instead of starting a competing CEF instance.
+new tab instead of starting a competing CEF instance. Address-bar text, first
+startup arguments, and forwarded open requests share the same normalization:
+search terms use the selected engine, host names gain an HTTP scheme, and only
+HTTP(S), local files, and `about:blank` are accepted as explicit navigation
+schemes. Unsupported explicit schemes are blocked rather than turned into a
+search.
 Window geometry, open tab URLs, and the active tab are saved atomically and
 restored on the next regular launch. A previous unclean exit is detected and
 reported after its tabs are recovered. An explicit startup URL takes priority
@@ -177,7 +182,8 @@ mapping, audio/mute state, security-policy, and authentication-dialog checks.
 Keyboard-accessible browser surfaces and full-screen exit routing are also
 covered, along with numeric tab navigation, the all-tabs menu, and selective
 recent-tab restoration, native application-menu actions, search-setting
-persistence, and single-instance URL forwarding. All twenty
+persistence, safe external-input normalization, and single-instance URL
+forwarding. All twenty
 checks are registered when `xvfb-run` is available:
 
 ~~~sh
