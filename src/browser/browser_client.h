@@ -124,7 +124,8 @@ class BrowserClient final : public CefClient,
                      bool* no_javascript_access) override;
 
   void DetachOwner();
-  void NotifyExternalProtocol(const QString& url);
+  void NotifyExternalProtocol(CefRefPtr<CefBrowser> browser,
+                              const QString& url);
   void NotifyAudioState(CefRefPtr<CefBrowser> browser, bool playing);
   void NotifyAuthRequest(CefRefPtr<CefBrowser> browser, QString origin_url,
                          bool is_proxy, QString host, int port, QString realm,

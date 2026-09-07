@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <QByteArray>
 #include <QSet>
 #include <QHash>
@@ -97,6 +99,7 @@ class BrowserView final : public QWidget {
   int zoom_percent() const;
   static QString MediaPermissionDescription(uint32_t permissions);
   static QString PermissionDescription(uint32_t permissions);
+  static std::optional<QString> NormalizeExternalUrl(QString url);
   static bool IsAllowedExternalScheme(const QString& url);
   void ShowFailureForTesting(bool render_process_failed);
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
@@ -148,7 +151,8 @@ class BrowserView final : public QWidget {
       CefRefPtr<CefPermissionPromptCallback> callback);
   void OnCefPermissionDismissed(CefRefPtr<CefBrowser> browser,
                                 quint64 prompt_id);
-  void OnCefExternalProtocol(const QString& url);
+  void OnCefExternalProtocol(CefRefPtr<CefBrowser> browser,
+                             const QString& url);
   void OnCefAuthRequest(CefRefPtr<CefBrowser> browser,
                         const QString& origin_url, bool is_proxy,
                         const QString& host, int port, const QString& realm,
@@ -220,6 +224,7 @@ class BrowserView final : public QWidget {
   bool render_process_failed_ = false;
   QString failure_page_url_;
   QHash<quint64, QPointer<QMessageBox>> permission_dialogs_;
+  QPointer<QMessageBox> external_protocol_dialog_;
   QString certificate_failure_url_;
 
   Q_DISABLE_COPY_MOVE(BrowserView)

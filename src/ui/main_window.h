@@ -146,6 +146,8 @@ class MainWindow final : public QMainWindow {
   }
   QString media_permission_description_for_testing(uint32_t permissions) const;
   QString permission_description_for_testing(uint32_t permissions) const;
+  std::optional<QString> normalize_external_url_for_testing(
+      const QString& url) const;
   bool external_scheme_allowed_for_testing(const QString& url) const;
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
   void SetWebFullscreenForTesting(bool fullscreen);

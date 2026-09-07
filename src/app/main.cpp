@@ -1610,17 +1610,35 @@ void StartSecuritySmokeTest(MainWindow* window) {
   const bool permissions_ok =
       permissions.contains(QStringLiteral("location")) &&
       permissions.contains(QStringLiteral("notifications"));
+  const auto normalized_mail = window->normalize_external_url_for_testing(
+      QStringLiteral("  MAILTO:test@example.com?subject=Trail%20Browser  "));
+  const auto normalized_magnet = window->normalize_external_url_for_testing(
+      QStringLiteral("magnet:?xt=urn:btih:0123456789abcdef"));
   const bool schemes_ok =
+      normalized_mail && normalized_magnet &&
+      *normalized_mail ==
+          QStringLiteral("mailto:test@example.com?subject=Trail%20Browser") &&
+      *normalized_magnet ==
+          QStringLiteral("magnet:?xt=urn:btih:0123456789abcdef") &&
       window->external_scheme_allowed_for_testing(
-          QStringLiteral("mailto:test@example.com")) &&
+          QStringLiteral("tel:+123456789")) &&
       window->external_scheme_allowed_for_testing(
-          QStringLiteral("magnet:?xt=urn:test")) &&
+          QStringLiteral("webcal://calendar.example.test/events")) &&
       !window->external_scheme_allowed_for_testing(
           QStringLiteral("javascript:alert(1)")) &&
       !window->external_scheme_allowed_for_testing(
-          QStringLiteral("unknown-scheme:payload"));
+          QStringLiteral("unknown-scheme:payload")) &&
+      !window->external_scheme_allowed_for_testing(QStringLiteral("mailto:")) &&
+      !window->external_scheme_allowed_for_testing(QStringLiteral("magnet:")) &&
+      !window->external_scheme_allowed_for_testing(
+          QStringLiteral("webcal:/missing-host")) &&
+      !window->external_scheme_allowed_for_testing(
+          QStringLiteral("webcal://user:password@calendar.example.test")) &&
+      !window->external_scheme_allowed_for_testing(
+          QStringLiteral("mailto:test@example.com\r\nX-Test: injected"));
   if (media_ok && permissions_ok && schemes_ok) {
-    *output << "SECURITY_SMOKE_OK media=2 permissions=2 schemes=guarded"
+    *output << "SECURITY_SMOKE_OK media=2 permissions=2 "
+               "schemes=normalized"
             << Qt::endl;
     window->close();
   } else {

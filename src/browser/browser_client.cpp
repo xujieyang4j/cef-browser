@@ -12,16 +12,20 @@ namespace {
 
 class ExternalProtocolTask final : public CefTask {
  public:
-  ExternalProtocolTask(CefRefPtr<BrowserClient> client, QString url)
-      : client_(std::move(client)), url_(std::move(url)) {}
+  ExternalProtocolTask(CefRefPtr<BrowserClient> client,
+                       CefRefPtr<CefBrowser> browser, QString url)
+      : client_(std::move(client)),
+        browser_(std::move(browser)),
+        url_(std::move(url)) {}
 
   void Execute() override {
     CEF_REQUIRE_UI_THREAD();
-    client_->NotifyExternalProtocol(url_);
+    client_->NotifyExternalProtocol(browser_, url_);
   }
 
  private:
   CefRefPtr<BrowserClient> client_;
+  CefRefPtr<CefBrowser> browser_;
   QString url_;
 
   IMPLEMENT_REFCOUNTING(ExternalProtocolTask);
@@ -252,14 +256,16 @@ BrowserClient::GetResourceRequestHandler(
   return this;
 }
 
-void BrowserClient::OnProtocolExecution(CefRefPtr<CefBrowser>,
+void BrowserClient::OnProtocolExecution(CefRefPtr<CefBrowser> browser,
                                         CefRefPtr<CefFrame>,
                                         CefRefPtr<CefRequest> request,
                                         bool& allow_os_execution) {
   CEF_REQUIRE_IO_THREAD();
   allow_os_execution = false;
+  if (!request) return;
   const QString url = QString::fromStdString(request->GetURL().ToString());
-  CefPostTask(TID_UI, new ExternalProtocolTask(this, url));
+  CefPostTask(TID_UI,
+              new ExternalProtocolTask(this, std::move(browser), url));
 }
 
 bool BrowserClient::OnRequestMediaAccessPermission(
@@ -352,9 +358,10 @@ void BrowserClient::DetachOwner() {
   owner_.clear();
 }
 
-void BrowserClient::NotifyExternalProtocol(const QString& url) {
+void BrowserClient::NotifyExternalProtocol(CefRefPtr<CefBrowser> browser,
+                                           const QString& url) {
   CEF_REQUIRE_UI_THREAD();
-  if (owner_) owner_->OnCefExternalProtocol(url);
+  if (owner_) owner_->OnCefExternalProtocol(std::move(browser), url);
 }
 
 void BrowserClient::NotifyAudioState(CefRefPtr<CefBrowser> browser,

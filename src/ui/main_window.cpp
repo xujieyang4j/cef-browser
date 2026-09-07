@@ -974,6 +974,11 @@ bool MainWindow::external_scheme_allowed_for_testing(const QString& url) const {
   return BrowserView::IsAllowedExternalScheme(url);
 }
 
+std::optional<QString> MainWindow::normalize_external_url_for_testing(
+    const QString& url) const {
+  return BrowserView::NormalizeExternalUrl(url);
+}
+
 bool MainWindow::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
   BrowserView* browser = CurrentBrowser();
   return browser && browser->ShowAuthForTesting(std::move(callback));

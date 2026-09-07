@@ -38,7 +38,9 @@ zoom, persistent bookmarks, and a bounded visit history.
 Sensitive site capabilities use explicit one-time allow/block prompts, invalid
 HTTPS certificates are blocked with a dedicated error page, and only a small
 allowlist of external URL schemes can reach an OS application after user
-confirmation.
+confirmation. External hand-offs are strictly parsed and normalized, reject
+empty targets, credentials, and control characters, stay bound to the browser
+that requested them, and allow only one pending confirmation per tab.
 Web pages can enter native full screen, hovered-link destinations appear in the
 status bar, and Ctrl/Cmd+P opens the platform print flow.
 Navigation shows page-load progress and supports standard back, forward, and

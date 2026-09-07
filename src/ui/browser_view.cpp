@@ -292,13 +292,42 @@ QString BrowserView::PermissionDescription(uint32_t permissions) {
                          : names.join(QStringLiteral(", "));
 }
 
+std::optional<QString> BrowserView::NormalizeExternalUrl(QString value) {
+  value = value.trimmed();
+  if (value.isEmpty() || value.contains(QChar::Null) ||
+      value.contains(QLatin1Char('\r')) ||
+      value.contains(QLatin1Char('\n'))) {
+    return std::nullopt;
+  }
+
+  QUrl url(value, QUrl::StrictMode);
+  const QString scheme = url.scheme().toLower();
+  if (!url.isValid() || url.isRelative() ||
+      (scheme != QStringLiteral("mailto") &&
+       scheme != QStringLiteral("tel") &&
+       scheme != QStringLiteral("sms") &&
+       scheme != QStringLiteral("webcal") &&
+       scheme != QStringLiteral("magnet"))) {
+    return std::nullopt;
+  }
+
+  // Every supported handler needs a non-empty destination. Webcal is the
+  // only hierarchical protocol in the allowlist and therefore also requires
+  // a host; credentials are never meaningful for these hand-offs.
+  const bool has_destination =
+      scheme == QStringLiteral("webcal")
+          ? !url.host().isEmpty()
+          : scheme == QStringLiteral("magnet") ? !url.query().isEmpty()
+                                                    : !url.path().isEmpty();
+  if (!url.userInfo().isEmpty() || !has_destination) {
+    return std::nullopt;
+  }
+  url.setScheme(scheme);
+  return url.toString(QUrl::FullyEncoded);
+}
+
 bool BrowserView::IsAllowedExternalScheme(const QString& url) {
-  const QString scheme = QUrl(url).scheme().toLower();
-  return scheme == QStringLiteral("mailto") ||
-         scheme == QStringLiteral("tel") ||
-         scheme == QStringLiteral("sms") ||
-         scheme == QStringLiteral("webcal") ||
-         scheme == QStringLiteral("magnet");
+  return NormalizeExternalUrl(url).has_value();
 }
 
 bool BrowserView::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
@@ -753,24 +782,35 @@ void BrowserView::OnCefPermissionDismissed(CefRefPtr<CefBrowser> browser,
   }
 }
 
-void BrowserView::OnCefExternalProtocol(const QString& url) {
-  if (closing_ || !IsAllowedExternalScheme(url)) {
+void BrowserView::OnCefExternalProtocol(CefRefPtr<CefBrowser> browser,
+                                        const QString& url) {
+  const auto normalized = NormalizeExternalUrl(url);
+  if (!browser_ || !browser_->IsSame(browser) || closing_ || !normalized) {
     emit SecurityMessage(QStringLiteral("External link was blocked"));
+    return;
+  }
+  if (external_protocol_dialog_) {
+    external_protocol_dialog_->raise();
+    external_protocol_dialog_->activateWindow();
+    emit SecurityMessage(
+        QStringLiteral("Another external link request is already pending"));
     return;
   }
   auto* dialog = new QMessageBox(
       QMessageBox::Question, QStringLiteral("Open external application?"),
       QStringLiteral("This link wants to open another application."),
       QMessageBox::NoButton, this);
-  dialog->setInformativeText(url);
+  external_protocol_dialog_ = dialog;
+  dialog->setInformativeText(*normalized);
   dialog->addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
   QAbstractButton* open_button =
       dialog->addButton(QStringLiteral("Open link"), QMessageBox::AcceptRole);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &QMessageBox::finished, this,
-          [dialog, open_button, url](int) {
+          [this, dialog, open_button, normalized = *normalized](int) {
+    external_protocol_dialog_.clear();
     if (dialog->clickedButton() == open_button) {
-      QDesktopServices::openUrl(QUrl(url));
+      QDesktopServices::openUrl(QUrl(normalized, QUrl::StrictMode));
     }
   });
   dialog->open();
