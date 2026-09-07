@@ -44,6 +44,7 @@
 namespace {
 
 constexpr int kMaxClosedTabs = 20;
+constexpr int kMaxAddressSuggestions = 200;
 
 class CompletionCallback final : public CefCompletionCallback {
  public:
@@ -265,6 +266,9 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   });
   connect(address_bar_, &QLineEdit::returnPressed, this,
           &MainWindow::NavigateFromAddressBar);
+  connect(address_completer_,
+          QOverload<const QString&>::of(&QCompleter::activated), this,
+          &MainWindow::NavigateFromAddressSuggestion);
   connect(find_edit_, &QLineEdit::textChanged, this, [this] {
     FindFromBar(true, false);
   });
@@ -785,7 +789,15 @@ int MainWindow::current_url_visit_count_for_testing() const {
 }
 
 QStringList MainWindow::address_suggestions_for_testing() const {
+  return address_suggestion_url_order_;
+}
+
+QStringList MainWindow::address_suggestion_labels_for_testing() const {
   return address_suggestions_->stringList();
+}
+
+void MainWindow::NavigateAddressSuggestionForTesting(const QString& label) {
+  NavigateFromAddressSuggestion(label);
 }
 
 void MainWindow::AddHistoryForTesting(const QString& url,
@@ -887,11 +899,21 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
 
 void MainWindow::NavigateFromAddressBar() {
   if (BrowserView* browser = CurrentBrowser()) {
-    const QString url = NormalizeUrl(address_bar_->text());
+    const QString entered = address_bar_->text();
+    const QString suggested_url = address_suggestion_urls_.value(entered);
+    const QString url = NormalizeUrl(suggested_url.isEmpty() ? entered
+                                                              : suggested_url);
     address_bar_->setText(url == QStringLiteral("about:blank") ? QString()
                                                                  : url);
     browser->LoadUrl(url);
   }
+}
+
+void MainWindow::NavigateFromAddressSuggestion(const QString& label) {
+  const QString url = address_suggestion_urls_.value(label);
+  if (url.isEmpty()) return;
+  address_bar_->setText(url);
+  if (BrowserView* browser = CurrentBrowser()) browser->LoadUrl(url);
 }
 
 void MainWindow::AddBlankTab() {
@@ -1821,23 +1843,35 @@ bool MainWindow::SaveBrowsingData() {
 }
 
 void MainWindow::RefreshAddressSuggestions() {
-  QStringList suggestions;
+  QStringList labels;
+  QStringList urls;
+  QHash<QString, QString> label_urls;
   QSet<QString> seen;
-  const auto add = [&suggestions, &seen](const QString& url) {
+  const auto add = [&labels, &urls, &label_urls, &seen](
+                       const QString& url, const QString& title) {
     if (!url.isEmpty() && !seen.contains(url)) {
       seen.insert(url);
-      suggestions.append(url);
+      QString label = title.trimmed().isEmpty()
+                          ? url
+                          : QStringLiteral("%1 — %2").arg(title.trimmed(), url);
+      if (label_urls.contains(label)) label = url;
+      labels.append(label);
+      urls.append(url);
+      label_urls.insert(label, url);
     }
   };
   for (const BrowsingDataStore::Bookmark& bookmark :
        browsing_data_->bookmarks()) {
-    add(bookmark.url);
+    if (labels.size() >= kMaxAddressSuggestions) break;
+    add(bookmark.url, bookmark.title);
   }
   for (const BrowsingDataStore::HistoryEntry& entry : browsing_data_->history()) {
-    add(entry.url);
-    if (suggestions.size() >= 200) break;
+    if (labels.size() >= kMaxAddressSuggestions) break;
+    add(entry.url, entry.title);
   }
-  address_suggestions_->setStringList(suggestions);
+  address_suggestion_urls_ = std::move(label_urls);
+  address_suggestion_url_order_ = std::move(urls);
+  address_suggestions_->setStringList(labels);
 }
 
 void MainWindow::ScheduleSessionSave() {

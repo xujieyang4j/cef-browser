@@ -28,8 +28,10 @@ Navigation shows page-load progress and supports standard back, forward, and
 refresh shortcuts even while the embedded page owns keyboard focus. HTTP and
 proxy authentication use an in-memory, non-blocking credential prompt; entered
 credentials are never stored by Trail Browser.
-The address bar suggests unique URLs from bookmarks and recent history, with
-bookmarks ranked first. The recently closed tab stack is part of the atomic
+The address bar suggests page titles alongside their URLs from bookmarks and
+recent history. Suggestions match either field, keep bookmarks ranked first,
+deduplicate shared URLs, and navigate to the underlying URL rather than the
+display label. The recently closed tab stack is part of the atomic
 session file, so Ctrl/Cmd+Shift+T continues to work after an application
 restart. Page favicons are loaded into their corresponding tabs with stale
 navigation results rejected. The History menu can clear history, HTTP cache,
@@ -142,7 +144,8 @@ A passing run prints `TAB_SMOKE_OK` and exits with status 0 after creating,
 closing, reopening, and finally shutting down multiple CEF browser instances.
 CTest also runs deterministic download-state, download-exit protection,
 tab-action, pinned-tab persistence, failure-page, atomic session restore,
-page-search/zoom, bookmark/history persistence, browsing-data cleanup, favicon
+page-search/zoom, titled address suggestions, bookmark/history persistence,
+browsing-data cleanup, favicon
 mapping, audio/mute state, security-policy, and authentication-dialog checks.
 Keyboard-accessible browser surfaces and full-screen exit routing are also
 covered, along with numeric tab navigation and the all-tabs menu. All sixteen

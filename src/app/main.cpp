@@ -505,22 +505,60 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       restored.history().first().visit_count == 2;
   const bool removed = restored.RemoveBookmark(first_url) &&
                        !restored.IsBookmarked(first_url);
+  const QString bookmarked_url = window->current_url();
   window->ToggleBookmarkForTesting();
-  const bool suggestions_ok =
-      window->address_suggestions_for_testing().contains(window->current_url());
+  window->AddHistoryForTesting(bookmarked_url,
+                               QStringLiteral("Lower-ranked history title"));
+  window->AddHistoryForTesting(first_url, QStringLiteral("First again"));
+  const QStringList suggestion_urls =
+      window->address_suggestions_for_testing();
+  const bool suggestions_ok = !suggestion_urls.isEmpty() &&
+                              suggestion_urls.first() == bookmarked_url &&
+                              suggestion_urls.count(bookmarked_url) == 1 &&
+                              suggestion_urls.contains(first_url);
+  QString first_label;
+  for (const QString& label :
+       window->address_suggestion_labels_for_testing()) {
+    if (label.startsWith(QStringLiteral("First again — "))) {
+      first_label = label;
+      break;
+    }
+  }
   window->ToggleBookmarkForTesting();
-  if (add_first && reject_duplicate && add_second && saved && bookmark_ok &&
-      history_ok && removed && suggestions_ok) {
-    *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2 suggestions=1"
-            << Qt::endl;
-    window->close();
-  } else {
+  const bool profile_ok = add_first && reject_duplicate && add_second && saved &&
+                          bookmark_ok && history_ok && removed && suggestions_ok &&
+                          !first_label.isEmpty();
+  if (!profile_ok) {
     *output << "PROFILE_SMOKE_FAILED bookmark=" << bookmark_ok
             << " history=" << history_ok << " removed=" << removed
             << " suggestions=" << suggestions_ok
+            << " titled=" << !first_label.isEmpty()
             << Qt::endl;
     QCoreApplication::exit(7);
+    return;
   }
+
+  window->NavigateAddressSuggestionForTesting(first_label);
+  auto attempts = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, step, first_url] {
+    ++*attempts;
+    if (window->current_url() == first_url) {
+      *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2 "
+                 "suggestions=titled-navigation"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 100) {
+      *output << "PROFILE_SMOKE_FAILED navigation=0 url="
+              << window->current_url() << Qt::endl;
+      QCoreApplication::exit(7);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(50, window, [step] { (*step)(); });
 }
 
 void StartPrivacySmokeTest(MainWindow* window) {

@@ -95,6 +95,8 @@ class MainWindow final : public QMainWindow {
   int history_count_for_testing() const;
   int current_url_visit_count_for_testing() const;
   QStringList address_suggestions_for_testing() const;
+  QStringList address_suggestion_labels_for_testing() const;
+  void NavigateAddressSuggestionForTesting(const QString& label);
   void AddHistoryForTesting(const QString& url, const QString& title);
   void ClearBrowsingDataForTesting();
   bool browsing_data_clear_in_progress_for_testing() const {
@@ -120,6 +122,7 @@ class MainWindow final : public QMainWindow {
 
  private slots:
   void NavigateFromAddressBar();
+  void NavigateFromAddressSuggestion(const QString& label);
   void AddBlankTab();
   void ReopenClosedTab();
   void CloseTab(int index);
@@ -190,6 +193,8 @@ class MainWindow final : public QMainWindow {
   QProgressBar* loading_progress_ = nullptr;
   QCompleter* address_completer_ = nullptr;
   QStringListModel* address_suggestions_ = nullptr;
+  QHash<QString, QString> address_suggestion_urls_;
+  QStringList address_suggestion_url_order_;
   QWidget* find_bar_ = nullptr;
   QWidget* tab_strip_ = nullptr;
   QWidget* toolbar_ = nullptr;
