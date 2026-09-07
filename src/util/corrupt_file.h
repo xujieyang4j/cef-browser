@@ -8,5 +8,6 @@ namespace trail {
 // file may be written at its original path. The source must already be closed.
 bool PreserveCorruptFile(const QString& path, QString* preserved_path = nullptr,
                          QString* error = nullptr);
+int MaxCorruptBackupsForTesting();
 
 }  // namespace trail

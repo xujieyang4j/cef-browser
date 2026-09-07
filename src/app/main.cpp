@@ -905,6 +905,41 @@ void StartCorruptRecoverySmokeTest(
       HasPreservedBytes(settings_path, corrupt_bytes) &&
       HasPreservedBytes(download_history_path, corrupt_bytes) &&
       HasPreservedBytes(browsing_data_path, corrupt_bytes);
+  const QString retention_path =
+      session_path + QStringLiteral(".retention-source");
+  bool retention_writes_succeeded = true;
+  for (int index = 1;
+       index <= trail::MaxCorruptBackupsForTesting() + 3; ++index) {
+    QString preserved_path;
+    QString preserve_error;
+    retention_writes_succeeded =
+        retention_writes_succeeded && WriteRepeatedFile(retention_path, index) &&
+        trail::PreserveCorruptFile(retention_path, &preserved_path,
+                                   &preserve_error) &&
+        QFileInfo(preserved_path).size() == index;
+  }
+  const QFileInfo retention_source(retention_path);
+  const QFileInfoList retained_backups =
+      retention_source.absoluteDir().entryInfoList(
+          {retention_source.fileName() + QStringLiteral(".corrupt-*")},
+          QDir::Files, QDir::Name);
+  bool newest_retained = false;
+  QSet<qint64> retained_sizes;
+  for (const QFileInfo& backup : retained_backups) {
+    newest_retained =
+        newest_retained ||
+        backup.size() == trail::MaxCorruptBackupsForTesting() + 3;
+    retained_sizes.insert(backup.size());
+  }
+  QSet<qint64> expected_retained_sizes;
+  for (int index = 4;
+       index <= trail::MaxCorruptBackupsForTesting() + 3; ++index) {
+    expected_retained_sizes.insert(index);
+  }
+  const bool backups_bounded =
+      retention_writes_succeeded &&
+      retained_backups.size() == trail::MaxCorruptBackupsForTesting() &&
+      newest_retained && retained_sizes == expected_retained_sizes;
 
   const QString home_url = QStringLiteral("https://example.test/recovered-home");
   const bool settings_saved = window->SetHomePageForTesting(home_url);
@@ -936,17 +971,18 @@ void StartCorruptRecoverySmokeTest(
   const bool session_restored =
       restored_session && !restored_session->tab_urls.isEmpty();
 
-  if (backups_preserved && settings_saved && session_saved &&
+  if (backups_preserved && backups_bounded && settings_saved && session_saved &&
       settings_restored && downloads_restored && browsing_data_restored &&
       session_restored) {
     *output << "CORRUPT_RECOVERY_SMOKE_OK files=4 backups=preserved "
-               "replacement=reloadable"
+               "retention=bounded replacement=reloadable"
             << Qt::endl;
     window->close();
     return;
   }
 
   *output << "CORRUPT_RECOVERY_SMOKE_FAILED backups=" << backups_preserved
+          << " bounded=" << backups_bounded
           << " settings_saved=" << settings_saved
           << " session_saved=" << session_saved
           << " settings=" << settings_restored

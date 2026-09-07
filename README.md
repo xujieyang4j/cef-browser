@@ -79,6 +79,9 @@ cannot be parsed safely, Trail Browser moves it to a timestamped `.corrupt-*`
 backup in the same directory before new state may use the original path. If
 that preservation step fails, writes for the affected data are disabled for
 the process so the unreadable source is never silently overwritten.
+Trail Browser retains the five newest removable corrupt backups for each
+source file, pruning older copies only after the current damaged file is safely
+moved aside.
 Sensitive site capabilities use explicit one-time allow/block prompts, invalid
 HTTPS certificates are blocked with a dedicated error page, and only a small
 allowlist of external URL schemes can reach an OS application after user
