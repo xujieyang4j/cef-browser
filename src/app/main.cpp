@@ -1831,6 +1831,28 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path,
         QCoreApplication::exit(11);
         return;
       }
+      const bool previous_session_removed =
+          !QFileInfo::exists(session_path) || QFile::remove(session_path);
+      const bool blocked_session_created =
+          previous_session_removed && QDir().mkpath(session_path);
+      window->ClearBrowsingDataForTesting(false, true, false, false);
+      const bool recent_clear_rolled_back =
+          blocked_session_created &&
+          !window->browsing_data_clear_in_progress_for_testing() &&
+          window->recently_closed_tab_count_for_testing() == 1 &&
+          window->browsing_data_clear_result_for_testing().contains(
+              QStringLiteral("Could not clear: recently closed tabs."));
+      const bool blocked_session_removed =
+          blocked_session_created && QDir(session_path).removeRecursively();
+      const bool session_reseeded =
+          blocked_session_removed && window->save_session_for_testing(false);
+      if (!recent_clear_rolled_back || !session_reseeded) {
+        *output << "PRIVACY_SMOKE_FAILED recent_rollback="
+                << recent_clear_rolled_back
+                << " session_reseeded=" << session_reseeded << Qt::endl;
+        QCoreApplication::exit(11);
+        return;
+      }
       window->ClearBrowsingDataForTesting(true, false, false, false);
       *stage = 3;
     } else if (*stage == 3 &&
@@ -1864,7 +1886,7 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path,
               QStringLiteral("Cleared:"));
       if (cleared && session_cleared && downloads_cleared && completed) {
         *output << "PRIVACY_SMOKE_OK selective=preserved history=cleared "
-                   "recent=cleared "
+                   "recent=transactional "
                    "downloads=cleared session=cleared cef=completed"
                 << Qt::endl;
         window->close();

@@ -2747,6 +2747,11 @@ void MainWindow::BeginClearBrowsingData(
     RefreshAddressSuggestions();
   }
   if (selection.recently_closed) {
+    const QList<RecentlyClosedTab> previous_closed_tabs = closed_tabs_;
+    const QSet<BrowserView*> previous_forgotten_closing_tabs =
+        forgotten_closing_tabs_;
+    const QHash<BrowserView*, RecentlyClosedTab> previous_pending_closed_tabs =
+        pending_closed_tabs_;
     closed_tabs_.clear();
     for (BrowserView* browser : closing_tabs_) {
       forgotten_closing_tabs_.insert(browser);
@@ -2755,12 +2760,18 @@ void MainWindow::BeginClearBrowsingData(
       if (browser) forgotten_closing_tabs_.insert(browser);
     }
     pending_closed_tabs_.clear();
+    const bool saved =
+        session_path_.isEmpty() || PersistSession(CaptureSession(false));
+    if (!saved) {
+      closed_tabs_ = previous_closed_tabs;
+      forgotten_closing_tabs_ = previous_forgotten_closing_tabs;
+      pending_closed_tabs_ = previous_pending_closed_tabs;
+    }
     RebuildHistoryMenu();
     RebuildAllTabsMenu();
     UpdateChrome();
-    CompleteBrowsingDataClearTask(
-        QStringLiteral("recently closed tabs"),
-        session_path_.isEmpty() || PersistSession(CaptureSession(false)));
+    CompleteBrowsingDataClearTask(QStringLiteral("recently closed tabs"),
+                                  saved);
   }
   if (selection.downloads) {
     CompleteBrowsingDataClearTask(QStringLiteral("download history"),

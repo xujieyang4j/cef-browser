@@ -134,6 +134,9 @@ recently closed tabs, download history, or site data including HTTP cache,
 cookies, HTTP credentials, and certificate exceptions
 while preserving bookmarks; the updated session is persisted immediately, and
 completion is reported only after every asynchronous CEF operation finishes.
+If clearing browsing history or recently closed tabs cannot be persisted, the
+corresponding in-memory list is restored instead of pretending the data was
+removed for the current run.
 Individual bookmark and history entries can be removed from their menus with a
 right click. Bookmark names can be edited from the same menu, with an empty
 name falling back to the URL. Standard browser bookmark HTML can be imported
