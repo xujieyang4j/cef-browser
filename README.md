@@ -130,7 +130,11 @@ completion is reported only after every asynchronous CEF operation finishes.
 Individual bookmark and history entries can be removed from their menus with a
 right click. Bookmark names can be edited from the same menu, with an empty
 name falling back to the URL. Standard browser bookmark HTML can be imported
-or exported for migration and backup. Every change is persisted atomically.
+or exported for migration and backup. Bookmark additions, renames, and imports
+are rejected transactionally if the complete bookmark set would exceed the
+2 MiB profile budget; history may be trimmed to fit, but an accepted bookmark
+is never silently omitted from persistence. Every change is persisted
+atomically.
 Tabs also have a context menu for opening a new tab, duplicating the selected
 tab, copying its address, closing it, closing other tabs, or closing tabs to
 its right. Multi-tab closes wait for each CEF browser to finish shutting down
@@ -256,6 +260,8 @@ HTML files are also rejected using the bytes actually read, with existing
 in-memory settings and profile data preserved.
 Bookmark export checks additionally cover strict output limits and preservation
 of an existing destination when the generated document would be too large.
+Bookmark profile checks cover transactional add, rename, and import rejection
+at the exact persistence budget and verify that all accepted entries reload.
 Corrupt-profile recovery verifies that all four persistent stores preserve the
 original bytes before replacement files are written and successfully reloaded.
 JavaScript-dialog limits, concurrency suppression, navigation reset, and

@@ -30,13 +30,17 @@ class BrowsingDataStore final {
   const QList<Bookmark>& bookmarks() const { return bookmarks_; }
   const QList<HistoryEntry>& history() const { return history_; }
   bool IsBookmarked(const QString& url) const;
-  bool AddBookmark(const QString& url, const QString& title);
-  bool RenameBookmark(const QString& url, const QString& title);
+  bool AddBookmark(const QString& url, const QString& title,
+                   QString* error = nullptr);
+  bool RenameBookmark(const QString& url, const QString& title,
+                      QString* error = nullptr);
   bool RemoveBookmark(const QString& url);
   void RecordVisit(const QString& url, const QString& title,
                    QDateTime visited_at = QDateTime::currentDateTimeUtc());
   bool RemoveHistory(const QString& url);
   void ClearHistory();
+  qsizetype BookmarkBytesForTesting() const;
+  static qsizetype MaxDataBytesForTesting();
 
  private:
   static bool IsRecordableUrl(const QString& url);

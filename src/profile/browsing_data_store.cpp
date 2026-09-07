@@ -93,6 +93,29 @@ QByteArray SerializeData(const QJsonArray& bookmarks,
       .toJson(QJsonDocument::Compact);
 }
 
+QJsonArray SerializeBookmarks(
+    const QList<BrowsingDataStore::Bookmark>& bookmarks) {
+  QJsonArray result;
+  for (const BrowsingDataStore::Bookmark& bookmark : bookmarks) {
+    const auto url = NormalizeRecordableUrl(bookmark.url);
+    if (!url) continue;
+    result.append(QJsonObject{
+        {QStringLiteral("url"), *url},
+        {QStringLiteral("title"), NormalizeTitle(bookmark.title)},
+        {QStringLiteral("createdAt"),
+         NormalizeDate(bookmark.created_at).toString(Qt::ISODateWithMs)},
+    });
+    if (result.size() >= kMaxBookmarks) break;
+  }
+  return result;
+}
+
+bool BookmarksFitDataBudget(
+    const QList<BrowsingDataStore::Bookmark>& bookmarks) {
+  return SerializeData(SerializeBookmarks(bookmarks), {}).size() <=
+         kMaxDataBytes;
+}
+
 int LargestHistoryPrefix(const QJsonArray& bookmarks,
                          const QJsonArray& history) {
   int low = 0;
@@ -101,20 +124,6 @@ int LargestHistoryPrefix(const QJsonArray& bookmarks,
     const int middle = low + (high - low + 1) / 2;
     if (SerializeData(bookmarks, Prefix(history, middle)).size() <=
         kMaxDataBytes) {
-      low = middle;
-    } else {
-      high = middle - 1;
-    }
-  }
-  return low;
-}
-
-int LargestBookmarkPrefix(const QJsonArray& bookmarks) {
-  int low = 0;
-  int high = bookmarks.size();
-  while (low < high) {
-    const int middle = low + (high - low + 1) / 2;
-    if (SerializeData(Prefix(bookmarks, middle), {}).size() <= kMaxDataBytes) {
       low = middle;
     } else {
       high = middle - 1;
@@ -202,17 +211,11 @@ bool BrowsingDataStore::Save(QString* error) const {
     SetError(error, QStringLiteral("Unable to create profile directory"));
     return false;
   }
-  QJsonArray bookmarks;
-  for (const Bookmark& bookmark : bookmarks_) {
-    const auto url = NormalizeRecordableUrl(bookmark.url);
-    if (!url) continue;
-    bookmarks.append(QJsonObject{
-        {QStringLiteral("url"), *url},
-        {QStringLiteral("title"), NormalizeTitle(bookmark.title)},
-        {QStringLiteral("createdAt"),
-         NormalizeDate(bookmark.created_at).toString(Qt::ISODateWithMs)},
-    });
-    if (bookmarks.size() >= kMaxBookmarks) break;
+  QJsonArray bookmarks = SerializeBookmarks(bookmarks_);
+  if (SerializeData(bookmarks, {}).size() > kMaxDataBytes) {
+    SetError(error,
+             QStringLiteral("Bookmarks exceed the profile size limit"));
+    return false;
   }
   QJsonArray history;
   for (const HistoryEntry& entry : history_) {
@@ -230,13 +233,7 @@ bool BrowsingDataStore::Save(QString* error) const {
 
   QByteArray bytes = SerializeData(bookmarks, history);
   if (bytes.size() > kMaxDataBytes) {
-    const QByteArray bookmarks_only = SerializeData(bookmarks, {});
-    if (bookmarks_only.size() <= kMaxDataBytes) {
-      history = Prefix(history, LargestHistoryPrefix(bookmarks, history));
-    } else {
-      history = {};
-      bookmarks = Prefix(bookmarks, LargestBookmarkPrefix(bookmarks));
-    }
+    history = Prefix(history, LargestHistoryPrefix(bookmarks, history));
     bytes = SerializeData(bookmarks, history);
   }
   QSaveFile file(path_);
@@ -299,10 +296,17 @@ bool BrowsingDataStore::ImportBookmarksHtml(const QString& path,
         Bookmark{*url, NormalizeTitle(DecodeHtml(anchor.captured(2))),
                  QDateTime::currentDateTimeUtc()});
   }
+  QList<Bookmark> candidate = bookmarks_;
   for (auto bookmark = imported.crbegin(); bookmark != imported.crend();
        ++bookmark) {
-    bookmarks_.prepend(*bookmark);
+    candidate.prepend(*bookmark);
   }
+  if (!BookmarksFitDataBudget(candidate)) {
+    SetError(error, QStringLiteral(
+                        "Imported bookmarks exceed the profile size limit"));
+    return false;
+  }
+  bookmarks_ = std::move(candidate);
   if (imported_count) *imported_count = imported.size();
   return true;
 }
@@ -371,19 +375,26 @@ bool BrowsingDataStore::IsBookmarked(const QString& url) const {
                      });
 }
 
-bool BrowsingDataStore::AddBookmark(const QString& url, const QString& title) {
+bool BrowsingDataStore::AddBookmark(const QString& url, const QString& title,
+                                    QString* error) {
   const auto normalized = NormalizeRecordableUrl(url);
   if (!normalized || IsBookmarked(*normalized) ||
       bookmarks_.size() >= kMaxBookmarks) {
     return false;
   }
-  bookmarks_.prepend(Bookmark{*normalized, NormalizeTitle(title),
-                              QDateTime::currentDateTimeUtc()});
+  QList<Bookmark> candidate = bookmarks_;
+  candidate.prepend(Bookmark{*normalized, NormalizeTitle(title),
+                             QDateTime::currentDateTimeUtc()});
+  if (!BookmarksFitDataBudget(candidate)) {
+    SetError(error, QStringLiteral("Bookmark exceeds the profile size limit"));
+    return false;
+  }
+  bookmarks_ = std::move(candidate);
   return true;
 }
 
 bool BrowsingDataStore::RenameBookmark(const QString& url,
-                                       const QString& title) {
+                                       const QString& title, QString* error) {
   const auto normalized = NormalizeRecordableUrl(url);
   if (!normalized) return false;
   const auto found = std::find_if(
@@ -392,7 +403,13 @@ bool BrowsingDataStore::RenameBookmark(const QString& url,
         return bookmark.url == *normalized;
       });
   if (found == bookmarks_.end()) return false;
+  const QString previous_title = found->title;
   found->title = NormalizeTitle(title);
+  if (!BookmarksFitDataBudget(bookmarks_)) {
+    found->title = previous_title;
+    SetError(error, QStringLiteral("Bookmark exceeds the profile size limit"));
+    return false;
+  }
   return true;
 }
 
@@ -449,6 +466,14 @@ bool BrowsingDataStore::RemoveHistory(const QString& url) {
 
 void BrowsingDataStore::ClearHistory() {
   history_.clear();
+}
+
+qsizetype BrowsingDataStore::BookmarkBytesForTesting() const {
+  return SerializeData(SerializeBookmarks(bookmarks_), {}).size();
+}
+
+qsizetype BrowsingDataStore::MaxDataBytesForTesting() {
+  return kMaxDataBytes;
 }
 
 bool BrowsingDataStore::IsRecordableUrl(const QString& url) {

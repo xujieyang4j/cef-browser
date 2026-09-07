@@ -1316,17 +1316,23 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
   original_export.close();
   BrowsingDataStore oversized_export_data(
       data_path + QStringLiteral(".oversized-export.json"));
-  const QString export_payload(60 * 1024, QLatin1Char('e'));
-  bool oversized_export_seeded = true;
+  const QString export_payload(60 * 1024, QLatin1Char('&'));
+  int export_bookmarks_added = 0;
+  bool export_budget_reached = false;
   for (int index = 0; index < 100; ++index) {
-    oversized_export_seeded =
-        oversized_export_seeded &&
-        oversized_export_data.AddBookmark(
+    QString add_error;
+    if (!oversized_export_data.AddBookmark(
             QStringLiteral("https://example.test/export/%1?payload=%2")
                 .arg(index)
                 .arg(export_payload),
-            QStringLiteral("Large export"));
+            QStringLiteral("Large export"), &add_error)) {
+      export_budget_reached = !add_error.isEmpty();
+      break;
+    }
+    ++export_bookmarks_added;
   }
+  const bool oversized_export_seeded =
+      export_bookmarks_added > 0 && export_budget_reached;
   QString oversized_export_error;
   const bool oversized_exported = oversized_export_data.ExportBookmarksHtml(
       oversized_export_path, &oversized_export_error);
@@ -1477,6 +1483,97 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       bounded_data_restored.history().size() < kBoundedRecordCount &&
       bounded_data_restored.history().first().url == newest_history_url &&
       oldest_history_removed;
+  const QString bookmark_budget_path =
+      data_path + QStringLiteral(".bookmark-budget.json");
+  BrowsingDataStore bookmark_budget(bookmark_budget_path);
+  const QString bookmark_budget_payload(48 * 1024, QLatin1Char('b'));
+  int budget_bookmarks_added = 0;
+  QString rejected_bookmark_url;
+  QString bookmark_budget_error;
+  for (int index = 0; index < 100; ++index) {
+    const QString candidate_url =
+        QStringLiteral("https://example.test/budget/%1?payload=%2")
+            .arg(index)
+            .arg(bookmark_budget_payload);
+    if (!bookmark_budget.AddBookmark(candidate_url, QStringLiteral("Budget"),
+                                     &bookmark_budget_error)) {
+      rejected_bookmark_url = candidate_url;
+      break;
+    }
+    ++budget_bookmarks_added;
+  }
+  const bool bookmark_budget_rejected =
+      budget_bookmarks_added > 0 && !bookmark_budget_error.isEmpty() &&
+      !rejected_bookmark_url.isEmpty() &&
+      bookmark_budget.bookmarks().size() == budget_bookmarks_added &&
+      !bookmark_budget.IsBookmarked(rejected_bookmark_url);
+  const bool bookmark_budget_saved = bookmark_budget.Save();
+  BrowsingDataStore bookmark_budget_restored(bookmark_budget_path);
+  const bool bookmark_budget_preserved =
+      bookmark_budget_saved && bookmark_budget_restored.Load() &&
+      bookmark_budget_restored.bookmarks().size() == budget_bookmarks_added &&
+      !bookmark_budget_restored.IsBookmarked(rejected_bookmark_url);
+  const QString rename_url_prefix =
+      QStringLiteral("https://example.test/rename-budget?payload=");
+  int low_payload_bytes = 0;
+  int high_payload_bytes = 60 * 1024;
+  while (low_payload_bytes < high_payload_bytes) {
+    const int middle =
+        low_payload_bytes + (high_payload_bytes - low_payload_bytes + 1) / 2;
+    BrowsingDataStore probe = bookmark_budget;
+    if (probe.AddBookmark(
+            rename_url_prefix + QString(middle, QLatin1Char('f')), QString())) {
+      low_payload_bytes = middle;
+    } else {
+      high_payload_bytes = middle - 1;
+    }
+  }
+  const QString rename_target_url =
+      rename_url_prefix + QString(low_payload_bytes, QLatin1Char('f'));
+  const bool rename_target_added =
+      low_payload_bytes > 0 &&
+      bookmark_budget.AddBookmark(rename_target_url, QString());
+  QString rename_budget_error;
+  const bool bookmark_rename_rejected =
+      rename_target_added &&
+      bookmark_budget.BookmarkBytesForTesting() <=
+          BrowsingDataStore::MaxDataBytesForTesting() &&
+      !bookmark_budget.RenameBookmark(
+          rename_target_url, QString(512, QLatin1Char('r')),
+          &rename_budget_error) &&
+      !rename_budget_error.isEmpty() &&
+      bookmark_budget.bookmarks().first().url == rename_target_url &&
+      bookmark_budget.bookmarks().first().title.isEmpty();
+  const QString budget_import_path =
+      data_path + QStringLiteral(".budget-import.html");
+  QFile budget_import_file(budget_import_path);
+  bool budget_import_written = budget_import_file.open(QIODevice::WriteOnly);
+  QByteArray budget_import_html("<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<DL><p>\n");
+  for (int index = 0; index < 50; ++index) {
+    budget_import_html.append(
+        QStringLiteral("<DT><A HREF=\"https://example.test/import-budget/%1?payload=%2\">Budget</A>\n")
+            .arg(index)
+            .arg(bookmark_budget_payload)
+            .toUtf8());
+  }
+  budget_import_html.append("</DL><p>\n");
+  budget_import_written =
+      budget_import_written &&
+      budget_import_file.write(budget_import_html) == budget_import_html.size();
+  budget_import_file.close();
+  BrowsingDataStore budget_import_data(
+      data_path + QStringLiteral(".budget-import.json"));
+  const bool budget_import_seeded = budget_import_data.AddBookmark(
+      first_url, QStringLiteral("Preserved before import"));
+  int budget_import_count = 123;
+  QString budget_import_error;
+  const bool budget_import_result = budget_import_data.ImportBookmarksHtml(
+      budget_import_path, &budget_import_count, &budget_import_error);
+  const bool bookmark_import_transactional =
+      budget_import_written && budget_import_seeded && !budget_import_result &&
+      budget_import_count == 0 && !budget_import_error.isEmpty() &&
+      budget_import_data.bookmarks().size() == 1 &&
+      budget_import_data.IsBookmarked(first_url);
   const QString oversized_data_path =
       data_path + QStringLiteral(".oversized-data.json");
   BrowsingDataStore oversized_data(oversized_data_path);
@@ -1548,6 +1645,10 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
                           round_trip_ok && oversized_export_rejected &&
                           bookmark_ok && history_ok && stored_data_sanitized &&
                           bounded_browsing_data && oversized_data_rejected &&
+                          bookmark_budget_rejected &&
+                          bookmark_budget_preserved &&
+                          bookmark_rename_rejected &&
+                          bookmark_import_transactional &&
                           removed && suggestions_ok && !first_label.isEmpty() &&
                           renamed &&
                           rename_persisted && empty_name &&
@@ -1559,6 +1660,9 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
             << " history=" << history_ok << " removed=" << removed
             << " stored_data=" << stored_data_sanitized
             << " bounded=" << bounded_browsing_data
+            << " bookmark_budget=" << bookmark_budget_preserved
+            << " rename_budget=" << bookmark_rename_rejected
+            << " import_budget=" << bookmark_import_transactional
             << " oversized_data=" << oversized_data_rejected
             << " oversized_import=" << oversized_import_rejected
             << " oversized_export=" << oversized_export_rejected

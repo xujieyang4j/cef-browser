@@ -2419,7 +2419,11 @@ void MainWindow::ToggleCurrentBookmark() {
     return;
   }
   const BrowsingDataStore previous = *browsing_data_;
-  if (!browsing_data_->AddBookmark(url, browser->page_title())) return;
+  QString error;
+  if (!browsing_data_->AddBookmark(url, browser->page_title(), &error)) {
+    if (!error.isEmpty()) statusBar()->showMessage(error, 8000);
+    return;
+  }
   if (!SaveBrowsingData()) {
     *browsing_data_ = previous;
     return;
@@ -2446,7 +2450,11 @@ bool MainWindow::RemoveBookmark(const QString& url) {
 
 bool MainWindow::RenameBookmark(const QString& url, const QString& title) {
   const BrowsingDataStore previous = *browsing_data_;
-  if (!browsing_data_->RenameBookmark(url, title)) return false;
+  QString error;
+  if (!browsing_data_->RenameBookmark(url, title, &error)) {
+    if (!error.isEmpty()) statusBar()->showMessage(error, 8000);
+    return false;
+  }
   if (!SaveBrowsingData()) {
     *browsing_data_ = previous;
     return false;
