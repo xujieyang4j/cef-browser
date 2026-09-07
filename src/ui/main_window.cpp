@@ -988,6 +988,20 @@ bool MainWindow::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
   return browser && browser->ShowAuthForTesting(std::move(callback));
 }
 
+bool MainWindow::ShowMediaPermissionForTesting(
+    CefRefPtr<CefMediaAccessCallback> callback) {
+  BrowserView* browser = CurrentBrowser();
+  return browser &&
+         browser->ShowMediaPermissionForTesting(std::move(callback));
+}
+
+bool MainWindow::ShowPermissionForTesting(
+    quint64 prompt_id, CefRefPtr<CefPermissionPromptCallback> callback) {
+  BrowserView* browser = CurrentBrowser();
+  return browser &&
+         browser->ShowPermissionForTesting(prompt_id, std::move(callback));
+}
+
 void MainWindow::SetWebFullscreenForTesting(bool fullscreen) {
   if (BrowserView* browser = CurrentBrowser()) {
     browser->FullscreenChanged(fullscreen);

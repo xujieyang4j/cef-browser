@@ -86,6 +86,7 @@ BrowserView::BrowserView(QString initial_url,
 }
 
 BrowserView::~BrowserView() {
+  DismissOpenDialogs();
   if (client_) {
     client_->DetachOwner();
   }
@@ -336,6 +337,25 @@ bool BrowserView::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
                    QStringLiteral("example.test"), 443,
                    QStringLiteral("Trail test realm"),
                    QStringLiteral("basic"), std::move(callback));
+  return true;
+}
+
+bool BrowserView::ShowMediaPermissionForTesting(
+    CefRefPtr<CefMediaAccessCallback> callback) {
+  if (!browser_) return false;
+  OnCefMediaPermissionRequest(
+      browser_, QStringLiteral("https://example.test"),
+      CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE, std::move(callback));
+  return true;
+}
+
+bool BrowserView::ShowPermissionForTesting(
+    quint64 prompt_id, CefRefPtr<CefPermissionPromptCallback> callback) {
+  if (!browser_) return false;
+  OnCefPermissionRequest(browser_, prompt_id,
+                         QStringLiteral("https://example.test"),
+                         CEF_PERMISSION_TYPE_NOTIFICATIONS,
+                         std::move(callback));
   return true;
 }
 
@@ -717,12 +737,19 @@ void BrowserView::OnCefMediaPermissionRequest(
     callback->Cancel();
     return;
   }
+  if (page_request_dialog_) {
+    callback->Cancel();
+    emit SecurityMessage(
+        QStringLiteral("Another page request is already pending"));
+    return;
+  }
   auto* dialog = new QMessageBox(
       QMessageBox::Question, QStringLiteral("Site permission"),
       QStringLiteral("%1 wants to use your %2.")
           .arg(requesting_origin.toHtmlEscaped(),
                MediaPermissionDescription(requested_permissions)),
       QMessageBox::NoButton, this);
+  page_request_dialog_ = dialog;
   dialog->setInformativeText(
       QStringLiteral("Allow access for this request only?"));
   dialog->addButton(QStringLiteral("Block"), QMessageBox::RejectRole);
@@ -730,7 +757,8 @@ void BrowserView::OnCefMediaPermissionRequest(
       dialog->addButton(QStringLiteral("Allow"), QMessageBox::AcceptRole);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &QMessageBox::finished, this,
-          [dialog, allow_button, callback, requested_permissions](int) {
+          [this, dialog, allow_button, callback, requested_permissions](int) {
+            page_request_dialog_.clear();
             if (dialog->clickedButton() == allow_button) {
               callback->Continue(requested_permissions);
             } else {
@@ -748,22 +776,30 @@ void BrowserView::OnCefPermissionRequest(
     callback->Continue(CEF_PERMISSION_RESULT_DENY);
     return;
   }
+  if (page_request_dialog_) {
+    callback->Continue(CEF_PERMISSION_RESULT_DENY);
+    emit SecurityMessage(
+        QStringLiteral("Another page request is already pending"));
+    return;
+  }
   auto* dialog = new QMessageBox(
       QMessageBox::Question, QStringLiteral("Site permission"),
       QStringLiteral("%1 wants to use %2.")
           .arg(requesting_origin.toHtmlEscaped(),
                PermissionDescription(requested_permissions)),
       QMessageBox::NoButton, this);
+  page_request_dialog_ = dialog;
+  permission_prompt_id_ = prompt_id;
   dialog->setInformativeText(
       QStringLiteral("Allow access for this request only?"));
   dialog->addButton(QStringLiteral("Block"), QMessageBox::RejectRole);
   QAbstractButton* allow_button =
       dialog->addButton(QStringLiteral("Allow"), QMessageBox::AcceptRole);
-  permission_dialogs_.insert(prompt_id, dialog);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &QMessageBox::finished, this,
           [this, dialog, allow_button, callback, prompt_id](int) {
-    permission_dialogs_.remove(prompt_id);
+    page_request_dialog_.clear();
+    permission_prompt_id_.reset();
     if (dialog->property("cefDismissed").toBool()) return;
     callback->Continue(dialog->clickedButton() == allow_button
                            ? CEF_PERMISSION_RESULT_ACCEPT
@@ -775,10 +811,9 @@ void BrowserView::OnCefPermissionRequest(
 void BrowserView::OnCefPermissionDismissed(CefRefPtr<CefBrowser> browser,
                                            quint64 prompt_id) {
   if (!browser_ || !browser_->IsSame(browser)) return;
-  QPointer<QMessageBox> dialog = permission_dialogs_.take(prompt_id);
-  if (dialog) {
-    dialog->setProperty("cefDismissed", true);
-    dialog->reject();
+  if (page_request_dialog_ && permission_prompt_id_ == prompt_id) {
+    page_request_dialog_->setProperty("cefDismissed", true);
+    page_request_dialog_->reject();
   }
 }
 
@@ -789,9 +824,9 @@ void BrowserView::OnCefExternalProtocol(CefRefPtr<CefBrowser> browser,
     emit SecurityMessage(QStringLiteral("External link was blocked"));
     return;
   }
-  if (external_protocol_dialog_) {
-    external_protocol_dialog_->raise();
-    external_protocol_dialog_->activateWindow();
+  if (page_request_dialog_) {
+    page_request_dialog_->raise();
+    page_request_dialog_->activateWindow();
     emit SecurityMessage(
         QStringLiteral("Another external link request is already pending"));
     return;
@@ -800,7 +835,7 @@ void BrowserView::OnCefExternalProtocol(CefRefPtr<CefBrowser> browser,
       QMessageBox::Question, QStringLiteral("Open external application?"),
       QStringLiteral("This link wants to open another application."),
       QMessageBox::NoButton, this);
-  external_protocol_dialog_ = dialog;
+  page_request_dialog_ = dialog;
   dialog->setInformativeText(*normalized);
   dialog->addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
   QAbstractButton* open_button =
@@ -808,7 +843,7 @@ void BrowserView::OnCefExternalProtocol(CefRefPtr<CefBrowser> browser,
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &QMessageBox::finished, this,
           [this, dialog, open_button, normalized = *normalized](int) {
-    external_protocol_dialog_.clear();
+    page_request_dialog_.clear();
     if (dialog->clickedButton() == open_button) {
       QDesktopServices::openUrl(QUrl(normalized, QUrl::StrictMode));
     }
@@ -824,6 +859,12 @@ void BrowserView::OnCefAuthRequest(
     callback->Cancel();
     return;
   }
+  if (page_request_dialog_) {
+    callback->Cancel();
+    emit SecurityMessage(
+        QStringLiteral("Another page request is already pending"));
+    return;
+  }
 
   auto* dialog = new QMessageBox(
       QMessageBox::Question,
@@ -836,6 +877,7 @@ void BrowserView::OnCefAuthRequest(
           : QStringLiteral("%1 requires a username and password.")
                 .arg(origin_url.toHtmlEscaped()),
       QMessageBox::NoButton, this);
+  page_request_dialog_ = dialog;
   auto* fields = new QWidget(dialog);
   auto* layout = new QVBoxLayout(fields);
   layout->setContentsMargins(0, 4, 0, 0);
@@ -856,7 +898,8 @@ void BrowserView::OnCefAuthRequest(
       dialog->addButton(QStringLiteral("Sign in"), QMessageBox::AcceptRole);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &QMessageBox::finished, this,
-          [dialog, sign_in, username, password, callback](int) {
+          [this, dialog, sign_in, username, password, callback](int) {
+            page_request_dialog_.clear();
             if (dialog->clickedButton() == sign_in &&
                 !username->text().isEmpty()) {
               const QByteArray user = username->text().toUtf8();

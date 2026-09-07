@@ -89,6 +89,15 @@ struct AuthSmokeResult {
   bool cancelled = false;
 };
 
+struct MediaPermissionSmokeResult {
+  uint32_t allowed_permissions = 0;
+  bool cancelled = false;
+};
+
+struct PermissionSmokeResult {
+  std::optional<cef_permission_request_result_t> result;
+};
+
 class AuthSmokeCallback final : public CefAuthCallback {
  public:
   explicit AuthSmokeCallback(std::shared_ptr<AuthSmokeResult> result)
@@ -104,6 +113,41 @@ class AuthSmokeCallback final : public CefAuthCallback {
 
   IMPLEMENT_REFCOUNTING(AuthSmokeCallback);
   DISALLOW_COPY_AND_ASSIGN(AuthSmokeCallback);
+};
+
+class MediaPermissionSmokeCallback final : public CefMediaAccessCallback {
+ public:
+  explicit MediaPermissionSmokeCallback(
+      std::shared_ptr<MediaPermissionSmokeResult> result)
+      : result_(std::move(result)) {}
+
+  void Continue(uint32_t allowed_permissions) override {
+    result_->allowed_permissions = allowed_permissions;
+  }
+  void Cancel() override { result_->cancelled = true; }
+
+ private:
+  std::shared_ptr<MediaPermissionSmokeResult> result_;
+
+  IMPLEMENT_REFCOUNTING(MediaPermissionSmokeCallback);
+  DISALLOW_COPY_AND_ASSIGN(MediaPermissionSmokeCallback);
+};
+
+class PermissionSmokeCallback final : public CefPermissionPromptCallback {
+ public:
+  explicit PermissionSmokeCallback(
+      std::shared_ptr<PermissionSmokeResult> result)
+      : result_(std::move(result)) {}
+
+  void Continue(cef_permission_request_result_t result) override {
+    result_->result = result;
+  }
+
+ private:
+  std::shared_ptr<PermissionSmokeResult> result_;
+
+  IMPLEMENT_REFCOUNTING(PermissionSmokeCallback);
+  DISALLOW_COPY_AND_ASSIGN(PermissionSmokeCallback);
 };
 
 void StartTabSmokeTest(MainWindow* window) {
@@ -1700,13 +1744,28 @@ void StartSecuritySmokeTest(MainWindow* window) {
 void StartAuthSmokeTest(MainWindow* window) {
   auto output = std::make_shared<QTextStream>(stdout);
   auto result = std::make_shared<AuthSmokeResult>();
+  auto duplicate_auth = std::make_shared<AuthSmokeResult>();
+  auto duplicate_media = std::make_shared<MediaPermissionSmokeResult>();
+  auto duplicate_permission = std::make_shared<PermissionSmokeResult>();
   auto attempts = std::make_shared<int>(0);
   auto requested = std::make_shared<bool>(false);
+  auto duplicate_requested = std::make_shared<bool>(false);
   auto step = std::make_shared<std::function<void()>>();
-  *step = [window, output, result, attempts, requested, step] {
+  *step = [window, output, result, duplicate_auth, duplicate_media,
+           duplicate_permission, attempts, requested, duplicate_requested,
+           step] {
     ++*attempts;
     if (!*requested && window->current_title() == QStringLiteral("Auth")) {
       *requested = window->ShowAuthForTesting(new AuthSmokeCallback(result));
+    } else if (*requested && !*duplicate_requested) {
+      const bool auth_requested = window->ShowAuthForTesting(
+          new AuthSmokeCallback(duplicate_auth));
+      const bool media_requested = window->ShowMediaPermissionForTesting(
+          new MediaPermissionSmokeCallback(duplicate_media));
+      const bool permission_requested = window->ShowPermissionForTesting(
+          77, new PermissionSmokeCallback(duplicate_permission));
+      *duplicate_requested =
+          auth_requested && media_requested && permission_requested;
     } else if (*requested && !result->cancelled) {
       if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
         for (QAbstractButton* button : dialog->buttons()) {
@@ -1716,16 +1775,26 @@ void StartAuthSmokeTest(MainWindow* window) {
           }
         }
       }
-    } else if (result->cancelled && !result->continued) {
-      *output << "AUTH_SMOKE_OK cancelled=1 credentials=persisted-none"
+    } else if (result->cancelled && !result->continued &&
+               duplicate_auth->cancelled && !duplicate_auth->continued &&
+               duplicate_media->cancelled &&
+               duplicate_media->allowed_permissions == 0 &&
+               duplicate_permission->result == CEF_PERMISSION_RESULT_DENY) {
+      *output << "AUTH_SMOKE_OK cancelled=1 credentials=persisted-none "
+                 "concurrent=denied"
               << Qt::endl;
       window->close();
       return;
     }
     if (*attempts > 160) {
       *output << "AUTH_SMOKE_FAILED requested=" << *requested
+              << " duplicate_requested=" << *duplicate_requested
               << " cancelled=" << result->cancelled
-              << " continued=" << result->continued << Qt::endl;
+              << " continued=" << result->continued
+              << " duplicate_auth=" << duplicate_auth->cancelled
+              << " duplicate_media=" << duplicate_media->cancelled
+              << " duplicate_permission="
+              << duplicate_permission->result.has_value() << Qt::endl;
       QCoreApplication::exit(9);
       return;
     }

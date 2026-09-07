@@ -4,7 +4,6 @@
 
 #include <QByteArray>
 #include <QSet>
-#include <QHash>
 #include <QIcon>
 #include <QPointer>
 #include <QStringList>
@@ -103,6 +102,10 @@ class BrowserView final : public QWidget {
   static bool IsAllowedExternalScheme(const QString& url);
   void ShowFailureForTesting(bool render_process_failed);
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
+  bool ShowMediaPermissionForTesting(
+      CefRefPtr<CefMediaAccessCallback> callback);
+  bool ShowPermissionForTesting(
+      quint64 prompt_id, CefRefPtr<CefPermissionPromptCallback> callback);
   void SetFaviconForTesting(const QIcon& icon);
   void SetAudioStateForTesting(bool playing, bool muted);
   void ToggleAudioMuted();
@@ -223,8 +226,8 @@ class BrowserView final : public QWidget {
   bool failure_page_active_ = false;
   bool render_process_failed_ = false;
   QString failure_page_url_;
-  QHash<quint64, QPointer<QMessageBox>> permission_dialogs_;
-  QPointer<QMessageBox> external_protocol_dialog_;
+  QPointer<QMessageBox> page_request_dialog_;
+  std::optional<quint64> permission_prompt_id_;
   QString certificate_failure_url_;
 
   Q_DISABLE_COPY_MOVE(BrowserView)

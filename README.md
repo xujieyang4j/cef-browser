@@ -45,7 +45,9 @@ HTTPS certificates are blocked with a dedicated error page, and only a small
 allowlist of external URL schemes can reach an OS application after user
 confirmation. External hand-offs are strictly parsed and normalized, reject
 empty targets, credentials, and control characters, stay bound to the browser
-that requested them, and allow only one pending confirmation per tab.
+that requested them, and share a per-tab prompt gate with site permissions and
+HTTP authentication. Concurrent page requests are denied instead of stacking
+or replacing pending callbacks.
 Web pages can enter native full screen, hovered-link destinations appear in the
 status bar, and Ctrl/Cmd+P opens the platform print flow.
 Navigation shows page-load progress and supports standard back, forward, and
