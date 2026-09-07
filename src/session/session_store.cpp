@@ -54,11 +54,14 @@ std::optional<BrowserSession> SessionStore::Load(const QString& path,
   const int tab_count =
       std::min(static_cast<int>(tabs.size()), kMaxRestoredTabs);
   for (int index = 0; index < tab_count; ++index) {
-    const QString url = tabs.at(index).toObject()
-                            .value(QStringLiteral("url"))
-                            .toString()
-                            .trimmed();
-    if (!url.isEmpty()) session.tab_urls.append(url);
+    const QJsonObject tab = tabs.at(index).toObject();
+    const QString url =
+        tab.value(QStringLiteral("url")).toString().trimmed();
+    if (!url.isEmpty()) {
+      session.tab_urls.append(url);
+      session.tab_pinned.append(
+          tab.value(QStringLiteral("pinned")).toBool(false));
+    }
   }
   if (session.tab_urls.isEmpty()) {
     SetError(error, QStringLiteral("Session contains no restorable tabs"));
@@ -94,9 +97,15 @@ bool SessionStore::Save(const QString& path, const BrowserSession& session,
   }
 
   QJsonArray tabs;
-  for (const QString& url : session.tab_urls.mid(0, kMaxRestoredTabs)) {
+  const int tab_count = std::min(
+      static_cast<int>(session.tab_urls.size()), kMaxRestoredTabs);
+  for (int index = 0; index < tab_count; ++index) {
+    const QString& url = session.tab_urls.at(index);
     if (!url.trimmed().isEmpty()) {
-      tabs.append(QJsonObject{{QStringLiteral("url"), url}});
+      const bool pinned = index < session.tab_pinned.size() &&
+                          session.tab_pinned.at(index);
+      tabs.append(QJsonObject{{QStringLiteral("url"), url},
+                              {QStringLiteral("pinned"), pinned}});
     }
   }
   if (tabs.isEmpty()) {

@@ -182,6 +182,71 @@ void StartTabActionsSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
+void StartPinnedTabsSmokeTest(MainWindow* window, const QString& session_path) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, stage, step, session_path] {
+    ++*attempts;
+    if (*stage == 0 && window->current_title() == QStringLiteral("Smoke")) {
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Pinned</title>"));
+      *stage = 1;
+    } else if (*stage == 1 &&
+               window->current_title() == QStringLiteral("Pinned")) {
+      window->ToggleCurrentTabPinnedForTesting();
+      window->MoveCurrentTabForTesting(1);
+      *stage = 2;
+    } else if (*stage == 2 && window->current_tab_pinned_for_testing() &&
+               window->pinned_tab_count_for_testing() == 1 &&
+               window->current_tab_index_for_testing() == 0) {
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Disposable</title>"));
+      window->CloseOtherTabsForTesting();
+      *stage = 3;
+    } else if (*stage == 3 && window->tab_count() == 2) {
+      window->ActivateTabForTesting(0);
+      const BrowserSession session = window->session_for_testing(true);
+      const bool saved = window->save_session_for_testing(true);
+      const auto restored = SessionStore::Load(session_path);
+      const bool session_ok = session.tab_urls.size() == 2 &&
+                              session.tab_pinned.size() == 2 &&
+                              session.tab_pinned.first() && saved && restored &&
+                              restored->tab_pinned == session.tab_pinned;
+      if (!session_ok) {
+        *output << "PINNED_TABS_SMOKE_FAILED session=0" << Qt::endl;
+        QCoreApplication::exit(15);
+        return;
+      }
+      window->CloseCurrentTabForTesting();
+      *stage = 4;
+    } else if (*stage == 4 && window->tab_count() == 1 &&
+               window->pinned_tab_count_for_testing() == 0) {
+      window->ReopenClosedTabForTesting();
+      *stage = 5;
+    } else if (*stage == 5 && window->tab_count() == 2 &&
+               window->current_title() == QStringLiteral("Pinned") &&
+               !window->current_tab_pinned_for_testing()) {
+      *output << "PINNED_TABS_SMOKE_OK grouped=1 protected=1 persisted=1 "
+                 "explicit_close=1"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 220) {
+      *output << "PINNED_TABS_SMOKE_FAILED stage=" << *stage
+              << " tabs=" << window->tab_count()
+              << " pinned=" << window->pinned_tab_count_for_testing()
+              << Qt::endl;
+      QCoreApplication::exit(15);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
 void StartDownloadSmokeTest(MainWindow* window) {
   auto output = std::make_shared<QTextStream>(stdout);
   window->UpdateDownloadForTesting(41, 25, false);
@@ -318,6 +383,7 @@ bool HasArgument(const QString& argument) {
 bool IsSmokeTest() {
   return HasArgument(QStringLiteral("--smoke-test-tabs")) ||
          HasArgument(QStringLiteral("--smoke-test-tab-actions")) ||
+         HasArgument(QStringLiteral("--smoke-test-pinned-tabs")) ||
          HasArgument(QStringLiteral("--smoke-test-downloads")) ||
          HasArgument(QStringLiteral("--smoke-test-exit-protection")) ||
          HasArgument(QStringLiteral("--smoke-test-failures")) ||
@@ -729,6 +795,16 @@ int RunBrowser(int argc, char* argv[]) {
       initial_session.clean_exit = false;
       initial_session.recently_closed_urls = {
           QStringLiteral("https://example.test/closed")};
+    } else if (HasArgument(QStringLiteral("--smoke-test-pinned-tabs"))) {
+      smoke_session_directory = std::make_unique<QTemporaryDir>();
+      if (!smoke_session_directory->isValid()) {
+        CefShutdown();
+        return 5;
+      }
+      active_session_path =
+          smoke_session_directory->filePath(QStringLiteral("session.json"));
+      initial_session = DefaultSession(
+          QStringLiteral("data:text/html,<title>Smoke</title>"));
     } else if (IsSmokeTest()) {
       initial_session = DefaultSession(ExplicitStartupUrl().value_or(
           QStringLiteral("data:text/html,<title>Smoke</title>")));
@@ -770,6 +846,8 @@ int RunBrowser(int argc, char* argv[]) {
       StartTabSmokeTest(&main_window);
     } else if (HasArgument(QStringLiteral("--smoke-test-tab-actions"))) {
       StartTabActionsSmokeTest(&main_window);
+    } else if (HasArgument(QStringLiteral("--smoke-test-pinned-tabs"))) {
+      StartPinnedTabsSmokeTest(&main_window, active_session_path);
     } else if (HasArgument(QStringLiteral("--smoke-test-downloads"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartDownloadSmokeTest(&main_window); });

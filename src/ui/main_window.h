@@ -48,6 +48,11 @@ class MainWindow final : public QMainWindow {
   void DuplicateCurrentTabForTesting();
   void CloseOtherTabsForTesting();
   void CloseTabsToRightForTesting();
+  void ToggleCurrentTabPinnedForTesting();
+  bool current_tab_pinned_for_testing() const;
+  int pinned_tab_count_for_testing() const;
+  void MoveCurrentTabForTesting(int to);
+  int current_tab_index_for_testing() const;
   void UpdateDownloadForTesting(quint32 id, int percent, bool complete);
   void PauseDownloadForTesting(quint32 id);
   int download_count_for_testing() const;
@@ -131,6 +136,10 @@ class MainWindow final : public QMainWindow {
   void OpenPopup(BrowserView* source, const QString& url, int disposition);
   void ShowTabContextMenu(const QPoint& position);
   void DuplicateTab(int index);
+  void SetTabPinned(int index, bool pinned);
+  bool IsTabPinned(BrowserView* browser) const;
+  int PinnedTabCount() const;
+  void ConstrainMovedTab(int from, int to);
   void CloseOtherTabs(int index);
   void CloseTabsToRight(int index);
   void QueueTabCloses(const QList<BrowserView*>& browsers);
@@ -170,6 +179,7 @@ class MainWindow final : public QMainWindow {
   QTimer* session_save_timer_ = nullptr;
   BrowsingDataStore* browsing_data_ = nullptr;
   QSet<BrowserView*> closing_tabs_;
+  QSet<BrowserView*> pinned_tabs_;
   QList<QPointer<BrowserView>> queued_tab_closes_;
   QPointer<BrowserView> active_queued_tab_close_;
   QHash<BrowserView*, QString> pending_closed_urls_;
@@ -177,6 +187,7 @@ class MainWindow final : public QMainWindow {
   QString session_path_;
   std::optional<BrowserSession> closing_session_;
   bool session_persistence_ready_ = false;
+  bool constraining_tab_move_ = false;
   bool download_exit_prompt_open_ = false;
   bool browsing_data_clear_in_progress_ = false;
   bool browsing_data_clear_show_result_ = false;

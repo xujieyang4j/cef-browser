@@ -43,6 +43,9 @@ and preserve the order used by recently closed tab recovery.
 Tabs indicate active audio playback and expose a per-tab mute/unmute action in
 the same context menu. Audio events are associated only with the owning main
 browser so auxiliary DevTools windows cannot change the tab state.
+Tabs can be pinned from the context menu. Pinned tabs stay grouped at the left,
+survive session restoration, and are protected from "close other tabs" and
+"close tabs to the right"; explicitly closing a pinned tab still works.
 Linux, Windows, and macOS build paths are represented in the project.
 
 ## Prerequisites
@@ -113,7 +116,8 @@ application builds automatically use the Release CEF runtime.
 
 Tabs can also be reordered by dragging and closed with either their close
 button or a middle click. Right-click a tab for duplicate, copy-address, and
-bulk-close actions. Closing the final tab closes the browser window.
+pin, mute, and bulk-close actions. Closing the final tab closes the browser
+window.
 
 ## Smoke test
 
@@ -128,10 +132,10 @@ timeout 20s xvfb-run -a ./build/trail-browser --smoke-test-tabs \
 A passing run prints `TAB_SMOKE_OK` and exits with status 0 after creating,
 closing, reopening, and finally shutting down multiple CEF browser instances.
 CTest also runs deterministic download-state, download-exit protection,
-tab-action, failure-page, atomic session restore, page-search/zoom,
-bookmark/history persistence, browsing-data cleanup, favicon mapping,
-audio/mute state, security-policy, and authentication-dialog checks. All
-thirteen
+tab-action, pinned-tab persistence, failure-page, atomic session restore,
+page-search/zoom, bookmark/history persistence, browsing-data cleanup, favicon
+mapping, audio/mute state, security-policy, and authentication-dialog checks.
+All fourteen
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

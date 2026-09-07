@@ -241,7 +241,8 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   connect(tab_bar_, &QTabBar::tabCloseRequested, this, &MainWindow::CloseTab);
   connect(tab_bar_, &QTabBar::customContextMenuRequested, this,
           &MainWindow::ShowTabContextMenu);
-  connect(tab_bar_, &QTabBar::tabMoved, this, [this](int, int) {
+  connect(tab_bar_, &QTabBar::tabMoved, this, [this](int from, int to) {
+    ConstrainMovedTab(from, to);
     // The tab-to-page relationship is stored in tabData and therefore moves
     // with the visual tab. Keep the stacked page pointed at that object.
     ActivateTab(tab_bar_->currentIndex());
@@ -401,9 +402,21 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
       0, static_cast<int>(initial_session.recently_closed_urls.size()) -
              kMaxClosedTabs);
   closed_tabs_ = initial_session.recently_closed_urls.mid(closed_start);
-  for (const QString& url : initial_urls) AddTab(url, false);
-  tab_bar_->setCurrentIndex(
-      std::clamp(initial_session.active_tab, 0, tab_bar_->count() - 1));
+  QList<BrowserView*> restored_tabs;
+  for (const QString& url : initial_urls) {
+    restored_tabs.append(AddTab(url, false));
+  }
+  const int initial_active =
+      std::clamp(initial_session.active_tab, 0,
+                 static_cast<int>(restored_tabs.size()) - 1);
+  BrowserView* active_restored_tab = restored_tabs.at(initial_active);
+  for (int index = 0; index < restored_tabs.size(); ++index) {
+    if (index < initial_session.tab_pinned.size() &&
+        initial_session.tab_pinned.at(index)) {
+      SetTabPinned(IndexOf(restored_tabs.at(index)), true);
+    }
+  }
+  tab_bar_->setCurrentIndex(IndexOf(active_restored_tab));
   ActivateTab(tab_bar_->currentIndex());
   if (!initial_session.window_geometry.isEmpty()) {
     restoreGeometry(initial_session.window_geometry);
@@ -472,6 +485,30 @@ void MainWindow::CloseOtherTabsForTesting() {
 
 void MainWindow::CloseTabsToRightForTesting() {
   CloseTabsToRight(tab_bar_->currentIndex());
+}
+
+void MainWindow::ToggleCurrentTabPinnedForTesting() {
+  BrowserView* browser = CurrentBrowser();
+  if (browser) SetTabPinned(IndexOf(browser), !IsTabPinned(browser));
+}
+
+bool MainWindow::current_tab_pinned_for_testing() const {
+  return IsTabPinned(CurrentBrowser());
+}
+
+int MainWindow::pinned_tab_count_for_testing() const {
+  return PinnedTabCount();
+}
+
+void MainWindow::MoveCurrentTabForTesting(int to) {
+  const int from = tab_bar_->currentIndex();
+  if (from >= 0 && to >= 0 && to < tab_bar_->count()) {
+    tab_bar_->moveTab(from, to);
+  }
+}
+
+int MainWindow::current_tab_index_for_testing() const {
+  return tab_bar_->currentIndex();
 }
 
 void MainWindow::UpdateDownloadForTesting(quint32 id, int percent,
@@ -969,6 +1006,9 @@ void MainWindow::ShowTabContextMenu(const QPoint& position) {
   QAction* mute = menu->addAction(browser->audio_muted()
                                       ? QStringLiteral("Unmute tab")
                                       : QStringLiteral("Mute tab"));
+  QAction* pin = menu->addAction(IsTabPinned(browser)
+                                     ? QStringLiteral("Unpin tab")
+                                     : QStringLiteral("Pin tab"));
   menu->addSeparator();
   QAction* close_tab = menu->addAction(QStringLiteral("Close tab"));
   QAction* close_others =
@@ -988,6 +1028,9 @@ void MainWindow::ShowTabContextMenu(const QPoint& position) {
   });
   connect(mute, &QAction::triggered, this, [target] {
     if (target) target->ToggleAudioMuted();
+  });
+  connect(pin, &QAction::triggered, this, [this, target] {
+    if (target) SetTabPinned(IndexOf(target), !IsTabPinned(target));
   });
   connect(close_tab, &QAction::triggered, this,
           [this, target] {
@@ -1014,9 +1057,58 @@ void MainWindow::DuplicateTab(int index) {
                           : source->current_url();
   BrowserView* duplicate = AddTab(url, true);
   const int duplicate_index = IndexOf(duplicate);
-  if (duplicate_index >= 0 && duplicate_index != index + 1) {
-    tab_bar_->moveTab(duplicate_index, index + 1);
+  const int target_index = std::max(index + 1, PinnedTabCount());
+  if (duplicate_index >= 0 && duplicate_index != target_index) {
+    tab_bar_->moveTab(duplicate_index, target_index);
   }
+}
+
+void MainWindow::SetTabPinned(int index, bool pinned) {
+  auto* browser = index >= 0
+                      ? qvariant_cast<BrowserView*>(tab_bar_->tabData(index))
+                      : nullptr;
+  if (!browser || closing_tabs_.contains(browser) ||
+      IsTabPinned(browser) == pinned) {
+    return;
+  }
+
+  if (pinned) {
+    pinned_tabs_.insert(browser);
+    const int target = PinnedTabCount() - 1;
+    if (index != target) tab_bar_->moveTab(index, target);
+  } else {
+    pinned_tabs_.remove(browser);
+    const int target = PinnedTabCount();
+    const int current = IndexOf(browser);
+    if (current != target) tab_bar_->moveTab(current, target);
+  }
+  UpdateTabTitle(browser, browser->page_title());
+  ScheduleSessionSave();
+}
+
+bool MainWindow::IsTabPinned(BrowserView* browser) const {
+  return browser && pinned_tabs_.contains(browser);
+}
+
+int MainWindow::PinnedTabCount() const {
+  return pinned_tabs_.size();
+}
+
+void MainWindow::ConstrainMovedTab(int, int to) {
+  if (constraining_tab_move_ || to < 0 || to >= tab_bar_->count()) return;
+  auto* browser = qvariant_cast<BrowserView*>(tab_bar_->tabData(to));
+  if (!browser) return;
+  const int pinned_count = PinnedTabCount();
+  int target = to;
+  if (IsTabPinned(browser) && to >= pinned_count) {
+    target = std::max(0, pinned_count - 1);
+  } else if (!IsTabPinned(browser) && to < pinned_count) {
+    target = pinned_count;
+  }
+  if (target == to) return;
+  constraining_tab_move_ = true;
+  tab_bar_->moveTab(to, target);
+  constraining_tab_move_ = false;
 }
 
 void MainWindow::CloseOtherTabs(int index) {
@@ -1026,7 +1118,7 @@ void MainWindow::CloseOtherTabs(int index) {
     if (candidate == index) continue;
     if (auto* browser = qvariant_cast<BrowserView*>(
             tab_bar_->tabData(candidate))) {
-      targets.append(browser);
+      if (!IsTabPinned(browser)) targets.append(browser);
     }
   }
   QueueTabCloses(targets);
@@ -1038,7 +1130,7 @@ void MainWindow::CloseTabsToRight(int index) {
   for (int candidate = tab_bar_->count() - 1; candidate > index; --candidate) {
     if (auto* browser = qvariant_cast<BrowserView*>(
             tab_bar_->tabData(candidate))) {
-      targets.append(browser);
+      if (!IsTabPinned(browser)) targets.append(browser);
     }
   }
   QueueTabCloses(targets);
@@ -1120,6 +1212,7 @@ void MainWindow::CompleteTabClose(BrowserView* browser) {
   if (!browser || !closing_tabs_.remove(browser)) return;
   const bool queued_close = active_queued_tab_close_ == browser;
   browser->FinalizeClose();
+  pinned_tabs_.remove(browser);
 
   if (pending_closed_urls_.contains(browser)) {
     closed_tabs_.append(pending_closed_urls_.take(browser));
@@ -1217,6 +1310,7 @@ void MainWindow::UpdateTabTitle(BrowserView* browser, const QString& title) {
   const int index = IndexOf(browser);
   if (index < 0) return;
   QString tab_text = TabText(title, browser->current_url());
+  if (IsTabPinned(browser)) tab_text.prepend(QStringLiteral("\U0001F4CC "));
   if (browser->audio_muted()) {
     tab_text.prepend(QStringLiteral("\U0001F507 "));
   } else if (browser->audio_playing()) {
@@ -1541,10 +1635,12 @@ BrowserSession MainWindow::CaptureSession(bool clean_exit) const {
       const QString url = browser->current_url().trimmed();
       session.tab_urls.append(url.isEmpty() ? QStringLiteral("about:blank")
                                             : url);
+      session.tab_pinned.append(IsTabPinned(browser));
     }
   }
   if (session.tab_urls.isEmpty()) {
     session.tab_urls.append(QStringLiteral("about:blank"));
+    session.tab_pinned.append(false);
     session.active_tab = 0;
   } else {
     session.active_tab =

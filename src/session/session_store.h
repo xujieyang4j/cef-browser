@@ -3,11 +3,13 @@
 #include <optional>
 
 #include <QByteArray>
+#include <QList>
 #include <QString>
 #include <QStringList>
 
 struct BrowserSession {
   QStringList tab_urls;
+  QList<bool> tab_pinned;
   QStringList recently_closed_urls;
   int active_tab = 0;
   QByteArray window_geometry;
