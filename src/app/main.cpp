@@ -9,12 +9,14 @@
 #include <QApplication>
 #include <QAbstractButton>
 #include <QByteArray>
+#include <QBuffer>
 #include <QCoreApplication>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -36,6 +38,7 @@
 #include "profile/browsing_data_store.h"
 #include "session/session_store.h"
 #include "settings/browser_settings.h"
+#include "ui/browser_view.h"
 #include "ui/main_window.h"
 
 #if defined(OS_WIN)
@@ -1294,11 +1297,50 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path,
 void StartFaviconSmokeTest(MainWindow* window) {
   auto output = std::make_shared<QTextStream>(stdout);
   window->SetCurrentFaviconForTesting();
-  if (window->current_tab_has_favicon_for_testing()) {
-    *output << "FAVICON_SMOKE_OK tab_icon=visible" << Qt::endl;
+  QImage safe_image(32, 32, QImage::Format_ARGB32);
+  safe_image.fill(Qt::darkCyan);
+  QByteArray safe_png;
+  QBuffer safe_png_buffer(&safe_png);
+  const bool safe_png_written =
+      safe_png_buffer.open(QIODevice::WriteOnly) &&
+      safe_image.save(&safe_png_buffer, "PNG");
+  QImage oversized_image(256, 1, QImage::Format_ARGB32);
+  oversized_image.fill(Qt::darkCyan);
+  QByteArray oversized_png;
+  QBuffer oversized_png_buffer(&oversized_png);
+  const bool oversized_png_written =
+      oversized_png_buffer.open(QIODevice::WriteOnly) &&
+      oversized_image.save(&oversized_png_buffer, "PNG");
+  const bool urls_bounded =
+      BrowserView::IsAllowedFaviconUrlForTesting(
+          QStringLiteral("HTTPS://example.test/favicon.png")) &&
+      BrowserView::IsAllowedFaviconUrlForTesting(
+          QStringLiteral("data:image/png;base64,iVBORw0KGgo=")) &&
+      !BrowserView::IsAllowedFaviconUrlForTesting(
+          QStringLiteral("data:text/html,not-an-icon")) &&
+      !BrowserView::IsAllowedFaviconUrlForTesting(
+          QStringLiteral("file:///tmp/icon.png")) &&
+      !BrowserView::IsAllowedFaviconUrlForTesting(
+          QStringLiteral("https://user:password@example.test/icon.png")) &&
+      !BrowserView::IsAllowedFaviconUrlForTesting(
+          QStringLiteral("https://example.test/icon?") +
+          QString(64 * 1024, QLatin1Char('x')));
+  const bool images_bounded =
+      safe_png_written && oversized_png_written &&
+      BrowserView::IsAllowedFaviconPngForTesting(safe_png) &&
+      !BrowserView::IsAllowedFaviconPngForTesting(oversized_png) &&
+      !BrowserView::IsAllowedFaviconPngForTesting(
+          QByteArray(256 * 1024 + 1, '\0'));
+  if (window->current_tab_has_favicon_for_testing() && urls_bounded &&
+      images_bounded) {
+    *output << "FAVICON_SMOKE_OK tab_icon=visible inputs=bounded"
+            << Qt::endl;
     window->close();
   } else {
-    *output << "FAVICON_SMOKE_FAILED tab_icon=missing" << Qt::endl;
+    *output << "FAVICON_SMOKE_FAILED tab_icon="
+            << window->current_tab_has_favicon_for_testing()
+            << " urls=" << urls_bounded << " images=" << images_bounded
+            << Qt::endl;
     QCoreApplication::exit(12);
   }
 }

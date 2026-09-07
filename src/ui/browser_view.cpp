@@ -5,10 +5,12 @@
 #include <utility>
 
 #include <QByteArray>
+#include <QBuffer>
 #include <QDesktopServices>
 #include <QFocusEvent>
 #include <QHideEvent>
 #include <QImage>
+#include <QImageReader>
 #include <QLineEdit>
 #include <QMetaObject>
 #include <QMessageBox>
@@ -35,6 +37,59 @@
 
 namespace {
 
+constexpr int kMaxFaviconUrlBytes = 64 * 1024;
+constexpr int kMaxFaviconPngBytes = 256 * 1024;
+constexpr int kMaxFaviconDimension = 128;
+
+std::optional<QString> NormalizeFaviconUrl(QString value) {
+  value = value.trimmed();
+  if (value.isEmpty() || value.size() > kMaxFaviconUrlBytes ||
+      value.toUtf8().size() > kMaxFaviconUrlBytes) {
+    return std::nullopt;
+  }
+  QUrl url(value, QUrl::StrictMode);
+  const QString scheme = url.scheme().toLower();
+  if (!url.isValid() || url.isRelative() ||
+      (scheme != QStringLiteral("http") &&
+       scheme != QStringLiteral("https") &&
+       scheme != QStringLiteral("data"))) {
+    return std::nullopt;
+  }
+  if ((scheme == QStringLiteral("http") ||
+       scheme == QStringLiteral("https")) &&
+      (url.host().isEmpty() || !url.userInfo().isEmpty())) {
+    return std::nullopt;
+  }
+  if (scheme == QStringLiteral("data") &&
+      !value.startsWith(QStringLiteral("data:image/"),
+                        Qt::CaseInsensitive)) {
+    return std::nullopt;
+  }
+  url.setScheme(scheme);
+  return url.toString(QUrl::FullyEncoded);
+}
+
+QImage DecodeFaviconPng(const QByteArray& png_data) {
+  if (png_data.isEmpty() || png_data.size() > kMaxFaviconPngBytes) {
+    return {};
+  }
+  QBuffer buffer;
+  buffer.setData(png_data);
+  if (!buffer.open(QIODevice::ReadOnly)) return {};
+  QImageReader reader(&buffer, "PNG");
+  const QSize size = reader.size();
+  if (!size.isValid() || size.width() > kMaxFaviconDimension ||
+      size.height() > kMaxFaviconDimension) {
+    return {};
+  }
+  QImage image = reader.read();
+  if (image.isNull() || image.width() > kMaxFaviconDimension ||
+      image.height() > kMaxFaviconDimension) {
+    return {};
+  }
+  return image;
+}
+
 class FaviconDownloadCallback final : public CefDownloadImageCallback {
  public:
   FaviconDownloadCallback(QPointer<BrowserView> owner, int browser_id,
@@ -48,11 +103,20 @@ class FaviconDownloadCallback final : public CefDownloadImageCallback {
                                CefRefPtr<CefImage> image) override {
     CEF_REQUIRE_UI_THREAD();
     if (!owner_ || !image || image->IsEmpty()) return;
+    if (image->GetWidth() > kMaxFaviconDimension ||
+        image->GetHeight() > kMaxFaviconDimension) {
+      return;
+    }
     int pixel_width = 0;
     int pixel_height = 0;
     CefRefPtr<CefBinaryValue> png =
         image->GetAsPNG(1.0F, true, pixel_width, pixel_height);
-    if (!png || png->GetSize() == 0) return;
+    if (!png || png->GetSize() == 0 ||
+        png->GetSize() > kMaxFaviconPngBytes || pixel_width <= 0 ||
+        pixel_height <= 0 || pixel_width > kMaxFaviconDimension ||
+        pixel_height > kMaxFaviconDimension) {
+      return;
+    }
     QByteArray data(static_cast<qsizetype>(png->GetSize()), '\0');
     if (png->GetData(data.data(), static_cast<size_t>(data.size()), 0) !=
         static_cast<size_t>(data.size())) {
@@ -331,6 +395,15 @@ bool BrowserView::IsAllowedExternalScheme(const QString& url) {
   return NormalizeExternalUrl(url).has_value();
 }
 
+bool BrowserView::IsAllowedFaviconUrlForTesting(const QString& url) {
+  return NormalizeFaviconUrl(url).has_value();
+}
+
+bool BrowserView::IsAllowedFaviconPngForTesting(
+    const QByteArray& png_data) {
+  return !DecodeFaviconPng(png_data).isNull();
+}
+
 bool BrowserView::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
   if (!browser_) return false;
   OnCefAuthRequest(browser_, QStringLiteral("https://example.test"), false,
@@ -558,12 +631,9 @@ void BrowserView::OnCefFaviconURLChanged(
   emit FaviconChanged(QIcon());
   QString icon_url;
   for (const QString& candidate : icon_urls) {
-    const QUrl parsed(candidate);
-    if (parsed.isValid() &&
-        (parsed.scheme() == QStringLiteral("http") ||
-         parsed.scheme() == QStringLiteral("https") ||
-         parsed.scheme() == QStringLiteral("data"))) {
-      icon_url = candidate;
+    const auto normalized = NormalizeFaviconUrl(candidate);
+    if (normalized) {
+      icon_url = *normalized;
       break;
     }
   }
@@ -586,7 +656,7 @@ void BrowserView::OnCefFaviconDownloaded(int browser_id,
       image_url != favicon_url_) {
     return;
   }
-  const QImage image = QImage::fromData(png_data, "PNG");
+  const QImage image = DecodeFaviconPng(png_data);
   if (!image.isNull()) emit FaviconChanged(QIcon(QPixmap::fromImage(image)));
 }
 

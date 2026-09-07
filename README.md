@@ -78,7 +78,9 @@ command-line URL always takes priority. Home-page URLs are strictly normalized
 and bounded so saved settings always remain reloadable. The recently closed tab stack is part of the atomic
 session file, so Ctrl/Cmd+Shift+T continues to work after an application
 restart. Page favicons are loaded into their corresponding tabs with stale
-navigation results rejected. The History menu can selectively clear history,
+navigation results rejected; favicon URLs, encoded PNG bytes, and decoded
+dimensions are bounded before the image reaches the Qt UI. The History menu
+can selectively clear history,
 recently closed tabs, download history, or site data including HTTP cache,
 cookies, HTTP credentials, and certificate exceptions
 while preserving bookmarks; the updated session is persisted immediately, and

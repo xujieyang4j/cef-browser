@@ -100,6 +100,8 @@ class BrowserView final : public QWidget {
   static QString PermissionDescription(uint32_t permissions);
   static std::optional<QString> NormalizeExternalUrl(QString url);
   static bool IsAllowedExternalScheme(const QString& url);
+  static bool IsAllowedFaviconUrlForTesting(const QString& url);
+  static bool IsAllowedFaviconPngForTesting(const QByteArray& png_data);
   void ShowFailureForTesting(bool render_process_failed);
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
   bool ShowMediaPermissionForTesting(
