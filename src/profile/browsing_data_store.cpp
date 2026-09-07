@@ -14,6 +14,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QTextDocumentFragment>
+#include <QTimeZone>
 #include <QUrl>
 
 #include "settings/browser_settings.h"
@@ -44,7 +45,7 @@ QString NormalizeTitle(QString value) {
 
 QDateTime NormalizeDate(QDateTime value) {
   return value.isValid() ? value.toUTC()
-                         : QDateTime::fromSecsSinceEpoch(0, Qt::UTC);
+                         : QDateTime::fromSecsSinceEpoch(0, QTimeZone::utc());
 }
 
 QDateTime ParseDate(const QJsonValue& value) {

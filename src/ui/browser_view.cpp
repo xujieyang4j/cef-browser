@@ -373,7 +373,7 @@ void BrowserView::ShowDevTools() {
   window_info.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
 #if defined(OS_LINUX)
   CefString(&window_info.window_name) = "Trail Browser DevTools";
-#else
+#elif defined(OS_WIN)
   window_info.SetAsPopup(kNullWindowHandle, "Trail Browser DevTools");
 #endif
   browser_->GetHost()->ShowDevTools(window_info, client_, CefBrowserSettings(),

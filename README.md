@@ -47,9 +47,9 @@ reported after its tabs are recovered. As soon as a saved session is accepted,
 the primary process atomically marks that same snapshot as running without
 changing its tabs; a crash during the window startup grace period therefore
 cannot leave a stale clean-exit marker. An explicit startup URL takes priority
-over the saved session. Session fields and total output are bounded so even a
-page-generated extreme URL or title cannot create a file the next launch will
-refuse to restore; the active tab is retained when trimming is necessary.
+over the saved session. Session fields and the 16 MiB total output are bounded
+so the full supported set of 100 open tabs and 100 recovery records can round
+trip even when every URL reaches its individual limit.
 Restored tabs, recently closed tabs, bookmarks, visit history, and download
 history are revalidated before they can navigate or invoke local-file actions,
 so a damaged or modified profile cannot reintroduce blocked URL schemes.
@@ -101,6 +101,8 @@ load/certificate failure URLs must satisfy the same 64 KiB UTF-8 boundary as
 normal navigation before being reflected into the page or native UI.
 Web pages can enter native full screen, hovered-link destinations appear in the
 status bar, and Ctrl/Cmd+P opens the platform print flow.
+DevTools uses the platform-specific CEF window configuration, including the
+native top-level view path required by current macOS CEF distributions.
 Scripted pop-ups without a user gesture are blocked. User-initiated pop-ups are
 limited to four new tabs per source tab in each 10-second window, in addition
 to the global 100-tab ceiling, so one page cannot rapidly exhaust browser

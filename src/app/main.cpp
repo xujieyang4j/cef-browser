@@ -28,6 +28,7 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QTimeZone>
 #include <QTimer>
 
 #include "app/browser_app.h"
@@ -1227,35 +1228,39 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
               {QStringLiteral("https://example.test/saved-recent"),
                QStringLiteral("Safe")}};
 
-  BrowserSession oversized;
+  BrowserSession full_capacity;
   const QString long_path(60000, QLatin1Char('a'));
-  for (int index = 0; index < 20; ++index) {
-    oversized.tab_urls.append(
+  const QString long_closed_title(512, QChar(0x754C));
+  constexpr int kMaxPersistedSessionTabs = 100;
+  for (int index = 0; index < kMaxPersistedSessionTabs; ++index) {
+    full_capacity.tab_urls.append(
         QStringLiteral("https://example.test/%1/%2")
             .arg(index)
             .arg(long_path));
-    oversized.tab_pinned.append(index % 2 == 0);
+    full_capacity.tab_pinned.append(index % 2 == 0);
+    full_capacity.recently_closed_tabs.append(
+        {QStringLiteral("https://example.test/closed/%1/%2")
+             .arg(index)
+             .arg(long_path),
+         long_closed_title});
   }
-  oversized.active_tab = 10;
-  const QString active_oversized_url = oversized.tab_urls.at(10);
-  oversized.window_geometry = QByteArray(100 * 1024, 'g');
-  oversized.recently_closed_tabs = {
-      {QStringLiteral("https://example.test/closed-long"),
-       QString(700, QLatin1Char('t')) + QStringLiteral("\nignored")}};
+  full_capacity.active_tab = kMaxPersistedSessionTabs / 2;
+  full_capacity.window_geometry = QByteArray(64 * 1024, 'g');
   const QString bounded_path = session_path + QStringLiteral(".bounded");
-  const bool bounded_saved = SessionStore::Save(bounded_path, oversized);
+  const bool bounded_saved =
+      SessionStore::Save(bounded_path, full_capacity);
   const auto bounded = SessionStore::Load(bounded_path);
   const bool bounded_round_trip =
-      bounded_saved && QFileInfo(bounded_path).size() <= 1024 * 1024 && bounded &&
-      !bounded->tab_urls.isEmpty() && bounded->tab_urls.size() < 20 &&
-      bounded->tab_urls.contains(active_oversized_url) &&
-      bounded->tab_urls.at(bounded->active_tab) == active_oversized_url &&
-      bounded->window_geometry.isEmpty() &&
-      bounded->recently_closed_tabs.isEmpty();
+      bounded_saved && QFileInfo(bounded_path).size() <= 16 * 1024 * 1024 &&
+      bounded && bounded->tab_urls == full_capacity.tab_urls &&
+      bounded->tab_pinned == full_capacity.tab_pinned &&
+      bounded->active_tab == full_capacity.active_tab &&
+      bounded->window_geometry == full_capacity.window_geometry &&
+      bounded->recently_closed_tabs == full_capacity.recently_closed_tabs;
   const QString oversized_file_path =
       session_path + QStringLiteral(".oversized");
   const bool oversized_file_written =
-      WriteRepeatedFile(oversized_file_path, 1024 * 1024 + 1);
+      WriteRepeatedFile(oversized_file_path, 16 * 1024 * 1024 + 1);
   QString oversized_file_error;
   const auto oversized_file =
       SessionStore::Load(oversized_file_path, &oversized_file_error);
@@ -1270,7 +1275,7 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
             << " active=" << clean->active_tab
             << " recent_title=persisted launch=marked legacy=migrated "
                "unsafe=filtered "
-               "size=bounded read=bounded"
+               "size=full-capacity read=bounded"
             << Qt::endl;
     window->close();
   } else {
@@ -1520,14 +1525,14 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
   const bool untrusted_loaded = untrusted_data.Load();
   untrusted_data.RecordVisit(
       second_url, QStringLiteral("  Updated\r\nHistory  "),
-      QDateTime::fromSecsSinceEpoch(123, Qt::UTC));
+      QDateTime::fromSecsSinceEpoch(123, QTimeZone::utc()));
   const bool stored_data_sanitized =
       untrusted_data_written && untrusted_loaded &&
       untrusted_data.bookmarks().size() == 1 &&
       untrusted_data.bookmarks().first().url == first_url &&
       untrusted_data.bookmarks().first().title.size() == 512 &&
       untrusted_data.bookmarks().first().created_at ==
-          QDateTime::fromSecsSinceEpoch(0, Qt::UTC) &&
+          QDateTime::fromSecsSinceEpoch(0, QTimeZone::utc()) &&
       untrusted_data.history().size() == 1 &&
       untrusted_data.history().first().url == second_url &&
       untrusted_data.history().first().title ==
@@ -1535,7 +1540,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       untrusted_data.history().first().visit_count ==
           std::numeric_limits<int>::max() &&
       untrusted_data.history().first().last_visited_at ==
-          QDateTime::fromSecsSinceEpoch(123, Qt::UTC);
+          QDateTime::fromSecsSinceEpoch(123, QTimeZone::utc());
 
   const QString bounded_data_path =
       data_path + QStringLiteral(".bounded.json");

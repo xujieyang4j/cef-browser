@@ -18,7 +18,10 @@ namespace {
 constexpr int kSessionVersion = 2;
 constexpr int kLegacySessionVersion = 1;
 constexpr int kMaxRestoredTabs = 100;
-constexpr int kMaxSessionBytes = 1024 * 1024;
+// The aggregate budget must accommodate every entry accepted by the public
+// limits: 100 open tabs and 100 recently closed tabs can each carry a 64 KiB
+// URL, plus bounded titles and geometry. Keep headroom for JSON structure.
+constexpr int kMaxSessionBytes = 16 * 1024 * 1024;
 constexpr int kMaxSessionUrlBytes = 64 * 1024;
 constexpr int kMaxClosedTitleCharacters = 512;
 constexpr int kMaxWindowGeometryBytes = 64 * 1024;
