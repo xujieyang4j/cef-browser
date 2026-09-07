@@ -52,6 +52,10 @@ DownloadPanel::DownloadPanel(DownloadManager* manager, QWidget* parent)
           [this](quint32 id) { RemoveDownload(id); });
   connect(manager_, &DownloadManager::ActiveCountChanged, this,
           [this](int) { UpdateHeader(); });
+  const QList<DownloadManager::Item> restored = manager_->items();
+  for (auto item = restored.crbegin(); item != restored.crend(); ++item) {
+    RefreshDownload(item->id, false);
+  }
   hide();
 }
 

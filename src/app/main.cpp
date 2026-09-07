@@ -22,6 +22,7 @@
 #include <QTimer>
 
 #include "app/browser_app.h"
+#include "download/download_manager.h"
 #include "include/cef_app.h"
 #include "include/cef_command_line.h"
 #include "include/wrapper/cef_helpers.h"
@@ -252,7 +253,8 @@ void StartPinnedTabsSmokeTest(MainWindow* window, const QString& session_path) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
-void StartDownloadSmokeTest(MainWindow* window) {
+void StartDownloadSmokeTest(MainWindow* window,
+                            const QString& download_history_path) {
   auto output = std::make_shared<QTextStream>(stdout);
   window->UpdateDownloadForTesting(41, 25, false);
   const bool started = window->download_count_for_testing() == 1 &&
@@ -272,14 +274,29 @@ void StartDownloadSmokeTest(MainWindow* window) {
                          window->active_download_count_for_testing() == 0 &&
                          window->download_status_for_testing(41) ==
                              QStringLiteral("Complete");
-  if (started && paused && resumed && completed) {
-    *output << "DOWNLOAD_SMOKE_OK paused=1 resumed=1 status=Complete"
+  DownloadManager restored(download_history_path);
+  const bool history_loaded = restored.LoadHistory();
+  const QList<DownloadManager::Item> restored_items = restored.items();
+  const bool persisted =
+      history_loaded && restored_items.size() == 1 &&
+      restored_items.first().file_name == QStringLiteral("trail-test.bin") &&
+      restored_items.first().state == DownloadManager::State::Complete;
+  const bool cleared = window->ClearFinishedDownloadsForTesting();
+  DownloadManager cleared_history(download_history_path);
+  const bool empty_after_clear =
+      cleared && cleared_history.LoadHistory() &&
+      cleared_history.items().isEmpty();
+  if (started && paused && resumed && completed && persisted &&
+      empty_after_clear) {
+    *output << "DOWNLOAD_SMOKE_OK paused=1 resumed=1 status=Complete "
+               "persisted=1 cleared=1"
             << Qt::endl;
     window->close();
   } else {
     *output << "DOWNLOAD_SMOKE_FAILED started=" << started
             << " paused=" << paused << " resumed=" << resumed
-            << " completed=" << completed << Qt::endl;
+            << " completed=" << completed << " persisted=" << persisted
+            << " cleared=" << empty_after_clear << Qt::endl;
     QCoreApplication::exit(3);
   }
 }
@@ -617,12 +634,14 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
   QTimer::singleShot(50, window, [step] { (*step)(); });
 }
 
-void StartPrivacySmokeTest(MainWindow* window, const QString& session_path) {
+void StartPrivacySmokeTest(MainWindow* window, const QString& session_path,
+                           const QString& download_history_path) {
   auto output = std::make_shared<QTextStream>(stdout);
   auto attempts = std::make_shared<int>(0);
   auto stage = std::make_shared<int>(0);
   auto step = std::make_shared<std::function<void()>>();
-  *step = [window, output, attempts, stage, step, session_path] {
+  *step = [window, output, attempts, stage, step, session_path,
+           download_history_path] {
     ++*attempts;
     if (*stage == 0 && window->current_title() == QStringLiteral("Smoke")) {
       window->OpenTabForTesting(
@@ -638,8 +657,10 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path) {
       window->AddHistoryForTesting(
           QStringLiteral("https://example.test/private"),
           QStringLiteral("Private visit"));
+      window->UpdateDownloadForTesting(91, 100, true);
       const bool seeded =
           window->history_count_for_testing() == 1 &&
+          window->download_count_for_testing() == 1 &&
           window->address_suggestions_for_testing().contains(
               QStringLiteral("https://example.test/private"));
       if (!seeded) {
@@ -652,23 +673,28 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path) {
     } else if (*stage == 3 &&
                !window->browsing_data_clear_in_progress_for_testing()) {
       const bool cleared = window->history_count_for_testing() == 0 &&
+                           window->download_count_for_testing() == 0 &&
                            !window->address_suggestions_for_testing().contains(
                                QStringLiteral("https://example.test/private")) &&
                            window->recently_closed_tab_count_for_testing() == 0;
       const auto restored = SessionStore::Load(session_path);
       const bool session_cleared =
           restored && restored->recently_closed_tabs.isEmpty();
+      DownloadManager restored_downloads(download_history_path);
+      const bool downloads_cleared = restored_downloads.LoadHistory() &&
+                                     restored_downloads.items().isEmpty();
       const bool completed =
           window->browsing_data_clear_result_for_testing().startsWith(
               QStringLiteral("Browsing history"));
-      if (cleared && session_cleared && completed) {
+      if (cleared && session_cleared && downloads_cleared && completed) {
         *output << "PRIVACY_SMOKE_OK history=cleared recent=cleared "
-                   "session=cleared cef=completed"
+                   "downloads=cleared session=cleared cef=completed"
                 << Qt::endl;
         window->close();
       } else {
         *output << "PRIVACY_SMOKE_FAILED cleared=" << cleared
                 << " session=" << session_cleared
+                << " downloads=" << downloads_cleared
                 << " completed=" << completed
                 << " result="
                 << window->browsing_data_clear_result_for_testing() << Qt::endl;
@@ -1288,6 +1314,8 @@ int RunBrowser(int argc, char* argv[]) {
         QDir(data_path).filePath(QStringLiteral("session.json"));
     const QString settings_path =
         QDir(data_path).filePath(QStringLiteral("settings.json"));
+    const QString download_history_path =
+        QDir(data_path).filePath(QStringLiteral("downloads.json"));
     std::unique_ptr<QTemporaryDir> smoke_session_directory;
     std::unique_ptr<QTemporaryDir> smoke_profile_directory;
     QString active_session_path = session_path;
@@ -1366,7 +1394,8 @@ int RunBrowser(int argc, char* argv[]) {
       }
     }
     MainWindow main_window(initial_session, active_session_path,
-                           active_browsing_data_path, active_settings_path);
+                           active_browsing_data_path, active_settings_path,
+                           download_history_path);
     main_window.show();
     message_pump.Schedule(0);
     if (HasArgument(QStringLiteral("--smoke-test-tabs"))) {
@@ -1376,8 +1405,10 @@ int RunBrowser(int argc, char* argv[]) {
     } else if (HasArgument(QStringLiteral("--smoke-test-pinned-tabs"))) {
       StartPinnedTabsSmokeTest(&main_window, active_session_path);
     } else if (HasArgument(QStringLiteral("--smoke-test-downloads"))) {
-      QTimer::singleShot(300, &main_window,
-                         [&main_window] { StartDownloadSmokeTest(&main_window); });
+      QTimer::singleShot(
+          300, &main_window, [&main_window, download_history_path] {
+            StartDownloadSmokeTest(&main_window, download_history_path);
+          });
     } else if (HasArgument(
                    QStringLiteral("--smoke-test-exit-protection"))) {
       QTimer::singleShot(300, &main_window, [&main_window] {
@@ -1398,9 +1429,12 @@ int RunBrowser(int argc, char* argv[]) {
                                                  active_browsing_data_path);
                          });
     } else if (HasArgument(QStringLiteral("--smoke-test-privacy"))) {
-      QTimer::singleShot(300, &main_window, [&main_window, active_session_path] {
-        StartPrivacySmokeTest(&main_window, active_session_path);
-      });
+      QTimer::singleShot(
+          300, &main_window,
+          [&main_window, active_session_path, download_history_path] {
+            StartPrivacySmokeTest(&main_window, active_session_path,
+                                  download_history_path);
+          });
     } else if (HasArgument(QStringLiteral("--smoke-test-favicon"))) {
       QTimer::singleShot(300, &main_window,
                          [&main_window] { StartFaviconSmokeTest(&main_window); });

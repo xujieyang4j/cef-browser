@@ -39,6 +39,7 @@ class MainWindow final : public QMainWindow {
  public:
   MainWindow(const BrowserSession& initial_session, QString session_path,
              QString browsing_data_path = {}, QString settings_path = {},
+             QString download_history_path = {},
              QWidget* parent = nullptr);
   ~MainWindow() override;
   int tab_count() const;
@@ -61,6 +62,7 @@ class MainWindow final : public QMainWindow {
   int download_count_for_testing() const;
   int active_download_count_for_testing() const;
   QString download_status_for_testing(quint32 id) const;
+  bool ClearFinishedDownloadsForTesting();
   void SetCurrentFaviconForTesting();
   bool current_tab_has_favicon_for_testing() const;
   void SetCurrentAudioStateForTesting(bool playing, bool muted);

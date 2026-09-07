@@ -10,7 +10,9 @@ recently closed tab recovery, F12 DevTools, persistent CEF cache, and orderly
 asynchronous browser shutdown. Downloads have a window-level manager with
 progress, speed, pause/resume, cancellation, completion actions, and a platform
 save dialog; they continue when the originating tab closes, and quitting with
-active or paused downloads requires explicit confirmation. Main-frame load
+active or paused downloads requires explicit confirmation. Finished download
+records survive application restarts and can be cleared without deleting the
+downloaded files. Main-frame load
 failures and renderer crashes display a retry page while preserving the
 requested URL.
 Window geometry, open tab URLs, and the active tab are saved atomically and
@@ -43,7 +45,8 @@ command-line URL always takes priority. The recently closed tab stack is part of
 session file, so Ctrl/Cmd+Shift+T continues to work after an application
 restart. Page favicons are loaded into their corresponding tabs with stale
 navigation results rejected. The History menu can clear history, recently
-closed tabs, HTTP cache, cookies, HTTP credentials, and certificate exceptions
+closed tabs, download history, HTTP cache, cookies, HTTP credentials, and
+certificate exceptions
 while preserving bookmarks; the updated session is persisted immediately, and
 completion is reported only after every asynchronous CEF operation finishes.
 Tabs also have a context menu for opening a new tab, duplicating the selected

@@ -120,7 +120,8 @@ QKeySequence PrimaryShortcut(const QString& keys) {
 
 MainWindow::MainWindow(const BrowserSession& initial_session,
                        QString session_path, QString browsing_data_path,
-                       QString settings_path, QWidget* parent)
+                       QString settings_path, QString download_history_path,
+                       QWidget* parent)
     : QMainWindow(parent), session_path_(std::move(session_path)) {
   browser_settings_ = new BrowserSettings(std::move(settings_path));
   QString settings_error;
@@ -242,7 +243,13 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   loading_progress_->hide();
 
   tab_stack_ = new QStackedWidget(central);
-  download_manager_ = new DownloadManager(this);
+  download_manager_ =
+      new DownloadManager(std::move(download_history_path), this);
+  QString download_history_error;
+  if (!download_manager_->LoadHistory(&download_history_error)) {
+    qWarning("Unable to load download history: %s",
+             qPrintable(download_history_error));
+  }
   browsing_data_ = new BrowsingDataStore(std::move(browsing_data_path));
   QString browsing_data_error;
   if (!browsing_data_->Load(&browsing_data_error)) {
@@ -320,6 +327,13 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
             downloads_button_->setText(
                 count > 0 ? QStringLiteral("Downloads (%1)").arg(count)
                           : QStringLiteral("Downloads"));
+          });
+  connect(download_manager_, &DownloadManager::PersistenceError, this,
+          [this](const QString& error) {
+            statusBar()->showMessage(
+                QStringLiteral("Unable to save download history: %1")
+                    .arg(error),
+                8000);
           });
 
   auto* close_find_shortcut =
@@ -501,6 +515,10 @@ int MainWindow::active_download_count_for_testing() const {
 QString MainWindow::download_status_for_testing(quint32 id) const {
   const auto item = download_manager_->item(id);
   return item ? DownloadManager::StatusText(*item) : QString();
+}
+
+bool MainWindow::ClearFinishedDownloadsForTesting() {
+  return download_manager_->ClearFinished();
 }
 
 void MainWindow::SetCurrentFaviconForTesting() {
@@ -2136,7 +2154,8 @@ void MainWindow::ShowClearBrowsingDataPrompt() {
       QMessageBox::Warning, QStringLiteral("Clear browsing data?"),
       QStringLiteral(
           "This removes browsing history, recently closed tabs, cached files, "
-          "cookies, saved site sessions, HTTP credentials, and certificate "
+          "cookies, saved site sessions, download history, HTTP credentials, "
+          "and certificate "
           "exceptions. "
           "Bookmarks are kept."),
       QMessageBox::NoButton, this);
@@ -2158,7 +2177,7 @@ void MainWindow::BeginClearBrowsingData(bool show_result_dialog) {
   if (browsing_data_clear_in_progress_) return;
   browsing_data_clear_in_progress_ = true;
   browsing_data_clear_show_result_ = show_result_dialog;
-  browsing_data_clear_pending_ = 6;
+  browsing_data_clear_pending_ = 7;
   browsing_data_clear_failures_.clear();
   browsing_data_clear_result_.clear();
   RebuildHistoryMenu();
@@ -2182,6 +2201,8 @@ void MainWindow::BeginClearBrowsingData(bool show_result_dialog) {
   CompleteBrowsingDataClearTask(
       QStringLiteral("recently closed tabs"),
       session_path_.isEmpty() || PersistSession(CaptureSession(false)));
+  CompleteBrowsingDataClearTask(QStringLiteral("download history"),
+                                download_manager_->ClearFinished());
 
   QPointer<MainWindow> owner(this);
   CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
@@ -2238,8 +2259,8 @@ void MainWindow::CompleteBrowsingDataClearTask(const QString& task,
   browsing_data_clear_in_progress_ = false;
   if (browsing_data_clear_failures_.isEmpty()) {
     browsing_data_clear_result_ = QStringLiteral(
-        "Browsing history, recently closed tabs, cache, cookies, and site "
-        "credentials were cleared.");
+        "Browsing history, recently closed tabs, download history, cache, "
+        "cookies, and site credentials were cleared.");
   } else {
     browsing_data_clear_result_ =
         QStringLiteral("Some browsing data could not be cleared: %1.")

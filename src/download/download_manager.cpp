@@ -1,17 +1,60 @@
 #include "download/download_manager.h"
 
 #include <algorithm>
+#include <limits>
 
 #include <QDesktopServices>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QPointer>
 #include <QProcess>
+#include <QSaveFile>
 #include <QUrl>
 
 #include "include/wrapper/cef_helpers.h"
 
 namespace {
+
+constexpr int kHistoryVersion = 1;
+constexpr int kMaxHistoryItems = 200;
+constexpr int kMaxHistoryBytes = 2 * 1024 * 1024;
+
+void SetError(QString* error, const QString& value) {
+  if (error) *error = value;
+}
+
+QString StateId(DownloadManager::State state) {
+  switch (state) {
+    case DownloadManager::State::Complete:
+      return QStringLiteral("complete");
+    case DownloadManager::State::Cancelled:
+      return QStringLiteral("cancelled");
+    case DownloadManager::State::Interrupted:
+      return QStringLiteral("interrupted");
+    case DownloadManager::State::Starting:
+    case DownloadManager::State::InProgress:
+    case DownloadManager::State::Paused:
+      return QString();
+  }
+  return QString();
+}
+
+std::optional<DownloadManager::State> ParseState(const QString& value) {
+  if (value == QStringLiteral("complete")) {
+    return DownloadManager::State::Complete;
+  }
+  if (value == QStringLiteral("cancelled")) {
+    return DownloadManager::State::Cancelled;
+  }
+  if (value == QStringLiteral("interrupted")) {
+    return DownloadManager::State::Interrupted;
+  }
+  return std::nullopt;
+}
 
 DownloadManager::Item Snapshot(CefRefPtr<CefDownloadItem> download) {
   DownloadManager::Item item;
@@ -88,7 +131,8 @@ class DownloadHandlerImpl final : public CefDownloadHandler {
   DISALLOW_COPY_AND_ASSIGN(DownloadHandlerImpl);
 };
 
-DownloadManager::DownloadManager(QObject* parent) : QObject(parent) {
+DownloadManager::DownloadManager(QString history_path, QObject* parent)
+    : QObject(parent), history_path_(std::move(history_path)) {
   handler_ = new DownloadHandlerImpl(this);
 }
 
@@ -115,6 +159,123 @@ std::optional<DownloadManager::Item> DownloadManager::item(quint32 id) const {
 int DownloadManager::active_count() const {
   return std::count_if(items_.cbegin(), items_.cend(),
                        [](const Item& item) { return IsActive(item.state); });
+}
+
+bool DownloadManager::LoadHistory(QString* error) {
+  if (history_path_.isEmpty()) return true;
+  QFile file(history_path_);
+  if (!file.exists()) return true;
+  if (!file.open(QIODevice::ReadOnly)) {
+    SetError(error, file.errorString());
+    return false;
+  }
+  if (file.size() > kMaxHistoryBytes) {
+    SetError(error, QStringLiteral("Download history file is unexpectedly large"));
+    return false;
+  }
+
+  QJsonParseError parse_error;
+  const QJsonDocument document =
+      QJsonDocument::fromJson(file.readAll(), &parse_error);
+  if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
+    SetError(error, parse_error.errorString());
+    return false;
+  }
+  const QJsonObject root = document.object();
+  if (root.value(QStringLiteral("version")).toInt() != kHistoryVersion) {
+    SetError(error, QStringLiteral("Unsupported download history version"));
+    return false;
+  }
+
+  QHash<quint32, Item> loaded_items;
+  QList<quint32> loaded_order;
+  quint32 restored_id = std::numeric_limits<quint32>::max();
+  const QJsonArray downloads =
+      root.value(QStringLiteral("downloads")).toArray();
+  for (int index = 0;
+       index < std::min(static_cast<int>(downloads.size()), kMaxHistoryItems);
+       ++index) {
+    const QJsonObject object = downloads.at(index).toObject();
+    const auto state =
+        ParseState(object.value(QStringLiteral("state")).toString());
+    if (!state) continue;
+    Item item;
+    item.id = restored_id--;
+    item.file_name = object.value(QStringLiteral("fileName")).toString();
+    item.full_path = object.value(QStringLiteral("fullPath")).toString();
+    item.url = object.value(QStringLiteral("url")).toString();
+    item.detail = object.value(QStringLiteral("detail")).toString();
+    item.received_bytes =
+        std::max<qint64>(0, object.value(QStringLiteral("receivedBytes"))
+                                .toVariant()
+                                .toLongLong());
+    item.total_bytes =
+        std::max<qint64>(0, object.value(QStringLiteral("totalBytes"))
+                                .toVariant()
+                                .toLongLong());
+    item.percent =
+        std::clamp(object.value(QStringLiteral("percent")).toInt(-1), -1,
+                   100);
+    item.state = *state;
+    if (item.file_name.isEmpty() && item.full_path.isEmpty() &&
+        item.url.isEmpty()) {
+      continue;
+    }
+    loaded_items.insert(item.id, item);
+    loaded_order.append(item.id);
+  }
+
+  items_ = std::move(loaded_items);
+  order_ = std::move(loaded_order);
+  callbacks_.clear();
+  return true;
+}
+
+bool DownloadManager::SaveHistory(QString* error) const {
+  if (history_path_.isEmpty()) return true;
+  if (!QDir().mkpath(QFileInfo(history_path_).absolutePath())) {
+    SetError(error, QStringLiteral("Unable to create profile directory"));
+    return false;
+  }
+
+  QJsonArray downloads;
+  for (const quint32 id : order_) {
+    const auto found = items_.constFind(id);
+    if (found == items_.cend()) continue;
+    const QString state = StateId(found->state);
+    if (state.isEmpty()) continue;
+    downloads.append(QJsonObject{
+        {QStringLiteral("fileName"), found->file_name},
+        {QStringLiteral("fullPath"), found->full_path},
+        {QStringLiteral("url"), found->url},
+        {QStringLiteral("detail"), found->detail},
+        {QStringLiteral("receivedBytes"), found->received_bytes},
+        {QStringLiteral("totalBytes"), found->total_bytes},
+        {QStringLiteral("percent"), found->percent},
+        {QStringLiteral("state"), state},
+    });
+    if (downloads.size() >= kMaxHistoryItems) break;
+  }
+
+  const QJsonObject root{
+      {QStringLiteral("version"), kHistoryVersion},
+      {QStringLiteral("downloads"), downloads},
+  };
+  QSaveFile file(history_path_);
+  if (!file.open(QIODevice::WriteOnly)) {
+    SetError(error, file.errorString());
+    return false;
+  }
+  if (file.write(QJsonDocument(root).toJson(QJsonDocument::Compact)) < 0) {
+    SetError(error, file.errorString());
+    file.cancelWriting();
+    return false;
+  }
+  if (!file.commit()) {
+    SetError(error, file.errorString());
+    return false;
+  }
+  return true;
 }
 
 void DownloadManager::CancelDownload(quint32 id) {
@@ -145,7 +306,7 @@ void DownloadManager::ResumeDownload(quint32 id) {
   if (callback) callback->Resume();
 }
 
-void DownloadManager::ClearFinished() {
+bool DownloadManager::ClearFinished() {
   const QList<quint32> ids = order_;
   for (const quint32 id : ids) {
     const auto found = items_.constFind(id);
@@ -156,6 +317,10 @@ void DownloadManager::ClearFinished() {
       emit DownloadRemoved(id);
     }
   }
+  QString error;
+  const bool saved = SaveHistory(&error);
+  if (!saved) emit PersistenceError(error);
+  return saved;
 }
 
 bool DownloadManager::OpenDownload(quint32 id) const {
@@ -245,12 +410,34 @@ void DownloadManager::UpdateDownload(
     callbacks_.insert(item.id, std::move(callback));
   } else if (!IsActive(item.state)) {
     callbacks_.remove(item.id);
+    TrimFinishedHistory();
   }
 
   emit DownloadChanged(item.id, is_new);
   const int current_active_count = active_count();
   if (current_active_count != previous_active_count) {
     emit ActiveCountChanged(current_active_count);
+  }
+  if (!IsActive(item.state)) {
+    QString error;
+    if (!SaveHistory(&error)) emit PersistenceError(error);
+  }
+}
+
+void DownloadManager::TrimFinishedHistory() {
+  int finished_count =
+      std::count_if(items_.cbegin(), items_.cend(),
+                    [](const Item& item) { return !IsActive(item.state); });
+  for (int index = order_.size() - 1;
+       index >= 0 && finished_count > kMaxHistoryItems; --index) {
+    const quint32 id = order_.at(index);
+    const auto found = items_.constFind(id);
+    if (found == items_.cend() || IsActive(found->state)) continue;
+    items_.remove(id);
+    order_.removeAt(index);
+    callbacks_.remove(id);
+    emit DownloadRemoved(id);
+    --finished_count;
   }
 }
 
