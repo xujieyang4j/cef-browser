@@ -91,6 +91,10 @@ load/certificate failure URLs must satisfy the same 64 KiB UTF-8 boundary as
 normal navigation before being reflected into the page or native UI.
 Web pages can enter native full screen, hovered-link destinations appear in the
 status bar, and Ctrl/Cmd+P opens the platform print flow.
+Scripted pop-ups without a user gesture are blocked. User-initiated pop-ups are
+limited to four new tabs per source tab in each 10-second window, in addition
+to the global 100-tab ceiling, so one page cannot rapidly exhaust browser
+process and UI resources.
 Navigation shows page-load progress and supports standard back, forward, and
 refresh shortcuts even while the embedded page owns keyboard focus. HTTP and
 proxy authentication use an in-memory, non-blocking credential prompt; entered
@@ -245,8 +249,8 @@ page-search/zoom, titled address suggestions, bookmark/history persistence,
 bounds for address, search, find, and bookmark-name input, browsing-data
 cleanup, download-ingress and active-count limits, favicon
 mapping, streamed response limits, request coalescing and cancellation,
-timeout recovery, audio/mute state, security-policy, and authentication-dialog
-checks.
+timeout recovery, audio/mute state, user-gesture and rate-limited pop-up policy,
+security-policy, and authentication-dialog checks.
 Oversized session, settings, download-history, browsing-data, and bookmark
 HTML files are also rejected using the bytes actually read, with existing
 in-memory settings and profile data preserved.

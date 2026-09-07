@@ -57,6 +57,8 @@ namespace {
 
 constexpr int kMaxClosedTabs = 20;
 constexpr int kMaxOpenTabs = 100;
+constexpr int kMaxPopupTabsPerRateWindow = 4;
+constexpr qint64 kPopupRateWindowMs = 10 * 1000;
 constexpr int kMaxAddressSuggestions = 200;
 constexpr int kMaxAddressInputCharacters = 64 * 1024;
 constexpr int kMaxFindInputCharacters = 4 * 1024;
@@ -155,6 +157,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   setWindowTitle(QStringLiteral("Trail Browser"));
   resize(1280, 800);
   setMinimumSize(640, 480);
+  popup_rate_clock_.start();
   CreateApplicationMenus();
 
   auto* central = new QWidget(this);
@@ -859,8 +862,13 @@ std::optional<QString> MainWindow::NormalizeUrlForTesting(
   return NormalizeUrl(input);
 }
 
-bool MainWindow::OpenPopupForTesting(const QString& url, int disposition) {
-  return OpenPopup(CurrentBrowser(), url, disposition);
+bool MainWindow::OpenPopupForTesting(const QString& url, int disposition,
+                                     bool user_gesture) {
+  return OpenPopup(CurrentBrowser(), url, disposition, user_gesture);
+}
+
+int MainWindow::MaxPopupTabsPerRateWindowForTesting() {
+  return kMaxPopupTabsPerRateWindow;
 }
 
 QString MainWindow::home_page_for_testing() const {
@@ -1444,8 +1452,9 @@ BrowserView* MainWindow::AddTab(const QString& url, bool activate,
             }
           });
   connect(browser, &BrowserView::PopupRequested, this,
-          [this, browser](const QString& target, int disposition) {
-            OpenPopup(browser, target, disposition);
+          [this, browser](const QString& target, int disposition,
+                          bool user_gesture) {
+            OpenPopup(browser, target, disposition, user_gesture);
           });
   connect(browser, &BrowserView::ShortcutRequested, this,
           [this, browser](int action) {
@@ -1663,8 +1672,13 @@ void MainWindow::ContinueQueuedTabCloses() {
 }
 
 bool MainWindow::OpenPopup(BrowserView* source, const QString& url,
-                           int disposition_value) {
+                           int disposition_value, bool user_gesture) {
   if (!source || IndexOf(source) < 0 || closing_tabs_.contains(source)) {
+    return false;
+  }
+  if (!user_gesture) {
+    statusBar()->showMessage(
+        QStringLiteral("Blocked a pop-up without a user gesture"), 5000);
     return false;
   }
   if (url.toUtf8().size() > 64 * 1024) {
@@ -1685,13 +1699,28 @@ bool MainWindow::OpenPopup(BrowserView* source, const QString& url,
   const QString& target = *normalized;
   const auto disposition =
       static_cast<cef_window_open_disposition_t>(disposition_value);
+  const auto add_popup_tab = [this, source, &target](bool activate) {
+    QList<qint64>& opened = popup_open_times_[source];
+    const qint64 now = popup_rate_clock_.elapsed();
+    while (!opened.isEmpty() && now - opened.front() >= kPopupRateWindowMs) {
+      opened.removeFirst();
+    }
+    if (opened.size() >= kMaxPopupTabsPerRateWindow) {
+      statusBar()->showMessage(
+          QStringLiteral("Blocked excessive pop-ups from this tab"), 5000);
+      return false;
+    }
+    if (!AddTab(target, activate)) return false;
+    opened.append(now);
+    return true;
+  };
 
   if (disposition == CEF_WOD_CURRENT_TAB) {
     source->LoadUrl(target);
     return true;
   }
   if (disposition == CEF_WOD_NEW_BACKGROUND_TAB) {
-    return AddTab(target, false) != nullptr;
+    return add_popup_tab(false);
   }
   if (disposition == CEF_WOD_SINGLETON_TAB ||
       disposition == CEF_WOD_SWITCH_TO_TAB) {
@@ -1712,7 +1741,7 @@ bool MainWindow::OpenPopup(BrowserView* source, const QString& url,
     case CEF_WOD_OFF_THE_RECORD:
     case CEF_WOD_SWITCH_TO_TAB:
     case CEF_WOD_NEW_SPLIT_VIEW:
-      return AddTab(target, true) != nullptr;
+      return add_popup_tab(true);
     case CEF_WOD_UNKNOWN:
     case CEF_WOD_CURRENT_TAB:
     case CEF_WOD_NEW_BACKGROUND_TAB:
@@ -1747,6 +1776,7 @@ void MainWindow::CompleteTabClose(BrowserView* browser) {
   const bool queued_close = active_queued_tab_close_ == browser;
   browser->FinalizeClose();
   pinned_tabs_.remove(browser);
+  popup_open_times_.remove(browser);
 
   const bool forget_closed_tab = forgotten_closing_tabs_.remove(browser);
   if (!forget_closed_tab && pending_closed_tabs_.contains(browser)) {

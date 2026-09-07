@@ -452,14 +452,15 @@ void BrowserClient::OnDialogClosed(CefRefPtr<CefBrowser> browser) {
 bool BrowserClient::OnBeforePopup(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, int,
     const CefString& target_url, const CefString&,
-    cef_window_open_disposition_t target_disposition, bool,
+    cef_window_open_disposition_t target_disposition, bool user_gesture,
     const CefPopupFeatures&, CefWindowInfo&, CefRefPtr<CefClient>&,
     CefBrowserSettings&, CefRefPtr<CefDictionaryValue>&, bool*) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_) {
     const auto safe_url = CheckedString(target_url, kMaxActionUrlCharacters);
     if (safe_url) {
-      owner_->OnCefPopupRequested(browser, *safe_url, target_disposition);
+      owner_->OnCefPopupRequested(browser, *safe_url, target_disposition,
+                                  user_gesture);
     }
   }
   return true;

@@ -3,6 +3,7 @@
 #include <optional>
 
 #include <QHash>
+#include <QElapsedTimer>
 #include <QList>
 #include <QMainWindow>
 #include <QPointer>
@@ -117,7 +118,9 @@ class MainWindow final : public QMainWindow {
   bool SetStartupBehaviorForTesting(const QString& name);
   QString startup_behavior_for_testing() const;
   std::optional<QString> NormalizeUrlForTesting(const QString& input) const;
-  bool OpenPopupForTesting(const QString& url, int disposition);
+  bool OpenPopupForTesting(const QString& url, int disposition,
+                           bool user_gesture = true);
+  static int MaxPopupTabsPerRateWindowForTesting();
   void ActivateTabShortcutForTesting(int number);
   void ShowFailureForTesting(bool render_process_failed);
   bool failure_page_active_for_testing() const;
@@ -243,7 +246,8 @@ class MainWindow final : public QMainWindow {
                       bool focus_address = false);
   BrowserView* CurrentBrowser() const;
   int IndexOf(const BrowserView* browser) const;
-  bool OpenPopup(BrowserView* source, const QString& url, int disposition);
+  bool OpenPopup(BrowserView* source, const QString& url, int disposition,
+                 bool user_gesture);
   void ShowTabContextMenu(const QPoint& position);
   void DuplicateTab(int index);
   void SetTabPinned(int index, bool pinned);
@@ -323,6 +327,8 @@ class MainWindow final : public QMainWindow {
   QSet<BrowserView*> closing_tabs_;
   QSet<BrowserView*> forgotten_closing_tabs_;
   QSet<BrowserView*> pinned_tabs_;
+  QElapsedTimer popup_rate_clock_;
+  QHash<BrowserView*, QList<qint64>> popup_open_times_;
   QList<QPointer<BrowserView>> queued_tab_closes_;
   QPointer<BrowserView> active_queued_tab_close_;
   QHash<BrowserView*, RecentlyClosedTab> pending_closed_tabs_;

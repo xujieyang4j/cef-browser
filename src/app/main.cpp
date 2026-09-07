@@ -2418,6 +2418,26 @@ void StartSecuritySmokeTest(MainWindow* window) {
       CEF_WOD_NEW_BACKGROUND_TAB);
   const bool popup_ok = safe_popup_opened &&
                         window->tab_count() == tabs_before_popups + 1;
+  const bool script_popup_blocked = !window->OpenPopupForTesting(
+      QStringLiteral("https://example.test/script-popup"),
+      CEF_WOD_NEW_BACKGROUND_TAB, false);
+  bool popup_budget_filled = true;
+  for (int index = 1;
+       index < MainWindow::MaxPopupTabsPerRateWindowForTesting(); ++index) {
+    popup_budget_filled =
+        popup_budget_filled &&
+        window->OpenPopupForTesting(
+            QStringLiteral("https://example.test/popup-%1").arg(index),
+            CEF_WOD_NEW_BACKGROUND_TAB);
+  }
+  const bool popup_rate_limited = !window->OpenPopupForTesting(
+      QStringLiteral("https://example.test/popup-overflow"),
+      CEF_WOD_NEW_BACKGROUND_TAB);
+  const bool popup_rate_ok =
+      script_popup_blocked && popup_budget_filled && popup_rate_limited &&
+      window->tab_count() ==
+          tabs_before_popups +
+              MainWindow::MaxPopupTabsPerRateWindowForTesting();
   const bool external_prompt_shown = window->ShowExternalProtocolForTesting(
       QStringLiteral("mailto:test@example.com"));
   const bool external_timeout_armed =
@@ -2429,10 +2449,11 @@ void StartSecuritySmokeTest(MainWindow* window) {
       !window->current_page_request_timeout_active_for_testing() &&
       !window->current_page_request_active_for_testing();
   if (media_ok && permissions_ok && prompts_bounded && schemes_ok &&
-      unsafe_popups_blocked && popup_ok && external_timeout_ok) {
+      unsafe_popups_blocked && popup_ok && popup_rate_ok &&
+      external_timeout_ok) {
     *output << "SECURITY_SMOKE_OK media=2 permissions=2 "
                "prompts=bounded schemes=normalized popups=guarded "
-               "external=timeout"
+               "external=timeout popups=rate-limited"
             << Qt::endl;
     window->close();
   } else {
@@ -2442,6 +2463,7 @@ void StartSecuritySmokeTest(MainWindow* window) {
             << " schemes=" << schemes_ok
             << " unsafe_popups=" << unsafe_popups_blocked
             << " popup=" << popup_ok
+            << " popup_rate=" << popup_rate_ok
             << " external_timeout=" << external_timeout_ok << Qt::endl;
     QCoreApplication::exit(8);
   }

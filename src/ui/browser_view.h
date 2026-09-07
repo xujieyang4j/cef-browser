@@ -216,7 +216,8 @@ class BrowserView final : public QWidget {
                         const QString& scheme,
                         CefRefPtr<CefAuthCallback> callback);
   void OnCefPopupRequested(CefRefPtr<CefBrowser> browser, const QString& url,
-                           cef_window_open_disposition_t disposition);
+                           cef_window_open_disposition_t disposition,
+                           bool user_gesture);
 
  signals:
   void TitleChanged(const QString& title);
@@ -233,7 +234,7 @@ class BrowserView final : public QWidget {
   void FullscreenChanged(bool fullscreen);
   void StatusMessageChanged(const QString& message);
   void LoadingProgressChanged(double progress);
-  void PopupRequested(const QString& url, int disposition);
+  void PopupRequested(const QString& url, int disposition, bool user_gesture);
   void ShortcutRequested(int action);
   void BrowserClosed();
   void CloseCancelled();

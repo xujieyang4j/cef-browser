@@ -1476,10 +1476,11 @@ void BrowserView::OnCefAuthRequest(
 
 void BrowserView::OnCefPopupRequested(CefRefPtr<CefBrowser> browser,
                                       const QString& url,
-                                      cef_window_open_disposition_t disposition) {
+                                      cef_window_open_disposition_t disposition,
+                                      bool user_gesture) {
   if (browser_ && browser_->IsSame(browser) &&
       url.toUtf8().size() <= kMaxActionUrlBytes) {
-    emit PopupRequested(url, static_cast<int>(disposition));
+    emit PopupRequested(url, static_cast<int>(disposition), user_gesture);
   }
 }
 
