@@ -20,6 +20,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QLocalSocket>
 #include <QPushButton>
@@ -1884,6 +1885,24 @@ void StartSecuritySmokeTest(MainWindow* window) {
       QStringLiteral("  MAILTO:test@example.com?subject=Trail%20Browser  "));
   const auto normalized_magnet = window->normalize_external_url_for_testing(
       QStringLiteral("magnet:?xt=urn:btih:0123456789abcdef"));
+  const auto normalized_origin =
+      BrowserView::NormalizeSecurityOriginForTesting(
+          QStringLiteral(" HTTPS://example.test/path?q=1#fragment "));
+  const QString normalized_prompt = BrowserView::NormalizePromptTextForTesting(
+      QStringLiteral("  Realm\r\nName  ") +
+      QString(600, QLatin1Char('r')));
+  const bool prompts_bounded =
+      normalized_origin &&
+      *normalized_origin == QStringLiteral("https://example.test") &&
+      !BrowserView::NormalizeSecurityOriginForTesting(
+          QStringLiteral("https://user:password@example.test")) &&
+      !BrowserView::NormalizeSecurityOriginForTesting(
+          QStringLiteral("file:///tmp/private")) &&
+      !BrowserView::NormalizeSecurityOriginForTesting(
+          QStringLiteral("https://example.test/?") +
+          QString(8 * 1024, QLatin1Char('o'))) &&
+      normalized_prompt.size() == 512 &&
+      normalized_prompt.startsWith(QStringLiteral("Realm Name "));
   const bool schemes_ok =
       normalized_mail && normalized_magnet &&
       *normalized_mail ==
@@ -1905,7 +1924,10 @@ void StartSecuritySmokeTest(MainWindow* window) {
       !window->external_scheme_allowed_for_testing(
           QStringLiteral("webcal://user:password@calendar.example.test")) &&
       !window->external_scheme_allowed_for_testing(
-          QStringLiteral("mailto:test@example.com\r\nX-Test: injected"));
+          QStringLiteral("mailto:test@example.com\r\nX-Test: injected")) &&
+      !window->external_scheme_allowed_for_testing(
+          QStringLiteral("mailto:test@example.com?body=") +
+          QString(16 * 1024, QLatin1Char('x')));
   const int tabs_before_popups = window->tab_count();
   const bool unsafe_popups_blocked =
       !window->OpenPopupForTesting(QStringLiteral("javascript:alert(1)"),
@@ -1917,21 +1939,26 @@ void StartSecuritySmokeTest(MainWindow* window) {
       !window->OpenPopupForTesting(
           QStringLiteral("https://example.test/download"),
           CEF_WOD_SAVE_TO_DISK) &&
+      !window->OpenPopupForTesting(
+          QStringLiteral("https://example.test/popup?") +
+              QString(64 * 1024, QLatin1Char('x')),
+          CEF_WOD_NEW_FOREGROUND_TAB) &&
       window->tab_count() == tabs_before_popups;
   const bool safe_popup_opened = window->OpenPopupForTesting(
       QStringLiteral(" HTTPS://example.test/popup "),
       CEF_WOD_NEW_BACKGROUND_TAB);
   const bool popup_ok = safe_popup_opened &&
                         window->tab_count() == tabs_before_popups + 1;
-  if (media_ok && permissions_ok && schemes_ok && unsafe_popups_blocked &&
-      popup_ok) {
+  if (media_ok && permissions_ok && prompts_bounded && schemes_ok &&
+      unsafe_popups_blocked && popup_ok) {
     *output << "SECURITY_SMOKE_OK media=2 permissions=2 "
-               "schemes=normalized popups=guarded"
+               "prompts=bounded schemes=normalized popups=guarded"
             << Qt::endl;
     window->close();
   } else {
     *output << "SECURITY_SMOKE_FAILED media=" << media_ok
             << " permissions=" << permissions_ok
+            << " prompts=" << prompts_bounded
             << " schemes=" << schemes_ok
             << " unsafe_popups=" << unsafe_popups_blocked
             << " popup=" << popup_ok << Qt::endl;
@@ -1956,6 +1983,13 @@ void StartAuthSmokeTest(MainWindow* window) {
     if (!*requested && window->current_title() == QStringLiteral("Auth")) {
       *requested = window->ShowAuthForTesting(new AuthSmokeCallback(result));
     } else if (*requested && !*duplicate_requested) {
+      bool credentials_bounded = false;
+      if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
+        const QList<QLineEdit*> fields = dialog->findChildren<QLineEdit*>();
+        credentials_bounded =
+            fields.size() == 2 && fields.at(0)->maxLength() == 1024 &&
+            fields.at(1)->maxLength() == 1024;
+      }
       const bool auth_requested = window->ShowAuthForTesting(
           new AuthSmokeCallback(duplicate_auth));
       const bool media_requested = window->ShowMediaPermissionForTesting(
@@ -1963,7 +1997,8 @@ void StartAuthSmokeTest(MainWindow* window) {
       const bool permission_requested = window->ShowPermissionForTesting(
           77, new PermissionSmokeCallback(duplicate_permission));
       *duplicate_requested =
-          auth_requested && media_requested && permission_requested;
+          credentials_bounded && auth_requested && media_requested &&
+          permission_requested;
     } else if (*requested && !result->cancelled) {
       if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
         for (QAbstractButton* button : dialog->buttons()) {
@@ -1979,7 +2014,7 @@ void StartAuthSmokeTest(MainWindow* window) {
                duplicate_media->allowed_permissions == 0 &&
                duplicate_permission->result == CEF_PERMISSION_RESULT_DENY) {
       *output << "AUTH_SMOKE_OK cancelled=1 credentials=persisted-none "
-                 "concurrent=denied"
+                 "credentials=bounded concurrent=denied"
               << Qt::endl;
       window->close();
       return;

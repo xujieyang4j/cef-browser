@@ -106,6 +106,9 @@ class BrowserView final : public QWidget {
       const QStringList& urls);
   static QString NormalizePageTitleForTesting(QString title);
   static QString NormalizeStatusMessageForTesting(QString message);
+  static std::optional<QString> NormalizeSecurityOriginForTesting(
+      QString origin);
+  static QString NormalizePromptTextForTesting(QString text);
   void ShowFailureForTesting(bool render_process_failed);
   bool ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback);
   bool ShowMediaPermissionForTesting(

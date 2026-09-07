@@ -1511,6 +1511,11 @@ bool MainWindow::OpenPopup(BrowserView* source, const QString& url,
   if (!source || IndexOf(source) < 0 || closing_tabs_.contains(source)) {
     return false;
   }
+  if (url.toUtf8().size() > 64 * 1024) {
+    statusBar()->showMessage(QStringLiteral("Blocked an oversized pop-up URL"),
+                             5000);
+    return false;
+  }
   const auto normalized = BrowserSettings::NormalizeStoredUrl(
       url.trimmed().isEmpty() ? QStringLiteral("about:blank") : url);
   if (!normalized ||

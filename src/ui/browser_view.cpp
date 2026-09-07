@@ -43,6 +43,11 @@ constexpr int kMaxFaviconDimension = 128;
 constexpr int kMaxFaviconCandidates = 16;
 constexpr int kMaxPageTitleCharacters = 512;
 constexpr int kMaxStatusMessageCharacters = 2048;
+constexpr int kMaxActionUrlBytes = 64 * 1024;
+constexpr int kMaxExternalUrlBytes = 16 * 1024;
+constexpr int kMaxSecurityOriginBytes = 8 * 1024;
+constexpr int kMaxPromptTextCharacters = 512;
+constexpr int kMaxCredentialCharacters = 1024;
 
 QString NormalizeUiText(QString value, int max_characters) {
   for (qsizetype index = 0; index < value.size(); ++index) {
@@ -50,7 +55,37 @@ QString NormalizeUiText(QString value, int max_characters) {
       value[index] = QLatin1Char(' ');
     }
   }
-  return value.simplified().left(max_characters);
+  value = value.simplified();
+  qsizetype length = std::min(value.size(),
+                              static_cast<qsizetype>(max_characters));
+  if (length < value.size() && length > 0 &&
+      value.at(length - 1).isHighSurrogate()) {
+    --length;
+  }
+  return value.first(length);
+}
+
+std::optional<QString> NormalizeSecurityOrigin(QString value) {
+  value = value.trimmed();
+  if (value.isEmpty() || value.size() > kMaxSecurityOriginBytes ||
+      value.toUtf8().size() > kMaxSecurityOriginBytes ||
+      value.contains(QChar::Null) || value.contains(QLatin1Char('\r')) ||
+      value.contains(QLatin1Char('\n'))) {
+    return std::nullopt;
+  }
+  QUrl url(value, QUrl::StrictMode);
+  const QString scheme = url.scheme().toLower();
+  if (!url.isValid() || url.isRelative() || url.host().isEmpty() ||
+      !url.userInfo().isEmpty() ||
+      (scheme != QStringLiteral("http") &&
+       scheme != QStringLiteral("https"))) {
+    return std::nullopt;
+  }
+  url.setScheme(scheme);
+  url.setPath(QString());
+  url.setQuery(QString());
+  url.setFragment(QString());
+  return url.toString(QUrl::FullyEncoded);
 }
 
 std::optional<QString> NormalizeFaviconUrl(QString value) {
@@ -381,7 +416,9 @@ QString BrowserView::PermissionDescription(uint32_t permissions) {
 
 std::optional<QString> BrowserView::NormalizeExternalUrl(QString value) {
   value = value.trimmed();
-  if (value.isEmpty() || value.contains(QChar::Null) ||
+  if (value.isEmpty() || value.size() > kMaxExternalUrlBytes ||
+      value.toUtf8().size() > kMaxExternalUrlBytes ||
+      value.contains(QChar::Null) ||
       value.contains(QLatin1Char('\r')) ||
       value.contains(QLatin1Char('\n'))) {
     return std::nullopt;
@@ -410,7 +447,11 @@ std::optional<QString> BrowserView::NormalizeExternalUrl(QString value) {
     return std::nullopt;
   }
   url.setScheme(scheme);
-  return url.toString(QUrl::FullyEncoded);
+  const QString normalized = url.toString(QUrl::FullyEncoded);
+  if (normalized.toUtf8().size() > kMaxExternalUrlBytes) {
+    return std::nullopt;
+  }
+  return normalized;
 }
 
 bool BrowserView::IsAllowedExternalScheme(const QString& url) {
@@ -437,6 +478,15 @@ QString BrowserView::NormalizePageTitleForTesting(QString title) {
 
 QString BrowserView::NormalizeStatusMessageForTesting(QString message) {
   return NormalizeUiText(std::move(message), kMaxStatusMessageCharacters);
+}
+
+std::optional<QString> BrowserView::NormalizeSecurityOriginForTesting(
+    QString origin) {
+  return NormalizeSecurityOrigin(std::move(origin));
+}
+
+QString BrowserView::NormalizePromptTextForTesting(QString text) {
+  return NormalizeUiText(std::move(text), kMaxPromptTextCharacters);
 }
 
 bool BrowserView::ShowAuthForTesting(CefRefPtr<CefAuthCallback> callback) {
@@ -834,7 +884,8 @@ void BrowserView::OnCefMediaPermissionRequest(
     CefRefPtr<CefBrowser> browser, const QString& requesting_origin,
     uint32_t requested_permissions,
     CefRefPtr<CefMediaAccessCallback> callback) {
-  if (!browser_ || !browser_->IsSame(browser) || closing_) {
+  const auto origin = NormalizeSecurityOrigin(requesting_origin);
+  if (!browser_ || !browser_->IsSame(browser) || closing_ || !origin) {
     callback->Cancel();
     return;
   }
@@ -847,9 +898,9 @@ void BrowserView::OnCefMediaPermissionRequest(
   auto* dialog = new QMessageBox(
       QMessageBox::Question, QStringLiteral("Site permission"),
       QStringLiteral("%1 wants to use your %2.")
-          .arg(requesting_origin.toHtmlEscaped(),
-               MediaPermissionDescription(requested_permissions)),
+          .arg(*origin, MediaPermissionDescription(requested_permissions)),
       QMessageBox::NoButton, this);
+  dialog->setTextFormat(Qt::PlainText);
   page_request_dialog_ = dialog;
   dialog->setInformativeText(
       QStringLiteral("Allow access for this request only?"));
@@ -873,7 +924,8 @@ void BrowserView::OnCefPermissionRequest(
     CefRefPtr<CefBrowser> browser, quint64 prompt_id,
     const QString& requesting_origin, uint32_t requested_permissions,
     CefRefPtr<CefPermissionPromptCallback> callback) {
-  if (!browser_ || !browser_->IsSame(browser) || closing_) {
+  const auto origin = NormalizeSecurityOrigin(requesting_origin);
+  if (!browser_ || !browser_->IsSame(browser) || closing_ || !origin) {
     callback->Continue(CEF_PERMISSION_RESULT_DENY);
     return;
   }
@@ -886,9 +938,9 @@ void BrowserView::OnCefPermissionRequest(
   auto* dialog = new QMessageBox(
       QMessageBox::Question, QStringLiteral("Site permission"),
       QStringLiteral("%1 wants to use %2.")
-          .arg(requesting_origin.toHtmlEscaped(),
-               PermissionDescription(requested_permissions)),
+          .arg(*origin, PermissionDescription(requested_permissions)),
       QMessageBox::NoButton, this);
+  dialog->setTextFormat(Qt::PlainText);
   page_request_dialog_ = dialog;
   permission_prompt_id_ = prompt_id;
   dialog->setInformativeText(
@@ -936,6 +988,7 @@ void BrowserView::OnCefExternalProtocol(CefRefPtr<CefBrowser> browser,
       QMessageBox::Question, QStringLiteral("Open external application?"),
       QStringLiteral("This link wants to open another application."),
       QMessageBox::NoButton, this);
+  dialog->setTextFormat(Qt::PlainText);
   page_request_dialog_ = dialog;
   dialog->setInformativeText(*normalized);
   dialog->addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
@@ -956,7 +1009,12 @@ void BrowserView::OnCefAuthRequest(
     CefRefPtr<CefBrowser> browser, const QString& origin_url, bool is_proxy,
     const QString& host, int port, const QString& realm, const QString& scheme,
     CefRefPtr<CefAuthCallback> callback) {
-  if (!browser_ || !browser_->IsSame(browser) || closing_) {
+  const auto origin = is_proxy ? std::optional<QString>()
+                               : NormalizeSecurityOrigin(origin_url);
+  const QString safe_host = NormalizeUiText(host, kMaxPromptTextCharacters);
+  if (!browser_ || !browser_->IsSame(browser) || closing_ ||
+      (!is_proxy && !origin) ||
+      (is_proxy && (safe_host.isEmpty() || port < 1 || port > 65535))) {
     callback->Cancel();
     return;
   }
@@ -973,11 +1031,12 @@ void BrowserView::OnCefAuthRequest(
                : QStringLiteral("Sign in required"),
       is_proxy
           ? QStringLiteral("The proxy %1:%2 requires a username and password.")
-                .arg(host)
+                .arg(safe_host)
                 .arg(port)
           : QStringLiteral("%1 requires a username and password.")
-                .arg(origin_url.toHtmlEscaped()),
+                .arg(*origin),
       QMessageBox::NoButton, this);
+  dialog->setTextFormat(Qt::PlainText);
   page_request_dialog_ = dialog;
   auto* fields = new QWidget(dialog);
   auto* layout = new QVBoxLayout(fields);
@@ -986,13 +1045,18 @@ void BrowserView::OnCefAuthRequest(
   auto* password = new QLineEdit(fields);
   username->setPlaceholderText(QStringLiteral("Username"));
   password->setPlaceholderText(QStringLiteral("Password"));
+  username->setMaxLength(kMaxCredentialCharacters);
+  password->setMaxLength(kMaxCredentialCharacters);
   password->setEchoMode(QLineEdit::Password);
   layout->addWidget(username);
   layout->addWidget(password);
   dialog->layout()->addWidget(fields);
-  const QString details = realm.isEmpty()
-                              ? scheme
-                              : QStringLiteral("%1 · %2").arg(realm, scheme);
+  const QString safe_realm = NormalizeUiText(realm, kMaxPromptTextCharacters);
+  const QString safe_scheme = NormalizeUiText(scheme, kMaxPromptTextCharacters);
+  const QString details =
+      safe_realm.isEmpty() ? safe_scheme
+                           : QStringLiteral("%1 · %2")
+                                 .arg(safe_realm, safe_scheme);
   if (!details.isEmpty()) dialog->setInformativeText(details);
   dialog->addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
   QAbstractButton* sign_in =
@@ -1019,7 +1083,8 @@ void BrowserView::OnCefAuthRequest(
 void BrowserView::OnCefPopupRequested(CefRefPtr<CefBrowser> browser,
                                       const QString& url,
                                       cef_window_open_disposition_t disposition) {
-  if (browser_ && browser_->IsSame(browser)) {
+  if (browser_ && browser_->IsSame(browser) &&
+      url.toUtf8().size() <= kMaxActionUrlBytes) {
     emit PopupRequested(url, static_cast<int>(disposition));
   }
 }

@@ -15,6 +15,9 @@ constexpr size_t kMaxPageTitleCharacters = 512;
 constexpr size_t kMaxStatusMessageCharacters = 2048;
 constexpr size_t kMaxFaviconCandidates = 16;
 constexpr size_t kMaxFaviconUrlCharacters = 64 * 1024;
+constexpr size_t kMaxActionUrlCharacters = 64 * 1024;
+constexpr size_t kMaxSecurityOriginCharacters = 8 * 1024;
+constexpr size_t kMaxPromptFieldCharacters = 512;
 
 QString BoundedString(const CefString& value, size_t max_characters) {
   size_t length = std::min(value.length(), max_characters);
@@ -25,6 +28,12 @@ QString BoundedString(const CefString& value, size_t max_characters) {
     --length;
   }
   return QString::fromUtf16(value.c_str(), static_cast<qsizetype>(length));
+}
+
+std::optional<QString> CheckedString(const CefString& value,
+                                     size_t max_characters) {
+  if (value.length() > max_characters) return std::nullopt;
+  return BoundedString(value, max_characters);
 }
 
 class ExternalProtocolTask final : public CefTask {
@@ -217,10 +226,11 @@ void BrowserClient::OnLoadError(CefRefPtr<CefBrowser> browser,
                                 const CefString& failed_url) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_ && frame->IsMain() && error_code != ERR_ABORTED) {
+    const auto safe_url = CheckedString(failed_url, kMaxActionUrlCharacters);
     owner_->OnCefLoadError(
         browser, static_cast<int>(error_code),
-        QString::fromStdString(error_text.ToString()),
-        QString::fromStdString(failed_url.ToString()));
+        BoundedString(error_text, kMaxPromptFieldCharacters),
+        safe_url.value_or(QString()));
   }
 }
 
@@ -231,7 +241,7 @@ void BrowserClient::OnRenderProcessTerminated(
   if (owner_) {
     owner_->OnCefRenderProcessTerminated(
         browser, static_cast<int>(status), error_code,
-        QString::fromStdString(error_string.ToString()));
+        BoundedString(error_string, kMaxPromptFieldCharacters));
   }
 }
 
@@ -245,9 +255,10 @@ bool BrowserClient::OnCertificateError(CefRefPtr<CefBrowser> browser,
     callback->Cancel();
     return true;
   }
-  owner_->OnCefCertificateError(
-      browser, static_cast<int>(cert_error),
-      QString::fromStdString(request_url.ToString()), std::move(callback));
+  const auto safe_url = CheckedString(request_url, kMaxActionUrlCharacters);
+  owner_->OnCefCertificateError(browser, static_cast<int>(cert_error),
+                                safe_url.value_or(QString()),
+                                std::move(callback));
   return true;
 }
 
@@ -257,13 +268,20 @@ bool BrowserClient::GetAuthCredentials(
     const CefString& scheme, CefRefPtr<CefAuthCallback> callback) {
   CEF_REQUIRE_IO_THREAD();
   CefRefPtr<CefAuthCallback> pending_callback = callback;
+  const auto safe_origin =
+      CheckedString(origin_url, kMaxSecurityOriginCharacters);
+  const auto safe_host = CheckedString(host, kMaxPromptFieldCharacters);
+  if ((!is_proxy && !safe_origin) || (is_proxy && !safe_host)) {
+    callback->Cancel();
+    return true;
+  }
   if (!CefPostTask(
           TID_UI, new AuthRequestTask(
                       this, std::move(browser),
-                      QString::fromStdString(origin_url.ToString()), is_proxy,
-                      QString::fromStdString(host.ToString()), port,
-                      QString::fromStdString(realm.ToString()),
-                      QString::fromStdString(scheme.ToString()),
+                      safe_origin.value_or(QString()), is_proxy,
+                      safe_host.value_or(QString()), port,
+                      BoundedString(realm, kMaxPromptFieldCharacters),
+                      BoundedString(scheme, kMaxPromptFieldCharacters),
                       std::move(callback)))) {
     pending_callback->Cancel();
   }
@@ -284,9 +302,11 @@ void BrowserClient::OnProtocolExecution(CefRefPtr<CefBrowser> browser,
   CEF_REQUIRE_IO_THREAD();
   allow_os_execution = false;
   if (!request) return;
-  const QString url = QString::fromStdString(request->GetURL().ToString());
+  const auto url =
+      CheckedString(request->GetURL(), kMaxActionUrlCharacters);
+  if (!url) return;
   CefPostTask(TID_UI,
-              new ExternalProtocolTask(this, std::move(browser), url));
+              new ExternalProtocolTask(this, std::move(browser), *url));
 }
 
 bool BrowserClient::OnRequestMediaAccessPermission(
@@ -298,9 +318,14 @@ bool BrowserClient::OnRequestMediaAccessPermission(
     callback->Cancel();
     return true;
   }
+  const auto safe_origin =
+      CheckedString(requesting_origin, kMaxSecurityOriginCharacters);
+  if (!safe_origin) {
+    callback->Cancel();
+    return true;
+  }
   owner_->OnCefMediaPermissionRequest(
-      browser, QString::fromStdString(requesting_origin.ToString()),
-      requested_permissions, std::move(callback));
+      browser, *safe_origin, requested_permissions, std::move(callback));
   return true;
 }
 
@@ -313,10 +338,15 @@ bool BrowserClient::OnShowPermissionPrompt(
     callback->Continue(CEF_PERMISSION_RESULT_DENY);
     return true;
   }
+  const auto safe_origin =
+      CheckedString(requesting_origin, kMaxSecurityOriginCharacters);
+  if (!safe_origin) {
+    callback->Continue(CEF_PERMISSION_RESULT_DENY);
+    return true;
+  }
   owner_->OnCefPermissionRequest(
-      browser, prompt_id,
-      QString::fromStdString(requesting_origin.ToString()),
-      requested_permissions, std::move(callback));
+      browser, prompt_id, *safe_origin, requested_permissions,
+      std::move(callback));
   return true;
 }
 
@@ -368,8 +398,10 @@ bool BrowserClient::OnBeforePopup(
     CefBrowserSettings&, CefRefPtr<CefDictionaryValue>&, bool*) {
   CEF_REQUIRE_UI_THREAD();
   if (owner_) {
-    owner_->OnCefPopupRequested(browser,
-        QString::fromStdString(target_url.ToString()), target_disposition);
+    const auto safe_url = CheckedString(target_url, kMaxActionUrlCharacters);
+    if (safe_url) {
+      owner_->OnCefPopupRequested(browser, *safe_url, target_disposition);
+    }
   }
   return true;
 }
