@@ -172,6 +172,9 @@ Native File, Edit, View, History, Bookmarks, and Window menus expose the main
 browser commands and their keyboard shortcuts. Editing commands target Qt text
 fields or the active web page according to keyboard focus.
 Linux, Windows, and macOS build paths are represented in the project.
+GitHub Actions configures and compiles the pinned CEF release on Linux x64,
+Windows x64, and Apple Silicon macOS for every pull request and push to main;
+Linux also runs the complete smoke-test suite.
 
 ## Prerequisites
 

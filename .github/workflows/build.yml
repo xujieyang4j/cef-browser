@@ -1,0 +1,101 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CEF_VERSION: 151.3.24+g2384915+chromium-151.0.7922.174
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-24.04
+            cef_platform: linux64
+            qt_arch: linux_gcc_64
+            run_tests: true
+          - name: Windows x64
+            os: windows-2022
+            cef_platform: windows64
+            qt_arch: win64_msvc2022_64
+            run_tests: false
+          - name: macOS arm64
+            os: macos-15
+            cef_platform: macosarm64
+            qt_arch: clang_64
+            run_tests: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Initialize MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build libx11-dev libxkbcommon-x11-dev xvfb
+
+      - name: Install Ninja on macOS
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.9.1"
+          arch: ${{ matrix.qt_arch }}
+          cache: true
+
+      - uses: actions/cache@v4
+        id: cef-cache
+        with:
+          path: third_party/cef
+          key: cef-${{ matrix.cef_platform }}-${{ env.CEF_VERSION }}
+
+      - name: Fetch CEF
+        if: steps.cef-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: >-
+          python scripts/fetch_cef.py
+          --platform "${{ matrix.cef_platform }}"
+          --version "${CEF_VERSION}"
+
+      - name: Configure
+        shell: bash
+        run: >-
+          python scripts/configure.py
+          --generator Ninja
+          --build-dir build-ci
+          --build-type Release
+          ${{ runner.os == 'macOS' && '-DCMAKE_OSX_ARCHITECTURES=arm64' || '' }}
+
+      - name: Build
+        run: cmake --build build-ci --parallel 4
+
+      - name: Test
+        if: matrix.run_tests
+        run: ctest --test-dir build-ci --output-on-failure
