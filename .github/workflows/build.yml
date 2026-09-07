@@ -96,6 +96,13 @@ jobs:
       - name: Build
         run: cmake --build build-ci --parallel 4
 
+      - name: Install Linux sandbox helper
+        if: matrix.run_tests
+        run: |
+          sudo chown root:root build-ci/chrome-sandbox
+          sudo chmod 4755 build-ci/chrome-sandbox
+          test "$(stat --format='%u:%g:%a' build-ci/chrome-sandbox)" = "0:0:4755"
+
       - name: Test
         if: matrix.run_tests
         run: ctest --test-dir build-ci --output-on-failure
