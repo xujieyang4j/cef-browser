@@ -29,6 +29,9 @@ class SessionStore final {
                                             QString* error = nullptr);
   static bool Save(const QString& path, const BrowserSession& session,
                    QString* error = nullptr);
+  static bool MarkLaunchStarted(const QString& path,
+                                const BrowserSession& restored_session,
+                                QString* error = nullptr);
 
  private:
   SessionStore() = delete;

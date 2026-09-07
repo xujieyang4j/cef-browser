@@ -232,3 +232,12 @@ bool SessionStore::Save(const QString& path, const BrowserSession& session,
   }
   return true;
 }
+
+bool SessionStore::MarkLaunchStarted(
+    const QString& path, const BrowserSession& restored_session,
+    QString* error) {
+  if (!restored_session.clean_exit) return true;
+  BrowserSession running_session = restored_session;
+  running_session.clean_exit = false;
+  return Save(path, running_session, error);
+}

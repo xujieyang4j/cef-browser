@@ -43,7 +43,10 @@ queued startup requests, request bytes, and idle connection lifetime so a
 stalled secondary process cannot consume resources without limit.
 Window geometry, open tab URLs, and the active tab are saved atomically and
 restored on the next regular launch. A previous unclean exit is detected and
-reported after its tabs are recovered. An explicit startup URL takes priority
+reported after its tabs are recovered. As soon as a saved session is accepted,
+the primary process atomically marks that same snapshot as running without
+changing its tabs; a crash during the window startup grace period therefore
+cannot leave a stale clean-exit marker. An explicit startup URL takes priority
 over the saved session. Session fields and total output are bounded so even a
 page-generated extreme URL or title cannot create a file the next launch will
 refuse to restore; the active tab is retained when trimming is necessary.

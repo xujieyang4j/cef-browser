@@ -1047,6 +1047,20 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
                         clean->active_tab == captured.active_tab &&
                         clean->recently_closed_tabs ==
                             captured.recently_closed_tabs;
+  QString launch_marker_error;
+  const bool launch_marked =
+      clean && SessionStore::MarkLaunchStarted(
+                   session_path, *clean, &launch_marker_error);
+  const auto launch_marked_session = SessionStore::Load(session_path);
+  const bool launch_marker_ok =
+      launch_marked && launch_marker_error.isEmpty() &&
+      launch_marked_session && !launch_marked_session->clean_exit &&
+      launch_marked_session->tab_urls == clean->tab_urls &&
+      launch_marked_session->tab_pinned == clean->tab_pinned &&
+      launch_marked_session->active_tab == clean->active_tab &&
+      launch_marked_session->window_geometry == clean->window_geometry &&
+      launch_marked_session->recently_closed_tabs ==
+          clean->recently_closed_tabs;
 
   const QString legacy_path = session_path + QStringLiteral(".v1");
   QFile legacy_file(legacy_path);
@@ -1213,17 +1227,20 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
       oversized_file_written && !oversized_file &&
       !oversized_file_error.isEmpty();
   if (captured_ok && unclean_saved && unclean_ok && clean_saved && clean_ok &&
-      legacy_ok && untrusted_filtered && all_unsafe_rejected &&
+      launch_marker_ok && legacy_ok && untrusted_filtered &&
+      all_unsafe_rejected &&
       unsafe_not_saved && bounded_round_trip && oversized_file_rejected) {
     *output << "SESSION_SMOKE_OK tabs=" << clean->tab_urls.size()
             << " active=" << clean->active_tab
-            << " recent_title=persisted legacy=migrated unsafe=filtered "
+            << " recent_title=persisted launch=marked legacy=migrated "
+               "unsafe=filtered "
                "size=bounded read=bounded"
             << Qt::endl;
     window->close();
   } else {
     *output << "SESSION_SMOKE_FAILED captured=" << captured_ok
             << " unclean=" << unclean_ok << " clean=" << clean_ok
+            << " launch_marker=" << launch_marker_ok
             << " legacy=" << legacy_ok
             << " untrusted=" << untrusted_filtered
             << " rejected=" << all_unsafe_rejected
@@ -3239,6 +3256,14 @@ int RunBrowser(int argc, char* argv[]) {
       // A URL explicitly supplied by the caller always wins over restoration,
       // but the stored session is still validated before later saves may
       // replace it.
+      if (restored && !active_session_path.isEmpty()) {
+        QString launch_marker_error;
+        if (!SessionStore::MarkLaunchStarted(
+                active_session_path, *restored, &launch_marker_error)) {
+          qWarning("Unable to mark browser session as running: %s",
+                   qPrintable(launch_marker_error));
+        }
+      }
       initial_session = SelectInitialSession(
           startup_settings, ExplicitStartupUrl(), restored);
     }

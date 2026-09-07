@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.56.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.57.0 LANGUAGES C CXX)
 
 include(CTest)
 
