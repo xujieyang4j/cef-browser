@@ -9,7 +9,10 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QClipboard>
+#include <QCheckBox>
 #include <QCompleter>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeySequence>
@@ -588,11 +591,48 @@ bool MainWindow::history_visible_for_testing() const {
 }
 
 bool MainWindow::clear_data_prompt_visible_for_testing() const {
-  for (QMessageBox* dialog : findChildren<QMessageBox*>()) {
-    if (dialog && dialog->windowTitle() == QStringLiteral("Clear browsing data?") &&
+  for (QDialog* dialog : findChildren<QDialog*>()) {
+    if (dialog &&
+        dialog->windowTitle() == QStringLiteral("Clear browsing data?") &&
         dialog->isVisible()) {
       return true;
     }
+  }
+  return false;
+}
+
+QStringList MainWindow::clear_data_options_for_testing() const {
+  for (QDialog* dialog : findChildren<QDialog*>()) {
+    if (!dialog ||
+        dialog->windowTitle() != QStringLiteral("Clear browsing data?")) {
+      continue;
+    }
+    QStringList options;
+    for (QCheckBox* choice : dialog->findChildren<QCheckBox*>()) {
+      options.append(choice->text());
+    }
+    return options;
+  }
+  return {};
+}
+
+bool MainWindow::SetAllClearDataOptionsForTesting(bool checked) {
+  for (QDialog* dialog : findChildren<QDialog*>()) {
+    if (!dialog ||
+        dialog->windowTitle() != QStringLiteral("Clear browsing data?")) {
+      continue;
+    }
+    const QList<QCheckBox*> choices = dialog->findChildren<QCheckBox*>();
+    for (QCheckBox* choice : choices) choice->setChecked(checked);
+    return !choices.isEmpty();
+  }
+  return false;
+}
+
+bool MainWindow::clear_data_submit_enabled_for_testing() const {
+  if (QPushButton* submit =
+          findChild<QPushButton*>(QStringLiteral("clearSelectedData"))) {
+    return submit->isEnabled();
   }
   return false;
 }
@@ -837,7 +877,26 @@ void MainWindow::AddHistoryForTesting(const QString& url,
 }
 
 void MainWindow::ClearBrowsingDataForTesting() {
-  BeginClearBrowsingData(false);
+  BeginClearBrowsingData(
+      false, BrowsingDataSelection{true, true, true, true});
+}
+
+void MainWindow::ClearBrowsingDataForTesting(bool history,
+                                             bool recently_closed,
+                                             bool downloads,
+                                             bool site_data) {
+  BeginClearBrowsingData(
+      false,
+      BrowsingDataSelection{history, recently_closed, downloads, site_data});
+}
+
+void MainWindow::DismissClearBrowsingDataForTesting() {
+  for (QDialog* dialog : findChildren<QDialog*>()) {
+    if (dialog &&
+        dialog->windowTitle() == QStringLiteral("Clear browsing data?")) {
+      dialog->reject();
+    }
+  }
 }
 
 QString MainWindow::media_permission_description_for_testing(
@@ -2150,59 +2209,101 @@ void MainWindow::RebuildAllTabsMenu() {
 
 void MainWindow::ShowClearBrowsingDataPrompt() {
   if (browsing_data_clear_in_progress_) return;
-  auto* dialog = new QMessageBox(
-      QMessageBox::Warning, QStringLiteral("Clear browsing data?"),
+  auto* dialog = new QDialog(this);
+  dialog->setWindowTitle(QStringLiteral("Clear browsing data?"));
+  auto* layout = new QVBoxLayout(dialog);
+  auto* explanation = new QLabel(
+      QStringLiteral("Choose which browser data to remove. Bookmarks and "
+                     "downloaded files are kept."),
+      dialog);
+  explanation->setWordWrap(true);
+  layout->addWidget(explanation);
+
+  auto* history = new QCheckBox(QStringLiteral("Browsing history"), dialog);
+  auto* recently_closed =
+      new QCheckBox(QStringLiteral("Recently closed tabs"), dialog);
+  auto* downloads =
+      new QCheckBox(QStringLiteral("Download history"), dialog);
+  auto* site_data = new QCheckBox(
       QStringLiteral(
-          "This removes browsing history, recently closed tabs, cached files, "
-          "cookies, saved site sessions, download history, HTTP credentials, "
-          "and certificate "
-          "exceptions. "
-          "Bookmarks are kept."),
-      QMessageBox::NoButton, this);
-  auto* cancel = dialog->addButton(QStringLiteral("Cancel"),
-                                   QMessageBox::RejectRole);
-  auto* clear = dialog->addButton(QStringLiteral("Clear data"),
-                                  QMessageBox::DestructiveRole);
-  dialog->setDefaultButton(cancel);
-  dialog->setEscapeButton(cancel);
-  dialog->setAttribute(Qt::WA_DeleteOnClose);
-  connect(dialog, &QMessageBox::finished, this,
-          [this, dialog, clear](int) {
-            if (dialog->clickedButton() == clear) BeginClearBrowsingData(true);
+          "Site data (cache, cookies, sign-ins, and security decisions)"),
+      dialog);
+  const QList<QCheckBox*> choices{history, recently_closed, downloads,
+                                  site_data};
+  for (QCheckBox* choice : choices) {
+    choice->setChecked(true);
+    layout->addWidget(choice);
+  }
+
+  auto* buttons = new QDialogButtonBox(dialog);
+  auto* cancel = buttons->addButton(QDialogButtonBox::Cancel);
+  auto* clear = buttons->addButton(QStringLiteral("Clear selected data"),
+                                   QDialogButtonBox::DestructiveRole);
+  clear->setObjectName(QStringLiteral("clearSelectedData"));
+  clear->setDefault(true);
+  layout->addWidget(buttons);
+  const auto update_clear_enabled = [choices, clear] {
+    clear->setEnabled(std::any_of(choices.cbegin(), choices.cend(),
+                                  [](const QCheckBox* choice) {
+                                    return choice->isChecked();
+                                  }));
+  };
+  for (QCheckBox* choice : choices) {
+    connect(choice, &QCheckBox::toggled, dialog, update_clear_enabled);
+  }
+  connect(cancel, &QPushButton::clicked, dialog, &QDialog::reject);
+  connect(clear, &QPushButton::clicked, dialog,
+          [this, dialog, history, recently_closed, downloads, site_data] {
+            const BrowsingDataSelection selection{
+                history->isChecked(), recently_closed->isChecked(),
+                downloads->isChecked(), site_data->isChecked()};
+            dialog->accept();
+            BeginClearBrowsingData(true, selection);
           });
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
   dialog->open();
 }
 
-void MainWindow::BeginClearBrowsingData(bool show_result_dialog) {
-  if (browsing_data_clear_in_progress_) return;
+void MainWindow::BeginClearBrowsingData(
+    bool show_result_dialog, const BrowsingDataSelection& selection) {
+  if (browsing_data_clear_in_progress_ || !selection.Any()) return;
   browsing_data_clear_in_progress_ = true;
   browsing_data_clear_show_result_ = show_result_dialog;
-  browsing_data_clear_pending_ = 7;
+  browsing_data_clear_pending_ = selection.TaskCount();
   browsing_data_clear_failures_.clear();
+  browsing_data_clear_completed_.clear();
   browsing_data_clear_result_.clear();
   RebuildHistoryMenu();
   statusBar()->showMessage(QStringLiteral("Clearing browsing data…"));
 
-  browsing_data_->ClearHistory();
-  closed_tabs_.clear();
-  for (BrowserView* browser : closing_tabs_) {
-    forgotten_closing_tabs_.insert(browser);
+  if (selection.history) {
+    browsing_data_->ClearHistory();
+    CompleteBrowsingDataClearTask(QStringLiteral("browsing history"),
+                                  SaveBrowsingData());
+    RebuildHistoryMenu();
+    RefreshAddressSuggestions();
   }
-  for (const QPointer<BrowserView>& browser : queued_tab_closes_) {
-    if (browser) forgotten_closing_tabs_.insert(browser);
+  if (selection.recently_closed) {
+    closed_tabs_.clear();
+    for (BrowserView* browser : closing_tabs_) {
+      forgotten_closing_tabs_.insert(browser);
+    }
+    for (const QPointer<BrowserView>& browser : queued_tab_closes_) {
+      if (browser) forgotten_closing_tabs_.insert(browser);
+    }
+    pending_closed_tabs_.clear();
+    RebuildHistoryMenu();
+    RebuildAllTabsMenu();
+    UpdateChrome();
+    CompleteBrowsingDataClearTask(
+        QStringLiteral("recently closed tabs"),
+        session_path_.isEmpty() || PersistSession(CaptureSession(false)));
   }
-  pending_closed_tabs_.clear();
-  CompleteBrowsingDataClearTask(QStringLiteral("history"),
-                                SaveBrowsingData());
-  RebuildHistoryMenu();
-  RebuildAllTabsMenu();
-  RefreshAddressSuggestions();
-  UpdateChrome();
-  CompleteBrowsingDataClearTask(
-      QStringLiteral("recently closed tabs"),
-      session_path_.isEmpty() || PersistSession(CaptureSession(false)));
-  CompleteBrowsingDataClearTask(QStringLiteral("download history"),
-                                download_manager_->ClearFinished());
+  if (selection.downloads) {
+    CompleteBrowsingDataClearTask(QStringLiteral("download history"),
+                                  download_manager_->ClearFinished());
+  }
+  if (!selection.site_data) return;
 
   QPointer<MainWindow> owner(this);
   CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
@@ -2253,17 +2354,22 @@ void MainWindow::CompleteBrowsingDataClearTask(const QString& task,
     return;
   }
   if (!success) browsing_data_clear_failures_.append(task);
+  if (success) browsing_data_clear_completed_.append(task);
   --browsing_data_clear_pending_;
   if (browsing_data_clear_pending_ > 0) return;
 
   browsing_data_clear_in_progress_ = false;
-  if (browsing_data_clear_failures_.isEmpty()) {
-    browsing_data_clear_result_ = QStringLiteral(
-        "Browsing history, recently closed tabs, download history, cache, "
-        "cookies, and site credentials were cleared.");
-  } else {
+  if (!browsing_data_clear_completed_.isEmpty()) {
     browsing_data_clear_result_ =
-        QStringLiteral("Some browsing data could not be cleared: %1.")
+        QStringLiteral("Cleared: %1.")
+            .arg(browsing_data_clear_completed_.join(QStringLiteral(", ")));
+  }
+  if (!browsing_data_clear_failures_.isEmpty()) {
+    if (!browsing_data_clear_result_.isEmpty()) {
+      browsing_data_clear_result_ += QLatin1Char(' ');
+    }
+    browsing_data_clear_result_ +=
+        QStringLiteral("Could not clear: %1.")
             .arg(browsing_data_clear_failures_.join(QStringLiteral(", ")));
   }
   statusBar()->showMessage(browsing_data_clear_result_, 8000);

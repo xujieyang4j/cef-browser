@@ -44,9 +44,9 @@ the last session, open the home page, or open a blank page; an explicit
 command-line URL always takes priority. The recently closed tab stack is part of the atomic
 session file, so Ctrl/Cmd+Shift+T continues to work after an application
 restart. Page favicons are loaded into their corresponding tabs with stale
-navigation results rejected. The History menu can clear history, recently
-closed tabs, download history, HTTP cache, cookies, HTTP credentials, and
-certificate exceptions
+navigation results rejected. The History menu can selectively clear history,
+recently closed tabs, download history, or site data including HTTP cache,
+cookies, HTTP credentials, and certificate exceptions
 while preserving bookmarks; the updated session is persisted immediately, and
 completion is reported only after every asynchronous CEF operation finishes.
 Tabs also have a context menu for opening a new tab, duplicating the selected

@@ -78,6 +78,9 @@ class MainWindow final : public QMainWindow {
   bool bookmarks_visible_for_testing() const;
   bool history_visible_for_testing() const;
   bool clear_data_prompt_visible_for_testing() const;
+  QStringList clear_data_options_for_testing() const;
+  bool SetAllClearDataOptionsForTesting(bool checked);
+  bool clear_data_submit_enabled_for_testing() const;
   void ShowAllTabsForTesting();
   bool all_tabs_visible_for_testing() const;
   int all_tabs_action_count_for_testing() const;
@@ -125,6 +128,9 @@ class MainWindow final : public QMainWindow {
   void NavigateAddressSuggestionForTesting(const QString& label);
   void AddHistoryForTesting(const QString& url, const QString& title);
   void ClearBrowsingDataForTesting();
+  void ClearBrowsingDataForTesting(bool history, bool recently_closed,
+                                   bool downloads, bool site_data);
+  void DismissClearBrowsingDataForTesting();
   bool browsing_data_clear_in_progress_for_testing() const {
     return browsing_data_clear_in_progress_;
   }
@@ -164,13 +170,27 @@ class MainWindow final : public QMainWindow {
   void RebuildHistoryMenu();
   void RebuildAllTabsMenu();
   void ShowClearBrowsingDataPrompt();
-  void BeginClearBrowsingData(bool show_result_dialog);
   void CompleteBrowsingDataClearTask(const QString& task, bool success);
   void RecordVisit(BrowserView* browser);
   bool SaveBrowsingData();
   void RefreshAddressSuggestions();
 
  private:
+  struct BrowsingDataSelection {
+    bool history = false;
+    bool recently_closed = false;
+    bool downloads = false;
+    bool site_data = false;
+
+    bool Any() const {
+      return history || recently_closed || downloads || site_data;
+    }
+    int TaskCount() const {
+      return static_cast<int>(history) + static_cast<int>(recently_closed) +
+             static_cast<int>(downloads) + (site_data ? 4 : 0);
+    }
+  };
+
   enum class BrowserUiSurface {
     Downloads,
     Bookmarks,
@@ -217,6 +237,8 @@ class MainWindow final : public QMainWindow {
   void GoHome();
   bool SetOpenHomeOnNewTab(bool enabled);
   bool SetStartupBehavior(int behavior_value);
+  void BeginClearBrowsingData(bool show_result_dialog,
+                              const BrowsingDataSelection& selection);
 
   QTabBar* tab_bar_ = nullptr;
   QStackedWidget* tab_stack_ = nullptr;
@@ -270,6 +292,7 @@ class MainWindow final : public QMainWindow {
   bool browsing_data_clear_show_result_ = false;
   int browsing_data_clear_pending_ = 0;
   QStringList browsing_data_clear_failures_;
+  QStringList browsing_data_clear_completed_;
   QString browsing_data_clear_result_;
   bool window_close_requested_ = false;
   bool allow_window_close_ = false;

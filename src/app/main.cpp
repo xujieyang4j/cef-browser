@@ -668,9 +668,22 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path,
         QCoreApplication::exit(11);
         return;
       }
-      window->ClearBrowsingDataForTesting();
+      window->ClearBrowsingDataForTesting(true, false, false, false);
       *stage = 3;
     } else if (*stage == 3 &&
+               !window->browsing_data_clear_in_progress_for_testing()) {
+      const bool selective = window->history_count_for_testing() == 0 &&
+                             window->download_count_for_testing() == 1 &&
+                             window->recently_closed_tab_count_for_testing() ==
+                                 1;
+      if (!selective) {
+        *output << "PRIVACY_SMOKE_FAILED selective=0" << Qt::endl;
+        QCoreApplication::exit(11);
+        return;
+      }
+      window->ClearBrowsingDataForTesting(false, true, true, true);
+      *stage = 4;
+    } else if (*stage == 4 &&
                !window->browsing_data_clear_in_progress_for_testing()) {
       const bool cleared = window->history_count_for_testing() == 0 &&
                            window->download_count_for_testing() == 0 &&
@@ -685,9 +698,10 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path,
                                      restored_downloads.items().isEmpty();
       const bool completed =
           window->browsing_data_clear_result_for_testing().startsWith(
-              QStringLiteral("Browsing history"));
+              QStringLiteral("Cleared:"));
       if (cleared && session_cleared && downloads_cleared && completed) {
-        *output << "PRIVACY_SMOKE_OK history=cleared recent=cleared "
+        *output << "PRIVACY_SMOKE_OK selective=preserved history=cleared "
+                   "recent=cleared "
                    "downloads=cleared session=cleared cef=completed"
                 << Qt::endl;
         window->close();
@@ -803,11 +817,25 @@ void StartBrowserSurfacesSmokeTest(MainWindow* window) {
       *stage = 5;
     } else if (*stage == 5 &&
                window->clear_data_prompt_visible_for_testing()) {
-      if (QMessageBox* dialog = window->findChild<QMessageBox*>()) {
-        dialog->reject();
+      const QStringList expected_options{
+          QStringLiteral("Browsing history"),
+          QStringLiteral("Recently closed tabs"),
+          QStringLiteral("Download history"),
+          QStringLiteral(
+              "Site data (cache, cookies, sign-ins, and security decisions)")};
+      const bool choices =
+          window->clear_data_options_for_testing() == expected_options &&
+          window->clear_data_submit_enabled_for_testing() &&
+          window->SetAllClearDataOptionsForTesting(false) &&
+          !window->clear_data_submit_enabled_for_testing();
+      if (!choices) {
+        *output << "BROWSER_SURFACES_SMOKE_FAILED choices=0" << Qt::endl;
+        QCoreApplication::exit(16);
+        return;
       }
+      window->DismissClearBrowsingDataForTesting();
       *output << "BROWSER_SURFACES_SMOKE_OK downloads=1 bookmarks=1 "
-                 "history=1 fullscreen=exit clear=prompt"
+                 "history=1 fullscreen=exit clear=selective"
               << Qt::endl;
       window->close();
       return;
