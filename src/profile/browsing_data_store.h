@@ -27,6 +27,7 @@ class BrowsingDataStore final {
   const QList<HistoryEntry>& history() const { return history_; }
   bool IsBookmarked(const QString& url) const;
   bool AddBookmark(const QString& url, const QString& title);
+  bool RenameBookmark(const QString& url, const QString& title);
   bool RemoveBookmark(const QString& url);
   void RecordVisit(const QString& url, const QString& title,
                    QDateTime visited_at = QDateTime::currentDateTimeUtc());

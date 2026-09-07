@@ -15,6 +15,7 @@
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QInputDialog>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -884,6 +885,29 @@ void MainWindow::AddHistoryForTesting(const QString& url,
   browsing_data_->RecordVisit(url, title);
   SaveBrowsingData();
   RefreshAddressSuggestions();
+}
+
+bool MainWindow::RenameBookmarkForTesting(const QString& url,
+                                          const QString& title) {
+  return RenameBookmark(url, title);
+}
+
+QString MainWindow::bookmark_title_for_testing(const QString& url) const {
+  for (const BrowsingDataStore::Bookmark& bookmark :
+       browsing_data_->bookmarks()) {
+    if (bookmark.url == url) return bookmark.title;
+  }
+  return {};
+}
+
+QString MainWindow::bookmark_label_for_testing(const QString& url) {
+  RebuildBookmarksMenu();
+  for (QAction* action : bookmarks_menu_->actions()) {
+    if (action->property("bookmarkUrl").toString() == url) {
+      return action->text();
+    }
+  }
+  return {};
 }
 
 bool MainWindow::RemoveBookmarkForTesting(const QString& url) {
@@ -2148,6 +2172,22 @@ bool MainWindow::RemoveBookmark(const QString& url) {
   return true;
 }
 
+bool MainWindow::RenameBookmark(const QString& url, const QString& title) {
+  const BrowsingDataStore previous = *browsing_data_;
+  if (!browsing_data_->RenameBookmark(url, title)) return false;
+  if (!SaveBrowsingData()) {
+    *browsing_data_ = previous;
+    return false;
+  }
+  RebuildBookmarksMenu();
+  RefreshAddressSuggestions();
+  statusBar()->showMessage(
+      title.trimmed().isEmpty() ? QStringLiteral("Bookmark name cleared")
+                                : QStringLiteral("Bookmark renamed"),
+      2000);
+  return true;
+}
+
 bool MainWindow::RemoveHistory(const QString& url) {
   const BrowsingDataStore previous = *browsing_data_;
   if (!browsing_data_->RemoveHistory(url)) return false;
@@ -2194,8 +2234,24 @@ void MainWindow::ShowBookmarkContextMenu(const QPoint& position) {
       bookmark ? bookmark->property("bookmarkUrl").toString() : QString();
   if (url.isEmpty()) return;
   QMenu context(bookmarks_menu_);
+  QAction* edit = context.addAction(QStringLiteral("Edit bookmark…"));
   QAction* remove = context.addAction(QStringLiteral("Remove bookmark"));
-  if (context.exec(bookmarks_menu_->mapToGlobal(position)) == remove) {
+  QAction* selected = context.exec(bookmarks_menu_->mapToGlobal(position));
+  if (selected == edit) {
+    QString current_title;
+    for (const BrowsingDataStore::Bookmark& item :
+         browsing_data_->bookmarks()) {
+      if (item.url == url) {
+        current_title = item.title;
+        break;
+      }
+    }
+    bool accepted = false;
+    const QString title = QInputDialog::getText(
+        this, QStringLiteral("Edit bookmark"), QStringLiteral("Name:"),
+        QLineEdit::Normal, current_title, &accepted);
+    if (accepted) RenameBookmark(url, title);
+  } else if (selected == remove) {
     RemoveBookmark(url);
   }
 }

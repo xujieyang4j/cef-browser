@@ -128,6 +128,9 @@ class MainWindow final : public QMainWindow {
   QStringList address_suggestion_labels_for_testing() const;
   void NavigateAddressSuggestionForTesting(const QString& label);
   void AddHistoryForTesting(const QString& url, const QString& title);
+  bool RenameBookmarkForTesting(const QString& url, const QString& title);
+  QString bookmark_title_for_testing(const QString& url) const;
+  QString bookmark_label_for_testing(const QString& url);
   bool RemoveBookmarkForTesting(const QString& url);
   bool RemoveHistoryForTesting(const QString& url);
   void ClearBrowsingDataForTesting();
@@ -242,6 +245,7 @@ class MainWindow final : public QMainWindow {
   void GoHome();
   bool SetOpenHomeOnNewTab(bool enabled);
   bool SetStartupBehavior(int behavior_value);
+  bool RenameBookmark(const QString& url, const QString& title);
   bool RemoveBookmark(const QString& url);
   bool RemoveHistory(const QString& url);
   void BeginClearBrowsingData(bool show_result_dialog,

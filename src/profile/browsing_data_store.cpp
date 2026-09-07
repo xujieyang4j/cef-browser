@@ -150,6 +150,16 @@ bool BrowsingDataStore::AddBookmark(const QString& url, const QString& title) {
   return true;
 }
 
+bool BrowsingDataStore::RenameBookmark(const QString& url,
+                                       const QString& title) {
+  const auto found = std::find_if(
+      bookmarks_.begin(), bookmarks_.end(),
+      [&url](const Bookmark& bookmark) { return bookmark.url == url; });
+  if (found == bookmarks_.end()) return false;
+  found->title = title.trimmed();
+  return true;
+}
+
 bool BrowsingDataStore::RemoveBookmark(const QString& url) {
   const auto found = std::find_if(
       bookmarks_.begin(), bookmarks_.end(),

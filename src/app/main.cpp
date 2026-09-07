@@ -599,6 +599,25 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       break;
     }
   }
+  const bool renamed =
+      window->RenameBookmarkForTesting(bookmarked_url,
+                                       QStringLiteral("  Renamed smoke  ")) &&
+      window->bookmark_title_for_testing(bookmarked_url) ==
+          QStringLiteral("Renamed smoke");
+  BrowsingDataStore after_rename(data_path);
+  const bool rename_persisted =
+      after_rename.Load() && after_rename.IsBookmarked(bookmarked_url) &&
+      !after_rename.bookmarks().isEmpty() &&
+      after_rename.bookmarks().first().title ==
+          QStringLiteral("Renamed smoke");
+  const bool empty_name =
+      window->RenameBookmarkForTesting(bookmarked_url, QStringLiteral("   ")) &&
+      window->bookmark_title_for_testing(bookmarked_url).isEmpty() &&
+      window->bookmark_label_for_testing(bookmarked_url) == bookmarked_url;
+  BrowsingDataStore after_empty_name(data_path);
+  const bool empty_name_persisted =
+      after_empty_name.Load() && !after_empty_name.bookmarks().isEmpty() &&
+      after_empty_name.bookmarks().first().title.isEmpty();
   const bool single_removed =
       window->RemoveBookmarkForTesting(bookmarked_url) &&
       window->RemoveHistoryForTesting(bookmarked_url);
@@ -610,13 +629,17 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       after_single_remove.history().first().url == first_url;
   const bool profile_ok = add_first && reject_duplicate && add_second && saved &&
                           bookmark_ok && history_ok && removed && suggestions_ok &&
-                          !first_label.isEmpty() && single_removed &&
+                          !first_label.isEmpty() && renamed &&
+                          rename_persisted && empty_name &&
+                          empty_name_persisted && single_removed &&
                           single_persisted;
   if (!profile_ok) {
     *output << "PROFILE_SMOKE_FAILED bookmark=" << bookmark_ok
             << " history=" << history_ok << " removed=" << removed
             << " suggestions=" << suggestions_ok
             << " titled=" << !first_label.isEmpty()
+            << " renamed=" << rename_persisted
+            << " empty=" << empty_name_persisted
             << " single=" << single_persisted
             << Qt::endl;
     QCoreApplication::exit(7);
@@ -630,7 +653,8 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
     ++*attempts;
     if (window->current_url() == first_url) {
       *output << "PROFILE_SMOKE_OK bookmarks=2 history=2 visits=2 "
-                 "single-remove=persisted suggestions=titled-navigation"
+                 "rename=persisted empty=url single-remove=persisted "
+                 "suggestions=titled-navigation"
               << Qt::endl;
       window->close();
       return;

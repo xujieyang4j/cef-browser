@@ -51,7 +51,8 @@ cookies, HTTP credentials, and certificate exceptions
 while preserving bookmarks; the updated session is persisted immediately, and
 completion is reported only after every asynchronous CEF operation finishes.
 Individual bookmark and history entries can be removed from their menus with a
-right click, and every removal is persisted atomically.
+right click. Bookmark names can be edited from the same menu, with an empty
+name falling back to the URL. Every change is persisted atomically.
 Tabs also have a context menu for opening a new tab, duplicating the selected
 tab, copying its address, closing it, closing other tabs, or closing tabs to
 its right. Multi-tab closes wait for each CEF browser to finish shutting down
