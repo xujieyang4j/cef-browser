@@ -254,6 +254,33 @@ std::optional<QString> BrowserSettings::NormalizeNavigationInput(
   return parsed.toString(QUrl::FullyEncoded);
 }
 
+std::optional<QString> BrowserSettings::NormalizeStoredUrl(QString url) {
+  url = url.trimmed();
+  if (url.compare(QStringLiteral("about:blank"), Qt::CaseInsensitive) == 0) {
+    return QStringLiteral("about:blank");
+  }
+
+  QUrl parsed(url, QUrl::StrictMode);
+  const QString scheme = parsed.scheme().toLower();
+  if (!parsed.isValid() ||
+      (scheme != QStringLiteral("http") &&
+       scheme != QStringLiteral("https") &&
+       scheme != QStringLiteral("file"))) {
+    return std::nullopt;
+  }
+  if ((scheme == QStringLiteral("http") ||
+       scheme == QStringLiteral("https")) &&
+      parsed.host().isEmpty()) {
+    return std::nullopt;
+  }
+  if (scheme == QStringLiteral("file") && parsed.path().isEmpty() &&
+      parsed.host().isEmpty()) {
+    return std::nullopt;
+  }
+  parsed.setScheme(scheme);
+  return parsed.toString(QUrl::FullyEncoded);
+}
+
 QString BrowserSettings::StartupBehaviorId(StartupBehavior behavior) {
   switch (behavior) {
     case StartupBehavior::RestoreSession:

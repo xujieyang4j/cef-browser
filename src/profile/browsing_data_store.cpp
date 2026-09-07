@@ -14,6 +14,8 @@
 #include <QTextDocumentFragment>
 #include <QUrl>
 
+#include "settings/browser_settings.h"
+
 namespace {
 
 constexpr int kDataVersion = 1;
@@ -80,7 +82,11 @@ bool BrowsingDataStore::Load(QString* error) {
     Bookmark bookmark{object.value(QStringLiteral("url")).toString(),
                       object.value(QStringLiteral("title")).toString(),
                       ParseDate(object.value(QStringLiteral("createdAt")))};
-    if (IsRecordableUrl(bookmark.url)) loaded_bookmarks.append(bookmark);
+    const auto normalized = BrowserSettings::NormalizeStoredUrl(bookmark.url);
+    if (normalized && *normalized != QStringLiteral("about:blank")) {
+      bookmark.url = *normalized;
+      loaded_bookmarks.append(bookmark);
+    }
   }
 
   QList<HistoryEntry> loaded_history;
@@ -94,7 +100,11 @@ bool BrowsingDataStore::Load(QString* error) {
         object.value(QStringLiteral("title")).toString(),
         ParseDate(object.value(QStringLiteral("lastVisitedAt"))),
         std::max(1, object.value(QStringLiteral("visitCount")).toInt(1))};
-    if (IsRecordableUrl(entry.url)) loaded_history.append(entry);
+    const auto normalized = BrowserSettings::NormalizeStoredUrl(entry.url);
+    if (normalized && *normalized != QStringLiteral("about:blank")) {
+      entry.url = *normalized;
+      loaded_history.append(entry);
+    }
   }
 
   bookmarks_ = std::move(loaded_bookmarks);
@@ -308,7 +318,6 @@ void BrowsingDataStore::ClearHistory() {
 }
 
 bool BrowsingDataStore::IsRecordableUrl(const QString& url) {
-  const QUrl parsed(url);
-  return parsed.isValid() && !url.isEmpty() && url != QStringLiteral("about:blank") &&
-         parsed.scheme() != QStringLiteral("data");
+  const auto normalized = BrowserSettings::NormalizeStoredUrl(url);
+  return normalized && *normalized != QStringLiteral("about:blank");
 }

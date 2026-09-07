@@ -217,7 +217,11 @@ void StartPinnedTabsSmokeTest(MainWindow* window, const QString& session_path) {
     } else if (*stage == 3 && window->tab_count() == 2) {
       window->ActivateTabForTesting(0);
       const BrowserSession session = window->session_for_testing(true);
-      const bool saved = window->save_session_for_testing(true);
+      BrowserSession persisted_session = session;
+      persisted_session.tab_urls = {
+          QStringLiteral("https://example.test/pinned"),
+          QStringLiteral("about:blank")};
+      const bool saved = SessionStore::Save(session_path, persisted_session);
       const auto restored = SessionStore::Load(session_path);
       const bool session_ok = session.tab_urls.size() == 2 &&
                               session.tab_pinned.size() == 2 &&
@@ -506,16 +510,122 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
       legacy->recently_closed_tabs.first().url ==
           QStringLiteral("https://example.test/legacy") &&
       legacy->recently_closed_tabs.first().title.isEmpty();
+
+  const QString untrusted_path = session_path + QStringLiteral(".untrusted");
+  QFile untrusted_file(untrusted_path);
+  const bool untrusted_opened = untrusted_file.open(QIODevice::WriteOnly);
+  bool untrusted_written = false;
+  if (untrusted_opened) {
+    const QJsonObject untrusted_root{
+        {QStringLiteral("version"), 2},
+        {QStringLiteral("cleanExit"), true},
+        {QStringLiteral("activeTab"), 1},
+        {QStringLiteral("tabs"),
+         QJsonArray{
+             QJsonObject{{QStringLiteral("url"),
+                          QStringLiteral("https://example.test/before")},
+                         {QStringLiteral("pinned"), true}},
+             QJsonObject{{QStringLiteral("url"),
+                          QStringLiteral("javascript:alert(1)")},
+                         {QStringLiteral("pinned"), true}},
+             QJsonObject{{QStringLiteral("url"),
+                          QStringLiteral("HTTPS://example.test/after")},
+                         {QStringLiteral("pinned"), false}},
+             QJsonObject{{QStringLiteral("url"),
+                          QStringLiteral("data:text/html,unsafe")},
+                         {QStringLiteral("pinned"), false}},
+             QJsonObject{{QStringLiteral("url"),
+                          QStringLiteral("file:///tmp/restored%20file.html")},
+                         {QStringLiteral("pinned"), false}}}},
+        {QStringLiteral("recentlyClosed"),
+         QJsonArray{
+             QJsonObject{{QStringLiteral("url"),
+                          QStringLiteral("unknown-scheme:payload")},
+                         {QStringLiteral("title"),
+                          QStringLiteral("Unsafe")}},
+             QJsonObject{{QStringLiteral("url"),
+                          QStringLiteral("https://example.test/recent")},
+                         {QStringLiteral("title"),
+                          QStringLiteral("Safe")}}}},
+    };
+    const QByteArray bytes =
+        QJsonDocument(untrusted_root).toJson(QJsonDocument::Compact);
+    untrusted_written = untrusted_file.write(bytes) == bytes.size();
+    untrusted_file.close();
+  }
+  const auto untrusted = SessionStore::Load(untrusted_path);
+  const bool untrusted_filtered =
+      untrusted_written && untrusted &&
+      untrusted->tab_urls ==
+          QStringList{QStringLiteral("https://example.test/before"),
+                      QStringLiteral("https://example.test/after"),
+                      QStringLiteral("file:///tmp/restored%20file.html")} &&
+      untrusted->tab_pinned == QList<bool>{true, false, false} &&
+      untrusted->active_tab == 1 &&
+      untrusted->recently_closed_tabs ==
+          QList<RecentlyClosedTab>{
+              {QStringLiteral("https://example.test/recent"),
+               QStringLiteral("Safe")}};
+
+  const QString rejected_path = session_path + QStringLiteral(".rejected");
+  QFile rejected_file(rejected_path);
+  const bool rejected_opened = rejected_file.open(QIODevice::WriteOnly);
+  bool rejected_written = false;
+  if (rejected_opened) {
+    const QJsonObject rejected_root{
+        {QStringLiteral("version"), 2},
+        {QStringLiteral("tabs"),
+         QJsonArray{QJsonObject{{QStringLiteral("url"),
+                                 QStringLiteral("javascript:alert(1)")}}}}};
+    const QByteArray bytes =
+        QJsonDocument(rejected_root).toJson(QJsonDocument::Compact);
+    rejected_written = rejected_file.write(bytes) == bytes.size();
+    rejected_file.close();
+  }
+  QString rejected_error;
+  const auto rejected = SessionStore::Load(rejected_path, &rejected_error);
+  const bool all_unsafe_rejected =
+      rejected_written && !rejected && !rejected_error.isEmpty();
+
+  BrowserSession unsanitized;
+  unsanitized.tab_urls = {QStringLiteral("https://example.test/saved"),
+                          QStringLiteral("data:text/html,unsafe"),
+                          QStringLiteral("file:///tmp/saved%20file.html")};
+  unsanitized.tab_pinned = {true, true, false};
+  unsanitized.active_tab = 1;
+  unsanitized.recently_closed_tabs = {
+      {QStringLiteral("javascript:alert(1)"), QStringLiteral("Unsafe")},
+      {QStringLiteral("https://example.test/saved-recent"),
+       QStringLiteral("Safe")}};
+  const QString sanitized_path = session_path + QStringLiteral(".sanitized");
+  const bool sanitized_saved = SessionStore::Save(sanitized_path, unsanitized);
+  const auto sanitized = SessionStore::Load(sanitized_path);
+  const bool unsafe_not_saved =
+      sanitized_saved && sanitized &&
+      sanitized->tab_urls ==
+          QStringList{QStringLiteral("https://example.test/saved"),
+                      QStringLiteral("file:///tmp/saved%20file.html")} &&
+      sanitized->tab_pinned == QList<bool>{true, false} &&
+      sanitized->active_tab == 1 &&
+      sanitized->recently_closed_tabs ==
+          QList<RecentlyClosedTab>{
+              {QStringLiteral("https://example.test/saved-recent"),
+               QStringLiteral("Safe")}};
   if (captured_ok && unclean_saved && unclean_ok && clean_saved && clean_ok &&
-      legacy_ok) {
+      legacy_ok && untrusted_filtered && all_unsafe_rejected &&
+      unsafe_not_saved) {
     *output << "SESSION_SMOKE_OK tabs=" << clean->tab_urls.size()
             << " active=" << clean->active_tab
-            << " recent_title=persisted legacy=migrated" << Qt::endl;
+            << " recent_title=persisted legacy=migrated unsafe=filtered"
+            << Qt::endl;
     window->close();
   } else {
     *output << "SESSION_SMOKE_FAILED captured=" << captured_ok
             << " unclean=" << unclean_ok << " clean=" << clean_ok
             << " legacy=" << legacy_ok
+            << " untrusted=" << untrusted_filtered
+            << " rejected=" << all_unsafe_rejected
+            << " sanitized=" << unsafe_not_saved
             << Qt::endl;
     QCoreApplication::exit(5);
   }
@@ -625,6 +735,47 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       loaded && restored.history().size() == 2 &&
       restored.history().first().url == first_url &&
       restored.history().first().visit_count == 2;
+  const QString untrusted_data_path =
+      data_path + QStringLiteral(".untrusted.json");
+  QFile untrusted_data_file(untrusted_data_path);
+  const bool untrusted_data_opened =
+      untrusted_data_file.open(QIODevice::WriteOnly);
+  bool untrusted_data_written = false;
+  if (untrusted_data_opened) {
+    const QJsonObject untrusted_root{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("bookmarks"),
+         QJsonArray{
+             QJsonObject{{QStringLiteral("url"), first_url},
+                         {QStringLiteral("title"), QStringLiteral("Safe")}},
+             QJsonObject{{QStringLiteral("url"),
+                          QStringLiteral("javascript:alert(1)")},
+                         {QStringLiteral("title"),
+                          QStringLiteral("Unsafe")}}}},
+        {QStringLiteral("history"),
+         QJsonArray{
+             QJsonObject{{QStringLiteral("url"), second_url},
+                         {QStringLiteral("title"), QStringLiteral("Safe")},
+                         {QStringLiteral("visitCount"), 2}},
+             QJsonObject{{QStringLiteral("url"),
+                          QStringLiteral("data:text/html,unsafe")},
+                         {QStringLiteral("title"),
+                          QStringLiteral("Unsafe")},
+                         {QStringLiteral("visitCount"), 1}}}},
+    };
+    const QByteArray bytes =
+        QJsonDocument(untrusted_root).toJson(QJsonDocument::Compact);
+    untrusted_data_written =
+        untrusted_data_file.write(bytes) == bytes.size();
+    untrusted_data_file.close();
+  }
+  BrowsingDataStore untrusted_data(untrusted_data_path);
+  const bool stored_urls_filtered =
+      untrusted_data_written && untrusted_data.Load() &&
+      untrusted_data.bookmarks().size() == 1 &&
+      untrusted_data.bookmarks().first().url == first_url &&
+      untrusted_data.history().size() == 1 &&
+      untrusted_data.history().first().url == second_url;
   const bool removed = restored.RemoveBookmark(first_url) &&
                        !restored.IsBookmarked(first_url);
   const QString bookmarked_url = window->current_url();
@@ -676,8 +827,9 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       after_single_remove.history().first().url == first_url;
   const bool profile_ok = add_first && reject_duplicate && add_second && saved &&
                           import_ok && round_trip_ok &&
-                          bookmark_ok && history_ok && removed && suggestions_ok &&
-                          !first_label.isEmpty() && renamed &&
+                          bookmark_ok && history_ok && stored_urls_filtered &&
+                          removed && suggestions_ok && !first_label.isEmpty() &&
+                          renamed &&
                           rename_persisted && empty_name &&
                           empty_name_persisted && single_removed &&
                           single_persisted;
@@ -685,6 +837,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
     *output << "PROFILE_SMOKE_FAILED bookmark=" << bookmark_ok
             << " import=" << import_ok << " roundtrip=" << round_trip_ok
             << " history=" << history_ok << " removed=" << removed
+            << " stored_urls=" << stored_urls_filtered
             << " suggestions=" << suggestions_ok
             << " titled=" << !first_label.isEmpty()
             << " renamed=" << rename_persisted
@@ -744,6 +897,9 @@ void StartPrivacySmokeTest(MainWindow* window, const QString& session_path,
           QStringLiteral("https://example.test/private"),
           QStringLiteral("Private visit"));
       window->UpdateDownloadForTesting(91, 100, true);
+      // Keep one persistable tab in this otherwise data:-URL-only smoke
+      // session so clearing recently closed tabs can commit the session.
+      window->OpenTabForTesting(QStringLiteral("about:blank"));
       const bool seeded =
           window->history_count_for_testing() == 1 &&
           window->download_count_for_testing() == 1 &&
@@ -1251,7 +1407,8 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
       SelectInitialSession(startup_restored, QStringLiteral("privacy query"),
                            previous_session)
               .tab_urls ==
-          QStringList{QStringLiteral("https://duckduckgo.com/?q=privacy%20query")} &&
+          QStringList{QStringLiteral(
+              "https://duckduckgo.com/?q=privacy%20query")} &&
       SelectInitialSession(startup_restored,
                            QStringLiteral("javascript:alert(1)"),
                            previous_session)
@@ -1671,8 +1828,8 @@ int RunBrowser(int argc, char* argv[]) {
       active_session_path =
           smoke_session_directory->filePath(QStringLiteral("session.json"));
       initial_session.tab_urls = {
-          QStringLiteral("data:text/html,<title>Session One</title>"),
-          QStringLiteral("data:text/html,<title>Session Two</title>")};
+          QStringLiteral("https://example.test/session-one"),
+          QStringLiteral("file:///tmp/session%20two.html")};
       initial_session.active_tab = 1;
       initial_session.clean_exit = false;
       initial_session.recently_closed_tabs = {

@@ -31,6 +31,7 @@ class BrowserSettings final {
   static QString SearchUrl(SearchEngine engine, const QString& query);
   static std::optional<QString> NormalizeNavigationInput(
       SearchEngine engine, QString input);
+  static std::optional<QString> NormalizeStoredUrl(QString url);
   static QString StartupBehaviorId(StartupBehavior behavior);
   static QString StartupBehaviorName(StartupBehavior behavior);
 
