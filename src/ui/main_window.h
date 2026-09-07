@@ -92,6 +92,9 @@ class MainWindow final : public QMainWindow {
                                               const QString& action_text);
   QString search_engine_for_testing() const;
   bool SelectSearchEngineForTesting(const QString& name);
+  QString home_page_for_testing() const;
+  bool SetHomePageForTesting(const QString& value);
+  void GoHomeForTesting();
   QString NormalizeUrlForTesting(const QString& input) const;
   void ActivateTabShortcutForTesting(int number);
   void ShowFailureForTesting(bool render_process_failed);
@@ -204,6 +207,8 @@ class MainWindow final : public QMainWindow {
   BrowserSession CaptureSession(bool clean_exit) const;
   bool PersistSession(const BrowserSession& session);
   void SetSearchEngine(int engine_value);
+  bool SetHomePage(const QString& value);
+  void GoHome();
 
   QTabBar* tab_bar_ = nullptr;
   QStackedWidget* tab_stack_ = nullptr;
@@ -211,6 +216,7 @@ class MainWindow final : public QMainWindow {
   QPushButton* back_button_ = nullptr;
   QPushButton* forward_button_ = nullptr;
   QPushButton* reload_button_ = nullptr;
+  QPushButton* home_button_ = nullptr;
   QPushButton* downloads_button_ = nullptr;
   QProgressBar* loading_progress_ = nullptr;
   QAction* close_tab_action_ = nullptr;

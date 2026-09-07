@@ -57,6 +57,7 @@ class BrowserView final : public QWidget {
     GoBack,
     GoForward,
     Reload,
+    GoHome,
   };
 
   BrowserView(QString initial_url,

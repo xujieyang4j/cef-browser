@@ -1014,19 +1014,53 @@ void StartSearchSettingsSmokeTest(MainWindow* window,
           QStringLiteral("https://duckduckgo.com/?q=intranet");
   const bool menu_ok = window->application_menu_actions_for_testing(
                                   QStringLiteral("Settings")) ==
-                              QStringList{QStringLiteral("Default Search Engine")};
-  if (default_ok && selected && persisted && encoded && address_ok && menu_ok) {
-    *output << "SEARCH_SETTINGS_SMOKE_OK default=google selected=duckduckgo "
-               "persisted=1 encoded=1"
-            << Qt::endl;
-    window->close();
-  } else {
+                              QStringList{
+                                  QStringLiteral("Default Search Engine"),
+                                  QStringLiteral("Use Current Page as Home"),
+                                  QStringLiteral("Reset Home Page")};
+  const QString home_url = QStringLiteral("https://example.test/home");
+  const bool home_saved = window->SetHomePageForTesting(home_url);
+  BrowserSettings home_restored(settings_path);
+  const bool home_loaded = home_restored.Load();
+  const bool home_persisted =
+      home_loaded && home_restored.home_page() == home_url;
+  const bool unsafe_rejected =
+      !window->SetHomePageForTesting(QStringLiteral("javascript:alert(1)")) &&
+      window->home_page_for_testing() == home_url;
+  const bool preliminary_ok = default_ok && selected && persisted && encoded &&
+                              address_ok && menu_ok && home_saved &&
+                              home_persisted && unsafe_rejected;
+  if (!preliminary_ok) {
     *output << "SEARCH_SETTINGS_SMOKE_FAILED default=" << default_ok
             << " selected=" << selected << " persisted=" << persisted
             << " encoded=" << encoded << " address=" << address_ok
-            << " menu=" << menu_ok << Qt::endl;
+            << " menu=" << menu_ok << " home=" << home_persisted
+            << " unsafe=" << unsafe_rejected << Qt::endl;
     QCoreApplication::exit(20);
+    return;
   }
+
+  window->GoHomeForTesting();
+  auto attempts = std::make_shared<int>(0);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, step, home_url] {
+    ++*attempts;
+    if (window->current_url() == home_url) {
+      *output << "SEARCH_SETTINGS_SMOKE_OK default=google selected=duckduckgo "
+                 "persisted=1 encoded=1 home=navigated"
+              << Qt::endl;
+      window->close();
+      return;
+    }
+    if (*attempts > 100) {
+      *output << "SEARCH_SETTINGS_SMOKE_FAILED home_navigation=0 url="
+              << window->current_url() << Qt::endl;
+      QCoreApplication::exit(20);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(50, window, [step] { (*step)(); });
 }
 
 void StartSecuritySmokeTest(MainWindow* window) {

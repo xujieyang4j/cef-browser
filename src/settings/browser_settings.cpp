@@ -54,6 +54,7 @@ bool BrowserSettings::Load(QString* error) {
   } else {
     search_engine_ = SearchEngine::Google;
   }
+  set_home_page(root.value(QStringLiteral("homePage")).toString());
   return true;
 }
 
@@ -65,6 +66,7 @@ bool BrowserSettings::Save(QString* error) const {
   const QJsonObject root{
       {QStringLiteral("version"), kSettingsVersion},
       {QStringLiteral("searchEngine"), SearchEngineId(search_engine_)},
+      {QStringLiteral("homePage"), home_page_},
   };
   QSaveFile file(path_);
   if (!file.open(QIODevice::WriteOnly)) {
@@ -80,6 +82,24 @@ bool BrowserSettings::Save(QString* error) const {
     SetError(error, file.errorString());
     return false;
   }
+  return true;
+}
+
+bool BrowserSettings::set_home_page(const QString& url) {
+  const QString trimmed = url.trimmed();
+  if (trimmed.isEmpty()) return false;
+  if (trimmed == QStringLiteral("about:blank")) {
+    home_page_ = trimmed;
+    return true;
+  }
+  const QUrl parsed(trimmed);
+  const QString scheme = parsed.scheme().toLower();
+  if (!parsed.isValid() || parsed.host().isEmpty() ||
+      (scheme != QStringLiteral("http") &&
+       scheme != QStringLiteral("https"))) {
+    return false;
+  }
+  home_page_ = parsed.toString();
   return true;
 }
 

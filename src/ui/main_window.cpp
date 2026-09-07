@@ -166,6 +166,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   back_button_ = new QPushButton(QStringLiteral("←"), toolbar_);
   forward_button_ = new QPushButton(QStringLiteral("→"), toolbar_);
   reload_button_ = new QPushButton(QStringLiteral("↻"), toolbar_);
+  home_button_ = new QPushButton(QStringLiteral("⌂"), toolbar_);
   address_bar_ = new QLineEdit(toolbar_);
   downloads_button_ = new QPushButton(QStringLiteral("Downloads"), toolbar_);
   bookmark_button_ = new QPushButton(QStringLiteral("☆"), toolbar_);
@@ -182,6 +183,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   back_button_->setToolTip(QStringLiteral("Back"));
   forward_button_->setToolTip(QStringLiteral("Forward"));
   reload_button_->setToolTip(QStringLiteral("Reload"));
+  home_button_->setToolTip(QStringLiteral("Home"));
   address_bar_->setPlaceholderText(
       QStringLiteral("Search or enter an address"));
   address_bar_->setClearButtonEnabled(true);
@@ -202,6 +204,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   toolbar_layout->addWidget(back_button_);
   toolbar_layout->addWidget(forward_button_);
   toolbar_layout->addWidget(reload_button_);
+  toolbar_layout->addWidget(home_button_);
   toolbar_layout->addWidget(address_bar_, 1);
   toolbar_layout->addWidget(bookmark_button_);
   toolbar_layout->addWidget(bookmarks_button_);
@@ -284,6 +287,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
       browser->is_loading() ? browser->Stop() : browser->Reload();
     }
   });
+  connect(home_button_, &QPushButton::clicked, this, &MainWindow::GoHome);
   connect(address_bar_, &QLineEdit::returnPressed, this,
           &MainWindow::NavigateFromAddressBar);
   connect(address_completer_,
@@ -670,6 +674,18 @@ bool MainWindow::SelectSearchEngineForTesting(const QString& name) {
 
 QString MainWindow::NormalizeUrlForTesting(const QString& input) const {
   return NormalizeUrl(input);
+}
+
+QString MainWindow::home_page_for_testing() const {
+  return browser_settings_->home_page();
+}
+
+bool MainWindow::SetHomePageForTesting(const QString& value) {
+  return SetHomePage(value);
+}
+
+void MainWindow::GoHomeForTesting() {
+  GoHome();
 }
 
 void MainWindow::ActivateTabShortcutForTesting(int number) {
@@ -1569,6 +1585,9 @@ void MainWindow::HandleBrowserShortcut(int action_value) {
     case BrowserView::ShortcutAction::Reload:
       if (BrowserView* browser = CurrentBrowser()) browser->Reload();
       break;
+    case BrowserView::ShortcutAction::GoHome:
+      GoHome();
+      break;
   }
 }
 
@@ -1663,6 +1682,13 @@ void MainWindow::CreateApplicationMenus() {
                address_bar_->setFocus();
                address_bar_->selectAll();
              });
+  add_action(view, QStringLiteral("Home"),
+#if defined(OS_MAC)
+             QKeySequence(QStringLiteral("Meta+Shift+H")),
+#else
+             QKeySequence(QStringLiteral("Alt+Home")),
+#endif
+             [this] { GoHome(); });
   view->addSeparator();
   back_action_ = add_action(view, QStringLiteral("Back"), QKeySequence::Back,
                             [this] {
@@ -1751,6 +1777,16 @@ void MainWindow::CreateApplicationMenus() {
     connect(action, &QAction::triggered, this,
             [this, engine] { SetSearchEngine(static_cast<int>(engine)); });
   }
+  settings->addSeparator();
+  add_action(settings, QStringLiteral("Use Current Page as Home"), {},
+             [this] {
+               if (BrowserView* browser = CurrentBrowser()) {
+                 SetHomePage(browser->current_url());
+               }
+             });
+  add_action(settings, QStringLiteral("Reset Home Page"), {}, [this] {
+    SetHomePage(QStringLiteral("https://www.example.com"));
+  });
 
   QMenu* window = menuBar()->addMenu(QStringLiteral("Window"));
   add_action(window, QStringLiteral("Next Tab"), QKeySequence::NextChild,
@@ -1792,6 +1828,30 @@ void MainWindow::SetSearchEngine(int engine_value) {
         QStringLiteral("Default search engine: %1")
             .arg(BrowserSettings::SearchEngineName(engine)),
         2500);
+  }
+}
+
+bool MainWindow::SetHomePage(const QString& value) {
+  const QString normalized = NormalizeUrl(value);
+  if (!browser_settings_->set_home_page(normalized)) {
+    statusBar()->showMessage(QStringLiteral("This URL cannot be used as home"),
+                             5000);
+    return false;
+  }
+  QString error;
+  if (!browser_settings_->Save(&error)) {
+    statusBar()->showMessage(
+        QStringLiteral("Unable to save browser settings: %1").arg(error),
+        8000);
+    return false;
+  }
+  statusBar()->showMessage(QStringLiteral("Home page updated"), 2500);
+  return true;
+}
+
+void MainWindow::GoHome() {
+  if (BrowserView* browser = CurrentBrowser()) {
+    browser->LoadUrl(browser_settings_->home_page());
   }
 }
 

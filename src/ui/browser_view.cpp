@@ -422,11 +422,18 @@ bool BrowserView::OnCefKeyEvent(CefRefPtr<CefBrowser> browser,
   } else if ((event.modifiers & EVENTFLAG_ALT_DOWN) &&
              event.windows_key_code == 0x27) {
     action = ShortcutAction::GoForward;
+#if !defined(OS_MAC)
+  } else if ((event.modifiers & EVENTFLAG_ALT_DOWN) &&
+             event.windows_key_code == 0x24) {
+    action = ShortcutAction::GoHome;
+#endif
 #if defined(OS_MAC)
   } else if (primary_modifier && event.windows_key_code == 0xDB) {
     action = ShortcutAction::GoBack;
   } else if (primary_modifier && event.windows_key_code == 0xDD) {
     action = ShortcutAction::GoForward;
+  } else if (primary_modifier && shift && event.windows_key_code == 'H') {
+    action = ShortcutAction::GoHome;
 #endif
   } else if (primary_modifier &&
              (event.windows_key_code == '+' ||

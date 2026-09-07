@@ -33,7 +33,10 @@ recent history. Suggestions match either field, keep bookmarks ranked first,
 deduplicate shared URLs, and navigate to the underlying URL rather than the
 display label. Its default search engine can be switched between Google,
 DuckDuckGo, and Bing from the Settings menu; the choice is stored atomically
-with the browser profile. The recently closed tab stack is part of the atomic
+with the browser profile. The same settings file stores a validated HTTP(S)
+home page. The toolbar Home button and Alt+Home (Cmd+Shift+H on macOS) navigate
+the active tab there, while the Settings menu can capture the current page or
+restore the default. The recently closed tab stack is part of the atomic
 session file, so Ctrl/Cmd+Shift+T continues to work after an application
 restart. Page favicons are loaded into their corresponding tabs with stale
 navigation results rejected. The History menu can clear history, recently
@@ -122,6 +125,7 @@ application builds automatically use the Release CEF runtime.
 - Ctrl/Cmd+9: activate the last tab
 - Ctrl/Cmd+Shift+A: show all open tabs
 - Ctrl/Cmd+L: focus and select the address bar
+- Alt+Home (Cmd+Shift+H on macOS): open the configured home page
 - Ctrl/Cmd+F: find text in the active page
 - F3 / Shift+F3: move between page matches
 - Ctrl/Cmd++ / Ctrl/Cmd+-: zoom the active page

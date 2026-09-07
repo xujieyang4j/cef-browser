@@ -12,6 +12,8 @@ class BrowserSettings final {
   bool Save(QString* error = nullptr) const;
   SearchEngine search_engine() const { return search_engine_; }
   void set_search_engine(SearchEngine engine) { search_engine_ = engine; }
+  const QString& home_page() const { return home_page_; }
+  bool set_home_page(const QString& url);
 
   static QString SearchEngineId(SearchEngine engine);
   static QString SearchEngineName(SearchEngine engine);
@@ -20,4 +22,5 @@ class BrowserSettings final {
  private:
   QString path_;
   SearchEngine search_engine_ = SearchEngine::Google;
+  QString home_page_ = QStringLiteral("https://www.example.com");
 };
