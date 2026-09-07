@@ -7,7 +7,10 @@ main window and integrates CEF's external message pump with Qt's event loop.
 Current features include tabbed browsing, navigation controls, URL/search
 normalization, page titles, and pop-up routing based on the requested
 disposition. Pop-up targets are strictly revalidated and limited to HTTP(S) or
-a blank page before they can replace a page or create a tab. The browser also
+a blank page before they can replace a page or create a tab. Regular tabs,
+restored tabs, single-instance open requests, duplication, and page pop-ups
+share a 100-tab window limit; rejected pop-ups cannot create hidden CEF hosts.
+The browser also
 provides page-title and status-text sanitization so untrusted page metadata
 cannot grow the native UI without limit. It also provides
 recently closed tab recovery, F12 DevTools, persistent CEF cache, and orderly
@@ -223,7 +226,7 @@ covered, along with numeric tab navigation, the all-tabs menu, and selective
 recent-tab restoration, native application-menu actions, search-setting
 persistence, safe external-input normalization, and single-instance URL
 forwarding. Linux additionally verifies that a renderer is running with
-`NoNewPrivs` and a seccomp filter. All twenty-two
+`NoNewPrivs` and a seccomp filter. All twenty-three
 checks are registered when `xvfb-run` is available:
 
 ~~~sh

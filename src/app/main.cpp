@@ -268,6 +268,69 @@ void StartTabActionsSmokeTest(MainWindow* window) {
   QTimer::singleShot(300, window, [step] { (*step)(); });
 }
 
+void StartTabLimitSmokeTest(MainWindow* window) {
+  auto output = std::make_shared<QTextStream>(stdout);
+  auto attempts = std::make_shared<int>(0);
+  auto stage = std::make_shared<int>(0);
+  auto fill_ok = std::make_shared<bool>(true);
+  auto step = std::make_shared<std::function<void()>>();
+  *step = [window, output, attempts, stage, fill_ok, step] {
+    ++*attempts;
+    if (*stage == 0 &&
+        window->current_title() == QStringLiteral("Smoke")) {
+      window->OpenTabForTesting(
+          QStringLiteral("data:text/html,<title>Closed</title>"));
+      *stage = 1;
+    } else if (*stage == 1 && window->tab_count() == 2 &&
+               window->current_title() == QStringLiteral("Closed")) {
+      window->CloseCurrentTabForTesting();
+      *stage = 2;
+    } else if (*stage == 2 && window->tab_count() == 1 &&
+               window->recently_closed_tab_count_for_testing() == 1) {
+      for (int index = window->tab_count();
+           index < MainWindow::MaxTabsForTesting(); ++index) {
+        *fill_ok =
+            *fill_ok && window->OpenTabForTesting(
+                            QStringLiteral("https://example.test/tab/%1")
+                                .arg(index),
+                            false);
+      }
+      const bool new_tab_blocked = !window->OpenTabForTesting(
+          QStringLiteral("https://example.test/overflow"), false);
+      const bool popup_blocked = !window->OpenPopupForTesting(
+          QStringLiteral("https://example.test/popup-overflow"),
+          CEF_WOD_NEW_BACKGROUND_TAB);
+      window->ReopenClosedTabForTesting();
+      const bool closed_tab_preserved =
+          window->recently_closed_tab_count_for_testing() == 1;
+      if (*fill_ok && new_tab_blocked && popup_blocked &&
+          closed_tab_preserved &&
+          window->tab_count() == MainWindow::MaxTabsForTesting()) {
+        *output << "TAB_LIMIT_SMOKE_OK max="
+                << MainWindow::MaxTabsForTesting()
+                << " popup=blocked recent=preserved" << Qt::endl;
+        window->close();
+        return;
+      }
+      *output << "TAB_LIMIT_SMOKE_FAILED count=" << window->tab_count()
+              << " fill=" << *fill_ok
+              << " new_tab=" << new_tab_blocked
+              << " popup=" << popup_blocked
+              << " recent=" << closed_tab_preserved << Qt::endl;
+      QCoreApplication::exit(23);
+      return;
+    }
+    if (*attempts > 160) {
+      *output << "TAB_LIMIT_SMOKE_FAILED stage=" << *stage
+              << " count=" << window->tab_count() << Qt::endl;
+      QCoreApplication::exit(23);
+      return;
+    }
+    QTimer::singleShot(50, window, [step] { (*step)(); });
+  };
+  QTimer::singleShot(300, window, [step] { (*step)(); });
+}
+
 void StartPinnedTabsSmokeTest(MainWindow* window, const QString& session_path) {
   auto output = std::make_shared<QTextStream>(stdout);
   auto attempts = std::make_shared<int>(0);
@@ -745,7 +808,8 @@ bool IsSmokeTest() {
          HasArgument(QStringLiteral("--smoke-test-sandbox")) ||
          HasArgument(QStringLiteral("--smoke-test-security")) ||
          HasArgument(QStringLiteral("--smoke-test-auth")) ||
-         HasArgument(QStringLiteral("--smoke-test-js-dialogs"));
+         HasArgument(QStringLiteral("--smoke-test-js-dialogs")) ||
+         HasArgument(QStringLiteral("--smoke-test-tab-limit"));
 }
 
 BrowserSession DefaultSession(const QString& url) {
@@ -2705,6 +2769,8 @@ int RunBrowser(int argc, char* argv[]) {
     } else if (HasArgument(
                    QStringLiteral("--smoke-test-js-dialogs"))) {
       StartJavaScriptDialogSmokeTest(&main_window);
+    } else if (HasArgument(QStringLiteral("--smoke-test-tab-limit"))) {
+      StartTabLimitSmokeTest(&main_window);
     } else if (HasArgument(
                    QStringLiteral("--smoke-test-single-instance"))) {
       QTimer::singleShot(300, &main_window, [&main_window, data_path] {

@@ -55,6 +55,7 @@
 namespace {
 
 constexpr int kMaxClosedTabs = 20;
+constexpr int kMaxOpenTabs = 100;
 constexpr int kMaxAddressSuggestions = 200;
 
 class CompletionCallback final : public CefCompletionCallback {
@@ -387,7 +388,13 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   closed_tabs_ = initial_session.recently_closed_tabs.mid(closed_start);
   QList<BrowserView*> restored_tabs;
   for (const QString& url : initial_urls) {
-    restored_tabs.append(AddTab(url, false));
+    if (BrowserView* restored = AddTab(url, false)) {
+      restored_tabs.append(restored);
+    }
+    if (restored_tabs.size() >= kMaxOpenTabs) break;
+  }
+  if (restored_tabs.isEmpty()) {
+    restored_tabs.append(AddTab(QStringLiteral("about:blank"), false));
   }
   const int initial_active =
       std::clamp(initial_session.active_tab, 0,
@@ -441,8 +448,12 @@ QString MainWindow::current_title() const {
   return browser ? browser->page_title() : QString();
 }
 
-void MainWindow::OpenTabForTesting(const QString& url) {
-  AddTab(url, true);
+bool MainWindow::OpenTabForTesting(const QString& url, bool activate) {
+  return AddTab(url, activate) != nullptr;
+}
+
+int MainWindow::MaxTabsForTesting() {
+  return kMaxOpenTabs;
 }
 
 void MainWindow::HandleExternalOpenRequest(const QString& url) {
@@ -1134,8 +1145,9 @@ void MainWindow::ReopenClosedTab() {
 bool MainWindow::ReopenClosedTabAt(int recent_index) {
   const int stored_index = closed_tabs_.size() - 1 - recent_index;
   if (stored_index < 0 || stored_index >= closed_tabs_.size()) return false;
-  const RecentlyClosedTab tab = closed_tabs_.takeAt(stored_index);
-  AddTab(tab.url, true);
+  const RecentlyClosedTab tab = closed_tabs_.at(stored_index);
+  if (!AddTab(tab.url, true)) return false;
+  closed_tabs_.removeAt(stored_index);
   return true;
 }
 
@@ -1216,6 +1228,11 @@ void MainWindow::FindFromBar(bool forward, bool find_next) {
 
 BrowserView* MainWindow::AddTab(const QString& url, bool activate,
                                 bool focus_address) {
+  if (tab_bar_->count() >= kMaxOpenTabs) {
+    statusBar()->showMessage(
+        QStringLiteral("Close a tab before opening another one"), 5000);
+    return nullptr;
+  }
   auto* browser = new BrowserView(url, download_manager_->handler(), tab_stack_);
   tab_stack_->addWidget(browser);
   const int tab_index = tab_bar_->addTab(TabText({}, url));
@@ -1424,6 +1441,7 @@ void MainWindow::DuplicateTab(int index) {
                           ? QStringLiteral("about:blank")
                           : source->current_url();
   BrowserView* duplicate = AddTab(url, true);
+  if (!duplicate) return;
   const int duplicate_index = IndexOf(duplicate);
   const int target_index = std::max(index + 1, PinnedTabCount());
   if (duplicate_index >= 0 && duplicate_index != target_index) {
@@ -1561,8 +1579,7 @@ bool MainWindow::OpenPopup(BrowserView* source, const QString& url,
     return true;
   }
   if (disposition == CEF_WOD_NEW_BACKGROUND_TAB) {
-    AddTab(target, false);
-    return true;
+    return AddTab(target, false) != nullptr;
   }
   if (disposition == CEF_WOD_SINGLETON_TAB ||
       disposition == CEF_WOD_SWITCH_TO_TAB) {
@@ -1583,8 +1600,7 @@ bool MainWindow::OpenPopup(BrowserView* source, const QString& url,
     case CEF_WOD_OFF_THE_RECORD:
     case CEF_WOD_SWITCH_TO_TAB:
     case CEF_WOD_NEW_SPLIT_VIEW:
-      AddTab(target, true);
-      return true;
+      return AddTab(target, true) != nullptr;
     case CEF_WOD_UNKNOWN:
     case CEF_WOD_CURRENT_TAB:
     case CEF_WOD_NEW_BACKGROUND_TAB:

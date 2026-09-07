@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(TrailBrowser VERSION 0.45.0 LANGUAGES C CXX)
+project(TrailBrowser VERSION 0.46.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -311,6 +311,13 @@ if(BUILD_TESTING AND UNIX AND NOT APPLE)
     set_tests_properties(trail_browser_javascript_dialogs PROPERTIES
       TIMEOUT 20
       PASS_REGULAR_EXPRESSION "JAVASCRIPT_DIALOG_SMOKE_OK"
+    )
+    add_test(NAME trail_browser_tab_limit
+      COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
+              --smoke-test-tab-limit)
+    set_tests_properties(trail_browser_tab_limit PROPERTIES
+      TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "TAB_LIMIT_SMOKE_OK"
     )
     add_test(NAME trail_browser_single_instance
       COMMAND "${XVFB_RUN_EXECUTABLE}" -a $<TARGET_FILE:trail-browser>
