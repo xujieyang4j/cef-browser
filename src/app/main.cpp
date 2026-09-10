@@ -1342,15 +1342,34 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
   const bool oversized_file_rejected =
       oversized_file_written && !oversized_file &&
       !oversized_file_error.isEmpty();
+
+  const bool retry_source_removed = QFile::remove(session_path);
+  const bool retry_target_blocked =
+      retry_source_removed && QDir().mkpath(session_path);
+  window->ActivateTabForTesting(0);
+  window->StartSessionSaveRetryForTesting();
+  const bool retry_scheduled =
+      retry_target_blocked &&
+      window->session_save_retry_pending_for_testing();
+  window->ActivateTabForTesting(1);
+  const bool retry_target_unblocked =
+      retry_target_blocked && QDir(session_path).removeRecursively();
+  window->RetryPendingSessionSaveForTesting();
+  const auto retried = SessionStore::Load(session_path);
+  const bool failed_save_retried =
+      retry_scheduled && retry_target_unblocked && retried &&
+      retried->active_tab == 1 && !retried->clean_exit &&
+      !window->session_save_retry_pending_for_testing();
   if (captured_ok && unclean_saved && unclean_ok && clean_saved && clean_ok &&
       launch_marker_ok && legacy_ok && untrusted_filtered &&
       all_unsafe_rejected &&
-      unsafe_not_saved && bounded_round_trip && oversized_file_rejected) {
+      unsafe_not_saved && bounded_round_trip && oversized_file_rejected &&
+      failed_save_retried) {
     *output << "SESSION_SMOKE_OK tabs=" << clean->tab_urls.size()
             << " active=" << clean->active_tab
             << " recent_title=persisted launch=marked legacy=migrated "
                "unsafe=filtered "
-               "size=full-capacity read=bounded"
+               "size=full-capacity read=bounded retry=latest"
             << Qt::endl;
     window->close();
   } else {
@@ -1363,6 +1382,7 @@ void StartSessionSmokeTest(MainWindow* window, const QString& session_path) {
             << " sanitized=" << unsafe_not_saved
             << " bounded=" << bounded_round_trip
             << " oversized_file=" << oversized_file_rejected
+            << " retry=" << failed_save_retried
             << Qt::endl;
     QCoreApplication::exit(5);
   }
@@ -1846,6 +1866,35 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
       !after_single_remove.IsBookmarked(bookmarked_url) &&
       after_single_remove.history().size() == 1 &&
       after_single_remove.history().first().url == first_url;
+  const int history_before_retry = window->history_count_for_testing();
+  const bool retry_source_removed = QFile::remove(data_path);
+  const bool retry_target_blocked =
+      retry_source_removed && QDir().mkpath(data_path);
+  const QString first_retry_url =
+      QStringLiteral("https://example.test/retry-history/first");
+  const QString latest_retry_url =
+      QStringLiteral("https://example.test/retry-history/latest");
+  window->AddHistoryForTesting(first_retry_url, QStringLiteral("First retry"));
+  const bool retry_scheduled =
+      retry_target_blocked &&
+      window->browsing_data_save_retry_pending_for_testing() &&
+      window->history_count_for_testing() == history_before_retry + 1;
+  window->AddHistoryForTesting(latest_retry_url,
+                               QStringLiteral("Latest retry"));
+  const bool retry_coalesced =
+      window->browsing_data_save_retry_pending_for_testing() &&
+      window->history_count_for_testing() == history_before_retry + 2;
+  const bool retry_target_unblocked =
+      retry_target_blocked && QDir(data_path).removeRecursively();
+  window->RetryPendingBrowsingDataSaveForTesting();
+  BrowsingDataStore retried_data(data_path);
+  const bool failed_history_retried =
+      retry_scheduled && retry_coalesced && retry_target_unblocked &&
+      !window->browsing_data_save_retry_pending_for_testing() &&
+      retried_data.Load() &&
+      retried_data.history().size() == history_before_retry + 2 &&
+      retried_data.history().at(0).url == latest_retry_url &&
+      retried_data.history().at(1).url == first_retry_url;
   const bool profile_ok = add_first && reject_duplicate && add_second && saved &&
                           import_ok && oversized_import_rejected &&
                           round_trip_ok && oversized_export_rejected &&
@@ -1860,7 +1909,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
                           renamed &&
                           rename_persisted && empty_name &&
                           empty_name_persisted && single_removed &&
-                          single_persisted;
+                          single_persisted && failed_history_retried;
   if (!profile_ok) {
     *output << "PROFILE_SMOKE_FAILED bookmark=" << bookmark_ok
             << " import=" << import_ok << " roundtrip=" << round_trip_ok
@@ -1879,6 +1928,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
             << " renamed=" << rename_persisted
             << " empty=" << empty_name_persisted
             << " single=" << single_persisted
+            << " retry=" << failed_history_retried
             << Qt::endl;
     QCoreApplication::exit(7);
     return;
@@ -1894,6 +1944,7 @@ void StartProfileSmokeTest(MainWindow* window, const QString& data_path) {
                  "html=roundtrip export=bounded "
                  "bounded=reloadable read=bounded "
                  "rename=persisted empty=url single-remove=persisted "
+                 "history-retry=latest "
                  "suggestions=titled-navigation"
               << Qt::endl;
       window->close();

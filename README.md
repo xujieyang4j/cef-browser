@@ -50,6 +50,10 @@ cannot leave a stale clean-exit marker. An explicit startup URL takes priority
 over the saved session. Session fields and the 16 MiB total output are bounded
 so the full supported set of 100 open tabs and 100 recovery records can round
 trip even when every URL reaches its individual limit.
+Live session writes retry transient failures five times with exponential
+backoff. Each attempt captures the latest window and tab state, so browsing
+changes made while profile storage is unavailable replace the failed snapshot
+instead of being lost or overwritten by stale retry data.
 Restored tabs, recently closed tabs, bookmarks, visit history, and download
 history are revalidated before they can navigate or invoke local-file actions,
 so a damaged or modified profile cannot reintroduce blocked URL schemes.
@@ -65,8 +69,11 @@ when trimming is required. Download-history budget eviction is applied to the
 live model only after the atomic commit succeeds, so the visible finished list
 matches the next restart. Browsing data prioritizes bookmarks over older visit
 history so every saved profile remains reloadable; history trimmed by that
-budget is removed from the live menus only after the atomic save succeeds, and
-a failed history write restores the previous in-memory state. Session, settings,
+budget is removed from the live menus only after the atomic save succeeds.
+Automatic visit writes retain the bounded live history and retry transient
+failures five times with exponential backoff, coalescing newer visits into the
+next attempt. Explicit history removals still restore the previous in-memory
+state if their atomic write fails. Session, settings,
 download-history, browsing-data, and bookmark
 HTML input is read through strict byte budgets rather than trusting an earlier
 file-size check, so files that grow while being opened cannot bypass the
@@ -287,6 +294,8 @@ Bookmark export checks additionally cover strict output limits and preservation
 of an existing destination when the generated document would be too large.
 Bookmark profile checks cover transactional add, rename, and import rejection
 at the exact persistence budget and verify that all accepted entries reload.
+They also simulate temporarily unavailable profile storage and verify that
+multiple automatic visits coalesce into a retry containing the latest history.
 Corrupt-profile recovery verifies that all four persistent stores preserve the
 original bytes before replacement files are written and successfully reloaded.
 JavaScript-dialog limits, concurrency suppression, navigation reset, and

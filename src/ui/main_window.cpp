@@ -63,6 +63,11 @@ constexpr int kMaxAddressSuggestions = 200;
 constexpr int kMaxAddressInputCharacters = 64 * 1024;
 constexpr int kMaxFindInputCharacters = 4 * 1024;
 constexpr int kMaxBookmarkNameCharacters = 512;
+constexpr int kSessionSaveDelayMs = 500;
+constexpr int kSessionSaveRetryBaseDelayMs = 250;
+constexpr int kMaxSessionSaveRetryAttempts = 5;
+constexpr int kBrowsingDataSaveRetryBaseDelayMs = 250;
+constexpr int kMaxBrowsingDataSaveRetryAttempts = 5;
 
 class CompletionCallback final : public CefCompletionCallback {
  public:
@@ -136,6 +141,7 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
                        QString settings_path, QString download_history_path,
                        QWidget* parent)
     : QMainWindow(parent), session_path_(std::move(session_path)) {
+  browsing_data_persistence_enabled_ = !browsing_data_path.isEmpty();
   browser_settings_ = new BrowserSettings(settings_path);
   QString settings_error;
   if (!browser_settings_->Load(&settings_error)) {
@@ -307,16 +313,18 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
                 qPrintable(preserve_error));
       delete browsing_data_;
       browsing_data_ = new BrowsingDataStore(QString());
+      browsing_data_persistence_enabled_ = false;
     }
   }
+  browsing_data_save_timer_ = new QTimer(this);
+  browsing_data_save_timer_->setSingleShot(true);
+  connect(browsing_data_save_timer_, &QTimer::timeout, this,
+          &MainWindow::PersistPendingBrowsingData);
   download_panel_ = new DownloadPanel(download_manager_, central);
   session_save_timer_ = new QTimer(this);
   session_save_timer_->setSingleShot(true);
-  connect(session_save_timer_, &QTimer::timeout, this, [this] {
-    if (session_persistence_ready_ && !window_close_requested_) {
-      PersistSession(CaptureSession(false));
-    }
-  });
+  connect(session_save_timer_, &QTimer::timeout, this,
+          &MainWindow::PersistPendingSession);
   browsing_data_clear_timeout_ = new QTimer(this);
   browsing_data_clear_timeout_->setSingleShot(true);
   connect(browsing_data_clear_timeout_, &QTimer::timeout, this, [this] {
@@ -474,7 +482,9 @@ MainWindow::MainWindow(const BrowserSession& initial_session,
   QTimer::singleShot(1500, this, [this] {
     if (window_close_requested_) return;
     session_persistence_ready_ = true;
-    PersistSession(CaptureSession(false));
+    session_save_pending_ = true;
+    session_save_retry_attempts_ = 0;
+    PersistPendingSession();
   });
 }
 
@@ -942,6 +952,25 @@ bool MainWindow::save_session_for_testing(bool clean_exit) {
   return PersistSession(CaptureSession(clean_exit));
 }
 
+void MainWindow::StartSessionSaveRetryForTesting() {
+  if (session_path_.isEmpty()) return;
+  session_persistence_ready_ = true;
+  session_save_pending_ = true;
+  session_save_retry_attempts_ = 0;
+  session_save_timer_->stop();
+  PersistPendingSession();
+}
+
+void MainWindow::RetryPendingSessionSaveForTesting() {
+  if (!session_save_pending_) return;
+  session_save_timer_->stop();
+  PersistPendingSession();
+}
+
+bool MainWindow::session_save_retry_pending_for_testing() const {
+  return session_save_pending_ && session_save_timer_->isActive();
+}
+
 bool MainWindow::find_bar_visible_for_testing() const {
   return find_bar_->isVisible();
 }
@@ -1020,9 +1049,18 @@ void MainWindow::NavigateAddressSuggestionForTesting(const QString& label) {
 
 void MainWindow::AddHistoryForTesting(const QString& url,
                                       const QString& title) {
-  browsing_data_->RecordVisit(url, title);
-  SaveBrowsingData();
-  RefreshAddressSuggestions();
+  RecordHistoryVisit(url, title);
+}
+
+void MainWindow::RetryPendingBrowsingDataSaveForTesting() {
+  if (!browsing_data_save_pending_) return;
+  browsing_data_save_timer_->stop();
+  PersistPendingBrowsingData();
+}
+
+bool MainWindow::browsing_data_save_retry_pending_for_testing() const {
+  return browsing_data_save_pending_ &&
+         browsing_data_save_timer_->isActive();
 }
 
 bool MainWindow::RenameBookmarkForTesting(const QString& url,
@@ -1215,6 +1253,8 @@ void MainWindow::closeEvent(QCloseEvent* event) {
               queued_tab_closes_.clear();
               active_queued_tab_close_.clear();
               window_close_requested_ = true;
+              CancelPendingSessionSave();
+              PersistPendingBrowsingData();
               closing_session_ = CaptureSession(true);
               ContinueWindowClose();
             });
@@ -1225,6 +1265,8 @@ void MainWindow::closeEvent(QCloseEvent* event) {
   queued_tab_closes_.clear();
   active_queued_tab_close_.clear();
   window_close_requested_ = true;
+  CancelPendingSessionSave();
+  PersistPendingBrowsingData();
   closing_session_ = CaptureSession(true);
   ContinueWindowClose();
 }
@@ -2919,20 +2961,61 @@ void MainWindow::RecordVisit(BrowserView* browser) {
   if (!browser || browser->is_loading()) return;
   const QString url = browser->current_url();
   if (url.isEmpty()) return;
-  const BrowsingDataStore previous = *browsing_data_;
-  browsing_data_->RecordVisit(url, browser->page_title());
-  if (!SaveBrowsingData()) *browsing_data_ = previous;
+  RecordHistoryVisit(url, browser->page_title());
+}
+
+void MainWindow::RecordHistoryVisit(const QString& url, const QString& title) {
+  if (!browsing_data_->RecordVisit(url, title)) return;
+  if (!browsing_data_persistence_enabled_) {
+    RefreshAddressSuggestions();
+    return;
+  }
+  browsing_data_save_pending_ = true;
+  browsing_data_save_retry_attempts_ = 0;
+  browsing_data_save_timer_->stop();
+  PersistPendingBrowsingData();
   RefreshAddressSuggestions();
 }
 
 bool MainWindow::SaveBrowsingData() {
   QString error;
   const bool saved = browsing_data_->Save(&error);
-  if (!saved && !error.isEmpty()) {
+  if (saved) {
+    CancelPendingBrowsingDataSave();
+  } else if (!error.isEmpty()) {
     statusBar()->showMessage(
         QStringLiteral("Unable to save browsing data: %1").arg(error), 8000);
   }
   return saved;
+}
+
+void MainWindow::PersistPendingBrowsingData() {
+  if (!browsing_data_save_pending_) return;
+  browsing_data_save_timer_->stop();
+  if (SaveBrowsingData()) {
+    RebuildHistoryMenu();
+    RefreshAddressSuggestions();
+    return;
+  }
+  ScheduleBrowsingDataSaveRetry();
+}
+
+void MainWindow::ScheduleBrowsingDataSaveRetry() {
+  if (!browsing_data_save_pending_ || window_close_requested_ ||
+      browsing_data_save_retry_attempts_ >=
+          kMaxBrowsingDataSaveRetryAttempts) {
+    return;
+  }
+  const int delay = kBrowsingDataSaveRetryBaseDelayMs
+                    << browsing_data_save_retry_attempts_;
+  ++browsing_data_save_retry_attempts_;
+  browsing_data_save_timer_->start(delay);
+}
+
+void MainWindow::CancelPendingBrowsingDataSave() {
+  browsing_data_save_timer_->stop();
+  browsing_data_save_pending_ = false;
+  browsing_data_save_retry_attempts_ = 0;
 }
 
 void MainWindow::RefreshAddressSuggestions() {
@@ -2972,8 +3055,43 @@ void MainWindow::ScheduleSessionSave() {
       session_path_.isEmpty()) {
     return;
   }
-  constexpr int kSaveDelayMs = 500;
-  session_save_timer_->start(kSaveDelayMs);
+  session_save_pending_ = true;
+  session_save_retry_attempts_ = 0;
+  session_save_timer_->start(kSessionSaveDelayMs);
+}
+
+void MainWindow::PersistPendingSession() {
+  if (!session_save_pending_) return;
+  if (!session_persistence_ready_ || window_close_requested_ ||
+      session_path_.isEmpty()) {
+    CancelPendingSessionSave();
+    return;
+  }
+
+  // Capture at each attempt so edits made while storage was unavailable are
+  // folded into the retry instead of allowing an older snapshot to win.
+  if (PersistSession(CaptureSession(false))) {
+    CancelPendingSessionSave();
+    return;
+  }
+  ScheduleSessionSaveRetry();
+}
+
+void MainWindow::ScheduleSessionSaveRetry() {
+  if (!session_save_pending_ ||
+      session_save_retry_attempts_ >= kMaxSessionSaveRetryAttempts) {
+    return;
+  }
+  const int delay =
+      kSessionSaveRetryBaseDelayMs << session_save_retry_attempts_;
+  ++session_save_retry_attempts_;
+  session_save_timer_->start(delay);
+}
+
+void MainWindow::CancelPendingSessionSave() {
+  session_save_timer_->stop();
+  session_save_pending_ = false;
+  session_save_retry_attempts_ = 0;
 }
 
 BrowserSession MainWindow::CaptureSession(bool clean_exit) const {

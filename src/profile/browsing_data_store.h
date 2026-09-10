@@ -35,7 +35,7 @@ class BrowsingDataStore final {
   bool RenameBookmark(const QString& url, const QString& title,
                       QString* error = nullptr);
   bool RemoveBookmark(const QString& url);
-  void RecordVisit(const QString& url, const QString& title,
+  bool RecordVisit(const QString& url, const QString& title,
                    QDateTime visited_at = QDateTime::currentDateTimeUtc());
   bool RemoveHistory(const QString& url);
   void ClearHistory();

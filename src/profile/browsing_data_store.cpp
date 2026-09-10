@@ -436,10 +436,10 @@ bool BrowsingDataStore::RemoveBookmark(const QString& url) {
   return true;
 }
 
-void BrowsingDataStore::RecordVisit(const QString& url, const QString& title,
+bool BrowsingDataStore::RecordVisit(const QString& url, const QString& title,
                                     QDateTime visited_at) {
   const auto normalized = NormalizeRecordableUrl(url);
-  if (!normalized) return;
+  if (!normalized) return false;
   const auto found = std::find_if(
       history_.begin(), history_.end(),
       [&normalized](const HistoryEntry& entry) {
@@ -459,6 +459,7 @@ void BrowsingDataStore::RecordVisit(const QString& url, const QString& title,
                                   NormalizeDate(visited_at), 1});
   }
   while (history_.size() > kMaxHistoryEntries) history_.removeLast();
+  return true;
 }
 
 bool BrowsingDataStore::RemoveHistory(const QString& url) {

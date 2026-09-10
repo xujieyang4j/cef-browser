@@ -127,6 +127,9 @@ class MainWindow final : public QMainWindow {
   bool render_process_failed_for_testing() const;
   BrowserSession session_for_testing(bool clean_exit) const;
   bool save_session_for_testing(bool clean_exit);
+  void StartSessionSaveRetryForTesting();
+  void RetryPendingSessionSaveForTesting();
+  bool session_save_retry_pending_for_testing() const;
   bool find_bar_visible_for_testing() const;
   void ShowFindBarForTesting();
   void HideFindBarForTesting();
@@ -145,6 +148,8 @@ class MainWindow final : public QMainWindow {
   QStringList address_suggestion_labels_for_testing() const;
   void NavigateAddressSuggestionForTesting(const QString& label);
   void AddHistoryForTesting(const QString& url, const QString& title);
+  void RetryPendingBrowsingDataSaveForTesting();
+  bool browsing_data_save_retry_pending_for_testing() const;
   bool RenameBookmarkForTesting(const QString& url, const QString& title);
   int bookmark_name_limit_for_testing() const;
   QString bookmark_title_for_testing(const QString& url) const;
@@ -218,7 +223,11 @@ class MainWindow final : public QMainWindow {
                                      bool success);
   void ExpireBrowsingDataClear(quint64 generation);
   void RecordVisit(BrowserView* browser);
+  void RecordHistoryVisit(const QString& url, const QString& title);
   bool SaveBrowsingData();
+  void PersistPendingBrowsingData();
+  void ScheduleBrowsingDataSaveRetry();
+  void CancelPendingBrowsingDataSave();
   void RefreshAddressSuggestions();
 
  private:
@@ -273,6 +282,9 @@ class MainWindow final : public QMainWindow {
   void PerformBrowserUiSurface(BrowserUiSurface surface);
   bool ReopenClosedTabAt(int recent_index);
   void ScheduleSessionSave();
+  void PersistPendingSession();
+  void ScheduleSessionSaveRetry();
+  void CancelPendingSessionSave();
   BrowserSession CaptureSession(bool clean_exit) const;
   bool PersistSession(const BrowserSession& session);
   void SetSearchEngine(int engine_value);
@@ -322,6 +334,7 @@ class MainWindow final : public QMainWindow {
   DownloadManager* download_manager_ = nullptr;
   DownloadPanel* download_panel_ = nullptr;
   QTimer* session_save_timer_ = nullptr;
+  QTimer* browsing_data_save_timer_ = nullptr;
   QTimer* browsing_data_clear_timeout_ = nullptr;
   BrowsingDataStore* browsing_data_ = nullptr;
   BrowserSettings* browser_settings_ = nullptr;
@@ -336,6 +349,11 @@ class MainWindow final : public QMainWindow {
   QList<RecentlyClosedTab> closed_tabs_;
   QString session_path_;
   std::optional<BrowserSession> closing_session_;
+  int session_save_retry_attempts_ = 0;
+  bool session_save_pending_ = false;
+  int browsing_data_save_retry_attempts_ = 0;
+  bool browsing_data_save_pending_ = false;
+  bool browsing_data_persistence_enabled_ = false;
   bool session_persistence_ready_ = false;
   bool constraining_tab_move_ = false;
   bool download_exit_prompt_open_ = false;
